@@ -36,7 +36,7 @@ setup-tts-model: ## Check and setup TTS model
 	@if [ ! -d venv ]; then \
 		echo "❌ Virtual environment not found. Run 'make setup' first." && exit 1; \
 	fi
-	@. venv/bin/activate && python scripts/setup_tts.py || (echo "⚠️  TTS model setup failed" && exit 1)
+	@. venv/bin/activate && PYTHONPATH=backend python scripts/setup_tts.py || (echo "⚠️  TTS model setup failed" && exit 1)
 	@echo "✅ TTS model ready"
 
 install-tts-piper: ## Install Piper TTS (requires manual download)
@@ -55,18 +55,18 @@ setup-ollama-model: ## Pull default Ollama model
 	@if ! command -v ollama > /dev/null 2>&1; then \
 		echo "❌ Ollama not installed. Run 'make install-ollama' first." && exit 1; \
 	fi
-	@. venv/bin/activate && python scripts/setup_ollama.py || (echo "⚠️  Model pull failed. You can pull manually with: ollama pull llama3.1:8b" && exit 1)
+	@. venv/bin/activate && PYTHONPATH=backend python scripts/setup_ollama.py || (echo "⚠️  Model pull failed. You can pull manually with: ollama pull llama3.1:8b" && exit 1)
 	@echo "✅ Ollama model ready"
 
 setup: check-system install-ollama ## Complete one-command setup
 	@echo "🚀 Setting up audiobook system..."
 	@python3 -m venv venv || (echo "❌ Failed to create venv" && exit 1)
 	@. venv/bin/activate && pip install --upgrade pip
-	@. venv/bin/activate && pip install -r requirements.txt
-	@. venv/bin/activate && pip install -r requirements-dev.txt
+	@. venv/bin/activate && pip install -r backend/requirements.txt
+	@. venv/bin/activate && pip install -r backend/requirements-dev.txt
 	@$(MAKE) install-tts
 	@mkdir -p data/books data/databases data/checkpoints logs
-	@mkdir -p web/static/css web/static/js web/static/audio web/templates web/dist
+	@mkdir -p frontend/src/components frontend/src/store frontend/src/styles frontend/src/types
 	@mkdir -p scripts
 	@touch data/.gitkeep data/books/.gitkeep data/databases/.gitkeep data/checkpoints/.gitkeep
 	@touch logs/.gitkeep
@@ -75,7 +75,7 @@ setup: check-system install-ollama ## Complete one-command setup
 		echo "   For now, you can use the backend API directly."; \
 	else \
 		echo "📦 Installing Node.js dependencies..."; \
-		npm install || (echo "⚠️  Failed to install npm dependencies. You can install manually with 'npm install'" && exit 0); \
+		cd frontend && npm install || (echo "⚠️  Failed to install npm dependencies. You can install manually with 'cd frontend && npm install'" && exit 0); \
 		echo "✅ Node.js dependencies installed"; \
 	fi
 	@if [ ! -f .env ]; then \
@@ -106,10 +106,11 @@ setup: check-system install-ollama ## Complete one-command setup
 teardown: ## Complete cleanup to clean state
 	@echo "🧹 Cleaning up..."
 	@rm -rf venv || true
-	@rm -rf node_modules web/dist || true
+	@rm -rf frontend/node_modules frontend/dist || true
 	@rm -rf data/books/* data/databases/* data/checkpoints/* logs/* || true
 	@rm -rf .pytest_cache .mypy_cache htmlcov .coverage || true
-	@rm -rf __pycache__ src/**/__pycache__ tests/**/__pycache__ || true
+	@rm -rf backend/.pytest_cache backend/.mypy_cache backend/htmlcov backend/.coverage || true
+	@rm -rf backend/__pycache__ backend/src/**/__pycache__ backend/tests/**/__pycache__ || true
 	@find . -type d -name "*.egg-info" -exec rm -rf {} + || true
 	@echo "✅ Cleanup complete"
 
@@ -117,57 +118,57 @@ rebuild: teardown setup ## Teardown + setup (recovery)
 
 install: ## Install dependencies only
 	@echo "📦 Installing dependencies..."
-	@. venv/bin/activate && pip install -r requirements.txt
-	@. venv/bin/activate && pip install -r requirements-dev.txt
+	@. venv/bin/activate && pip install -r backend/requirements.txt
+	@. venv/bin/activate && pip install -r backend/requirements-dev.txt
 	@echo "✅ Dependencies installed"
 
 dev: ## Run in development mode
 	@echo "🔧 Starting development server..."
-	@. venv/bin/activate && python -m src.web.app --reload
+	@. venv/bin/activate && cd backend && python -m src.web.app --reload
 
 test: ## Run all tests
 	@echo "🧪 Running tests..."
-	@. venv/bin/activate && pytest tests/ -v
+	@. venv/bin/activate && cd backend && pytest tests/ -v
 
 test-coverage: ## Run tests with coverage
 	@echo "📊 Running tests with coverage..."
-	@. venv/bin/activate && pytest tests/ --cov=src --cov-report=html --cov-report=term
+	@. venv/bin/activate && cd backend && pytest tests/ --cov=src --cov-report=html --cov-report=term
 
 lint: ## Run all linters
 	@echo "🔍 Running linters..."
-	@. venv/bin/activate && flake8 src tests
-	@. venv/bin/activate && pylint src
-	@. venv/bin/activate && mypy src
+	@. venv/bin/activate && cd backend && flake8 src tests
+	@. venv/bin/activate && cd backend && pylint src
+	@. venv/bin/activate && cd backend && mypy src
 
 format: ## Format code
 	@echo "✨ Formatting code..."
-	@. venv/bin/activate && black src tests
-	@. venv/bin/activate && isort src tests
+	@. venv/bin/activate && cd backend && black src tests
+	@. venv/bin/activate && cd backend && isort src tests
 
 format-check: ## Check formatting
 	@echo "🔍 Checking code formatting..."
-	@. venv/bin/activate && black --check src tests
-	@. venv/bin/activate && isort --check src tests
+	@. venv/bin/activate && cd backend && black --check src tests
+	@. venv/bin/activate && cd backend && isort --check src tests
 
 run: ## Run application
 	@echo "🎵 Starting audiobook web app..."
-	@if [ ! -d "web/dist" ] || [ -z "$$(ls -A web/dist 2>/dev/null)" ]; then \
+	@if [ ! -d "frontend/dist" ] || [ -z "$$(ls -A frontend/dist 2>/dev/null)" ]; then \
 		echo "⚠️  React build not found. Building React app..."; \
 		if command -v npm > /dev/null 2>&1; then \
-			npm run build || (echo "❌ Failed to build React app. Run 'npm install' first." && exit 1); \
+			cd frontend && npm run build || (echo "❌ Failed to build React app. Run 'cd frontend && npm install' first." && exit 1); \
 		else \
 			echo "❌ npm not found. Install Node.js to build React frontend."; \
 			echo "   Backend will run but frontend won't be available."; \
 		fi; \
 	fi
-	@. venv/bin/activate && python -m src.web.app
+	@. venv/bin/activate && cd backend && python -m src.web.app
 
 build-frontend: ## Build React frontend
 	@echo "🔨 Building React frontend..."
 	@if ! command -v npm > /dev/null 2>&1; then \
 		echo "❌ npm not found. Please install Node.js." && exit 1; \
 	fi
-	@npm run build
+	@cd frontend && npm run build
 	@echo "✅ Frontend built successfully"
 
 dev-frontend: ## Run React dev server (for development)
@@ -175,11 +176,12 @@ dev-frontend: ## Run React dev server (for development)
 	@if ! command -v npm > /dev/null 2>&1; then \
 		echo "❌ npm not found. Please install Node.js." && exit 1; \
 	fi
-	@npm run dev
+	@cd frontend && npm run dev
 
 clean: ## Remove build artifacts
 	@echo "🧹 Cleaning build artifacts..."
 	@rm -rf .pytest_cache .mypy_cache htmlcov .coverage
-	@rm -rf __pycache__ src/**/__pycache__ tests/**/__pycache__
+	@rm -rf backend/.pytest_cache backend/.mypy_cache backend/htmlcov backend/.coverage
+	@rm -rf backend/__pycache__ backend/src/**/__pycache__ backend/tests/**/__pycache__
 	@find . -type d -name "*.egg-info" -exec rm -rf {} + || true
 

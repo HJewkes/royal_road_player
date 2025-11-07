@@ -128,6 +128,7 @@ cython_debug/
 # ==============================================================================
 # Dependencies
 node_modules/
+frontend/node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
@@ -249,11 +250,8 @@ data/books/
 # ==============================================================================
 # Build Artifacts
 # ==============================================================================
-# Web build
-web/dist/
-web/static/audio/
-web/static/css/*.css
-web/static/js/*.js
+# Frontend build
+frontend/dist/
 
 # Python build
 build/

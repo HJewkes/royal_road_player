@@ -1,0 +1,273 @@
+.chunkTimelineContainer {
+  margin-top: 15px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(5px);
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.chunkTimelineContainer.hidden {
+  display: none;
+}
+
+.chunkTimelineHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  font-size: 0.85em;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.chunkTimelineLabel {
+  font-weight: 600;
+  color: var(--color-text-primary);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.chunkTimelineStats {
+  color: var(--color-text-tertiary);
+  font-size: 0.9em;
+}
+
+.chunkTimelineBar {
+  position: relative;
+  width: 100%;
+  height: 30px;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 8px;
+  overflow: visible;
+  margin-bottom: 5px;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.chunkTimelineSegment {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  transition: opacity 0.2s, transform 0.2s;
+}
+
+.chunkTimelineSegment.currentChunk {
+  opacity: 1 !important;
+  transform: scaleY(1.1);
+  z-index: 10;
+  box-shadow: 0 0 8px rgba(205, 133, 63, 0.6);
+}
+
+.chunkTimelineGap {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  z-index: 5;
+}
+
+.chunkTimelinePositionIndicator {
+  position: absolute;
+  top: -2px;
+  width: 3px;
+  height: 34px;
+  background: var(--color-orange-medium);
+  border-radius: 2px;
+  z-index: 20;
+  pointer-events: none;
+  box-shadow: 0 0 4px rgba(205, 133, 63, 0.8);
+  transition: left 0.1s linear;
+  margin-left: -1.5px;
+}
+
+.chunkTimelinePositionIndicator.hidden {
+  display: none;
+}
+
+.chunkTransitionWarning {
+  margin-top: 8px;
+  padding: 6px 12px;
+  background: #fff3cd;
+  border: 1px solid #ffc107;
+  border-radius: 4px;
+  color: #856404;
+  font-size: 0.85em;
+  text-align: center;
+  animation: pulse 1s ease-in-out infinite;
+}
+
+.chunkTransitionWarning.hidden {
+  display: none;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+/* Chunk Details Table */
+.chunkTableContainer {
+  margin-top: 20px;
+  overflow-x: auto;
+}
+
+.chunkTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9em;
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(5px);
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.chunkTable thead {
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.chunkTable th {
+  padding: 12px 8px;
+  text-align: left;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  border-bottom: 2px solid rgba(255, 255, 255, 0.1);
+}
+
+.chunkTable th:first-child {
+  padding-left: 16px;
+}
+
+.chunkTable th:last-child {
+  padding-right: 16px;
+}
+
+.chunkTable tbody tr {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  transition: background-color 0.2s ease;
+}
+
+.chunkTable tbody tr:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.chunkTable tbody tr.completedRow {
+  background: rgba(76, 175, 80, 0.05);
+}
+
+.btnGeneratePending {
+  background: rgba(205, 133, 63, 0.3);
+  backdrop-filter: blur(10px);
+  color: white;
+  border: 1px solid rgba(205, 133, 63, 0.5);
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.8em;
+  transition: all 0.3s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.btnGeneratePending:hover {
+  background: rgba(205, 133, 63, 0.5);
+  transform: translateY(-1px);
+}
+
+.actionsCell {
+  text-align: center;
+}
+
+.btnGenerateChunk {
+  background: rgba(205, 133, 63, 0.3);
+  backdrop-filter: blur(10px);
+  color: white;
+  border: 1px solid rgba(205, 133, 63, 0.5);
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.8em;
+  transition: all 0.3s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.btnGenerateChunk:hover:not(:disabled) {
+  background: rgba(205, 133, 63, 0.5);
+  transform: translateY(-1px);
+}
+
+.btnGenerateChunk:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.spinner {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.chunkTable tbody tr:last-child {
+  border-bottom: none;
+}
+
+.chunkTable td {
+  padding: 10px 8px;
+  color: var(--color-text-secondary);
+}
+
+.chunkTable td:first-child {
+  padding-left: 16px;
+}
+
+.chunkTable td:last-child {
+  padding-right: 16px;
+}
+
+.chunkIndexCell {
+  font-weight: 600;
+  color: var(--color-text-primary);
+  text-align: center;
+  width: 60px;
+}
+
+.positionCell,
+.lengthCell,
+.durationCell {
+  font-family: 'Courier New', monospace;
+  text-align: right;
+  color: var(--color-text-tertiary);
+}
+
+.durationCell .loading {
+  color: var(--color-text-tertiary);
+  font-style: italic;
+  font-size: 0.85em;
+}
+
+.statusCell {
+  text-align: center;
+}
+
+.statusBadge {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.85em;
+  font-weight: 600;
+  color: white;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  text-transform: capitalize;
+}
+

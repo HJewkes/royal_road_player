@@ -410,12 +410,38 @@ A phase is NOT complete until:
 
 ```
 project-root/
-├── src/                    # Source code
-│   ├── __init__.py
-│   └── module.py
-├── tests/                  # Test code (mirrors src/)
-│   ├── __init__.py
-│   └── test_module.py
+├── backend/                # Python backend
+│   ├── src/               # Python source code
+│   │   ├── __init__.py
+│   │   ├── scraper/       # Web scraping modules
+│   │   ├── tts/           # Text-to-speech engine
+│   │   ├── llm/           # LLM annotation modules
+│   │   ├── services/      # Business logic services
+│   │   ├── utils/         # Utility functions
+│   │   └── web/           # FastAPI backend
+│   │       ├── app.py
+│   │       ├── routes.py
+│   │       └── ...
+│   ├── tests/             # Test code (mirrors src/)
+│   │   ├── __init__.py
+│   │   └── test_module.py
+│   ├── requirements.txt   # Python production dependencies
+│   ├── requirements-dev.txt # Python development dependencies
+│   ├── pytest.ini         # Test configuration
+│   └── README.md          # Backend-specific documentation
+├── frontend/              # TypeScript/React frontend
+│   ├── src/
+│   │   ├── components/    # React components
+│   │   ├── store/         # Zustand state management
+│   │   ├── styles/        # CSS modules
+│   │   ├── types/         # TypeScript type definitions
+│   │   ├── App.tsx
+│   │   └── main.tsx
+│   ├── package.json       # Node.js dependencies
+│   ├── tsconfig.json      # TypeScript configuration
+│   ├── vite.config.ts     # Vite build configuration
+│   ├── index.html         # HTML entry point
+│   └── README.md          # Frontend-specific documentation
 ├── data/                   # Runtime data (gitignored)
 │   ├── databases/
 │   ├── uploads/
@@ -434,10 +460,7 @@ project-root/
 ├── .cursorrules           # Project-specific rules
 ├── README.md              # Main documentation
 ├── SETUP.md               # Setup instructions
-├── requirements.txt       # Production dependencies
-├── requirements-dev.txt   # Development dependencies
 ├── Makefile               # Build automation
-├── pytest.ini             # Test configuration
 ├── .gitignore
 └── .env.example           # Credential template
 ```
@@ -1084,8 +1107,236 @@ Update these rules when:
 
 ---
 
+## UI/UX Development Patterns
+
+### Frontend State Management
+
+**URL State + localStorage Pattern:**
+- Use URL parameters as primary source of truth for navigation state (book, chapter, position)
+- Fall back to localStorage for persistence across sessions
+- Clear URL parameters when returning to library/home view
+- Update URL on state changes to enable bookmarking and sharing
+
+**Example Pattern:**
+```javascript
+// Initialize from URL first, then localStorage
+const urlParams = new URLSearchParams(window.location.search);
+const bookId = urlParams.get('book') || localStorage.getItem('bookId');
+
+// Save state to both URL and localStorage
+window.history.pushState({}, '', `?book=${bookId}&chapter=${chapter}`);
+localStorage.setItem('bookId', bookId);
+```
+
+### Polling & Real-Time Updates
+
+**Smart Polling Strategy:**
+- Poll at appropriate intervals (1-3 seconds for active jobs, longer for passive updates)
+- Automatically stop polling when conditions are met (all jobs complete, no active work)
+- Always clear intervals on component unmount or view changes
+- Use separate intervals for different concerns (jobs, chunks, progress)
+
+**Best Practices:**
+- Store interval IDs in class properties for cleanup
+- Check if interval exists before clearing (avoid errors)
+- Stop polling when user navigates away from relevant view
+- Resume polling when returning to view if conditions warrant
+
+**Example:**
+```javascript
+// Start polling
+this.jobPollInterval = setInterval(() => {
+    this.loadJobs();
+    if (this.allJobsComplete()) {
+        clearInterval(this.jobPollInterval);
+        this.jobPollInterval = null;
+    }
+}, 1000);
+
+// Cleanup
+if (this.jobPollInterval) {
+    clearInterval(this.jobPollInterval);
+    this.jobPollInterval = null;
+}
+```
+
+### Modal/Panel Lifecycle Management
+
+**Single Active Modal Pattern:**
+- Only one modal/panel visible at a time
+- Hide all other modals before showing new one
+- Remove dynamically created panels from DOM when closed (prevent accumulation)
+- Use event delegation for click-outside-to-close (prevents stopPropagation issues)
+
+**Cleanup Requirements:**
+- Remove event listeners when panels are closed
+- Clear any polling intervals associated with panel
+- Reset form state if applicable
+- Remove DOM elements for dynamically created panels
+
+### UI Design Preferences
+
+**Visual Design:**
+- Prefer dark mode with glassmorphic effects (backdrop-filter, transparency)
+- Use icon libraries (Lucide, Font Awesome) over emojis for consistency
+- Implement smooth transitions and hover states
+- Use consistent color schemes with CSS variables
+
+**Accessibility:**
+- Provide keyboard shortcuts for common actions
+- Ensure proper focus management in modals
+- Use semantic HTML elements
+- Include ARIA labels where appropriate
+
+---
+
+## Background Job Management
+
+### Job Queue Architecture
+
+**Separate Queues by Resource Type:**
+- Maintain separate queues for different resource-intensive operations
+- Example: Scraping queue (I/O bound) vs Audio generation queue (GPU bound)
+- Prevent resource contention by limiting concurrent jobs per queue
+- Track running jobs separately per queue type
+
+**Job Lifecycle:**
+- `PENDING` → `RUNNING` → `COMPLETED`/`FAILED`
+- Support `SUPERSEDED` status for jobs replaced by newer versions
+- Persist job state to disk for recovery after server restart
+- Filter out `SUPERSEDED` jobs from UI displays
+
+### Subprocess Management
+
+**Live Output Streaming:**
+- Combine `stdout` and `stderr` for unified error reporting
+- Use `bufsize=1` for line buffering (real-time updates)
+- Stream output in separate thread (`asyncio.to_thread`) to avoid blocking event loop
+- Update job messages in real-time as subprocess produces output
+
+**Error Handling:**
+- Capture up to 2000 characters of combined output for failed jobs
+- Include exit code in error messages
+- Log full tracebacks for debugging
+- Provide actionable error messages in UI
+
+**Example Pattern:**
+```python
+process = subprocess.Popen(
+    cmd,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.STDOUT,  # Combine streams
+    bufsize=1,  # Line buffering
+    text=True
+)
+
+# Stream output in background thread
+async def read_output():
+    for line in process.stdout:
+        job['message'] = line.strip()
+        self._save_jobs()
+```
+
+### Metadata Refresh After Jobs
+
+**Post-Job Metadata Updates:**
+- Always refresh metadata after job completion (file system may have changed)
+- Re-run analysis functions (e.g., chunking) to get accurate positions
+- Update both completed and pending item statuses
+- Preserve historical metadata (generation times, created dates) when refreshing
+
+**Idempotent Operations:**
+- Use deterministic IDs for chunks/items (hash of content + position)
+- Check file existence before marking as completed
+- Support regeneration of failed items without duplicating successful ones
+
+---
+
+## API Design Patterns
+
+### FastAPI Route Ordering
+
+**Critical:** Specific routes MUST come before generic parameterized routes.
+
+**❌ WRONG:**
+```python
+@router.get("/api/books/{book_id}")  # This will match "preview"!
+async def get_book(book_id: str):
+    ...
+
+@router.get("/api/books/preview")  # Never reached!
+async def get_preview():
+    ...
+```
+
+**✅ CORRECT:**
+```python
+@router.get("/api/books/preview")  # Specific route first
+async def get_preview():
+    ...
+
+@router.get("/api/books/{book_id}")  # Generic route after
+async def get_book(book_id: str):
+    ...
+```
+
+**Rule:** FastAPI matches routes in order. More specific routes must be defined first.
+
+### Error Response Format
+
+**Consistent Error Structure:**
+- Return structured error objects with `error` or `message` field
+- Include HTTP status codes appropriately
+- Provide context for debugging (without exposing sensitive data)
+- Log server-side errors with full details
+
+---
+
+## TTS-Specific Constraints & Patterns
+
+### Character Limits
+
+**XTTS v2 Constraint:**
+- Hard limit: 250 characters per text segment
+- Must enforce at chunking level, not just generation level
+- Split paragraphs → sentences → words if necessary to respect limit
+- Document limits clearly in code constants
+
+**Chunking Strategy:**
+1. First attempt: Split at paragraph breaks
+2. If paragraph > limit: Split at sentence boundaries
+3. If sentence > limit: Split at word boundaries (last resort)
+4. Never exceed limit, even if it means single-word chunks
+
+### Chunk Metadata Tracking
+
+**Required Metadata Fields:**
+- `text_start`: Character position in original text
+- `text_end`: Character position in original text
+- `status`: `'completed'` | `'pending'` | `'flagged'`
+- `generation_time_seconds`: For performance tracking
+- `created_at`: Timestamp for sorting/filtering
+- `index`: Sequential chunk number (1-based)
+
+**Metadata Refresh Logic:**
+- Generate metadata for ALL planned chunks (completed + pending)
+- Check file existence to determine status
+- Preserve historical data (times, dates) for completed chunks
+- Update counts based on completed chunks only
+
+### Voice Registry Management
+
+**Path Resolution:**
+- Resolve relative paths against project root, not config file location
+- Validate voice sample files exist before use
+- Provide fallback/default voice if specified voice not found
+- Log warnings for missing voice files (don't fail silently)
+
+---
+
 ## Version History
 
+- **v1.1** (2025-01-27): Added UI/UX patterns, background job management, API design patterns, and TTS-specific constraints from Audiobook project.
 - **v1.0** (2025-10-18): Initial comprehensive version incorporating metrics-driven development, testing best practices, and project structure standards from Reddit Tier List Scraper project.
 
 ---
@@ -1104,6 +1355,9 @@ Update these rules when:
 - [ ] `.env.example` template
 - [ ] Validation before documentation
 - [ ] Phase completion checklists
+- [ ] Proper cleanup of intervals/polling in frontend
+- [ ] URL state management for navigation persistence
+- [ ] Background job queue management (separate queues for resource types)
 
 ### Red Flags
 
@@ -1116,6 +1370,11 @@ Update these rules when:
 - ❌ Vague success criteria
 - ❌ No baseline comparisons
 - ❌ Untested code in production
+- ❌ Polling intervals not cleaned up (memory leaks)
+- ❌ Generic API routes before specific routes (FastAPI)
+- ❌ Hard-coded character limits without constants
+- ❌ Missing metadata refresh after background jobs complete
+- ❌ Modals/panels accumulating in DOM without cleanup
 
 ---
 

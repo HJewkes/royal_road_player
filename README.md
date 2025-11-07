@@ -15,6 +15,7 @@ A comprehensive local audiobook system for Royal Road books with high-quality te
 ### Prerequisites
 
 - Python 3.10+
+- Node.js 18+ (for frontend development)
 - 8GB+ RAM (16GB recommended for TTS)
 - 10GB+ free storage
 
@@ -33,45 +34,58 @@ make setup-ollama-model
 #### 1. Find a Book on Royal Road
 
 ```bash
-python scripts/find_book.py "Player Manager Ted Steele"
+# Using Python module CLI (from project root)
+cd backend && python -m src.scraper.royal_road --help
+
+# Search for books (via Python API)
+cd backend && python -c "from src.scraper.royal_road import RoyalRoadScraper; scraper = RoyalRoadScraper(); print(scraper.search_royal_road('Player Manager Ted Steele'))"
 ```
 
 #### 2. Download Chapters
 
 ```bash
-# Download all chapters from a book (easiest method)
-python scripts/scrape_book.py "https://www.royalroad.com/fiction/12345/book-title"
+# Download all chapters from a book (from project root)
+cd backend && python -m src.scraper.royal_road "https://www.royalroad.com/fiction/12345/book-title"
 
 # Download specific book number from a series
-python scripts/scrape_book.py "URL" -b 7
+cd backend && python -m src.scraper.royal_road "URL" -b 7
 
 # Test with limited chapters
-python scripts/scrape_book.py "URL" -m 5
+cd backend && python -m src.scraper.royal_road "URL" -m 5
 
 # Custom output directory
-python scripts/scrape_book.py "URL" -o ./my_books
-
-# Alternative: Using module (requires PYTHONPATH)
-PYTHONPATH=. python -m src.scraper.royal_road "URL" -b 7
+cd backend && python -m src.scraper.royal_road "URL" -o ./my_books
 ```
 
-#### 3. Generate Annotations (Phase 3 - Coming Soon)
+#### 3. Generate Audio
 
-```bash
-python -m src.llm.annotator --book-id "book_12345"
+Audio generation is handled through the web interface. You can also use the Python API directly:
+
+```python
+# From backend directory or with PYTHONPATH=backend
+from src.tts.generator import AudioGenerator
+from pathlib import Path
+
+generator = AudioGenerator()
+audio_files = generator.generate_chapter_chunked(
+    text_path=Path("data/books/.../chapters/07-01 - Chapter Title.txt"),
+    chunk_duration_minutes=1.0
+)
 ```
 
-#### 4. Convert to Audio (Phase 2 - Coming Soon)
-
-```bash
-python -m src.tts.generator --book-id "book_12345"
-```
-
-#### 5. Start Web App (Phase 4 - Coming Soon)
+#### 4. Start Web App
 
 ```bash
 make run
+# Then open http://localhost:8000 in your browser
 ```
+
+The web app provides:
+- Library view with all downloaded books
+- Chapter playback with progress tracking
+- Background job management (scraping, audio generation)
+- Series discovery and book search
+- Chunk timeline visualization
 
 ## Documentation
 

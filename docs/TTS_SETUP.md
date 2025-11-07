@@ -69,28 +69,62 @@ TTS_MODEL=tts_models/en/ljspeech/tacotron2-DDC
 
 ### Basic Usage
 
-```bash
-# Generate audio for a chapter
-python scripts/generate_audio.py "data/books/.../chapters/07-01 - Chapter Title.txt"
+Audio generation is primarily handled through the web interface. You can also use the Python API directly:
+
+```python
+from src.tts.generator import AudioGenerator
+from pathlib import Path
+
+generator = AudioGenerator()
+
+# Generate chunked audio (recommended for long chapters)
+audio_files = generator.generate_chapter_chunked(
+    text_path=Path("data/books/.../chapters/07-01 - Chapter Title.txt"),
+    chunk_duration_minutes=1.0
+)
+
+# Generate single audio file
+audio_path = generator.generate_chapter(
+    text_path=Path("chapter.txt"),
+    output_path=Path("output.wav")
+)
 ```
 
 ### Advanced Options
 
-```bash
-# With custom output path
-python scripts/generate_audio.py chapter.txt -o output.wav
+```python
+from src.tts.generator import AudioGenerator
+from pathlib import Path
+
+generator = AudioGenerator()
 
 # With speaker reference (voice cloning)
-python scripts/generate_audio.py chapter.txt --speaker reference_voice.wav
+audio_files = generator.generate_chapter_chunked(
+    text_path=Path("chapter.txt"),
+    speaker="path/to/reference_voice.wav",
+    chunk_duration_minutes=1.0
+)
 
 # With speed adjustment
-python scripts/generate_audio.py chapter.txt --speed 1.2
+audio_files = generator.generate_chapter_chunked(
+    text_path=Path("chapter.txt"),
+    speed=1.2,
+    chunk_duration_minutes=1.0
+)
 
 # With emotion
-python scripts/generate_audio.py chapter.txt --emotion happy
+audio_files = generator.generate_chapter_chunked(
+    text_path=Path("chapter.txt"),
+    emotion="happy",
+    chunk_duration_minutes=1.0
+)
 
 # With language
-python scripts/generate_audio.py chapter.txt --language en
+audio_files = generator.generate_chapter_chunked(
+    text_path=Path("chapter.txt"),
+    language="en",
+    chunk_duration_minutes=1.0
+)
 ```
 
 ## Configuration
