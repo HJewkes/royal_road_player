@@ -204,10 +204,12 @@ storybook-static
 # Runtime Data & Application Files
 # ==============================================================================
 # Application data
-data/
+# Ignore all contents but allow .gitkeep files for directory structure
+data/*
 !data/.gitkeep
+data/**/*
 !data/**/.gitkeep
-logs/
+logs/*
 !logs/.gitkeep
 *.log
 *.log.*
