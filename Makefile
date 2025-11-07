@@ -111,6 +111,7 @@ teardown: ## Complete cleanup to clean state
 	@rm -rf .pytest_cache .mypy_cache htmlcov .coverage || true
 	@rm -rf backend/.pytest_cache backend/.mypy_cache backend/htmlcov backend/.coverage || true
 	@rm -rf backend/__pycache__ backend/src/**/__pycache__ backend/tests/**/__pycache__ || true
+	@rm -rf backend/data backend/logs || true
 	@find . -type d -name "*.egg-info" -exec rm -rf {} + || true
 	@echo "✅ Cleanup complete"
 
@@ -124,7 +125,7 @@ install: ## Install dependencies only
 
 dev: ## Run in development mode
 	@echo "🔧 Starting development server..."
-	@. venv/bin/activate && cd backend && python -m src.web.app --reload
+	@. venv/bin/activate && cd backend && DEBUG=true python -m src.web.app --reload
 
 test: ## Run all tests
 	@echo "🧪 Running tests..."
@@ -183,5 +184,6 @@ clean: ## Remove build artifacts
 	@rm -rf .pytest_cache .mypy_cache htmlcov .coverage
 	@rm -rf backend/.pytest_cache backend/.mypy_cache backend/htmlcov backend/.coverage
 	@rm -rf backend/__pycache__ backend/src/**/__pycache__ backend/tests/**/__pycache__
+	@rm -rf backend/data backend/logs
 	@find . -type d -name "*.egg-info" -exec rm -rf {} + || true
 

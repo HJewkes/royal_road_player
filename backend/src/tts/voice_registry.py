@@ -28,9 +28,12 @@ def load_voice_registry(config_path: Optional[Path] = None) -> Dict[str, Voice]:
     Returns:
         Dictionary mapping voice names to Voice objects
     """
+    # Get project root for resolving relative paths
+    project_root = Path(__file__).parent.parent.parent.parent
+    
     if config_path is None:
-        # Try default location
-        default_path = Path("data/voices/default_voices.yaml")
+        # Try default location (relative to project root)
+        default_path = project_root / "data" / "voices" / "default_voices.yaml"
         if default_path.exists():
             config_path = default_path
         else:
@@ -68,8 +71,7 @@ def load_voice_registry(config_path: Optional[Path] = None) -> Dict[str, Voice]:
                 language='en',
             )
     
-    # Validate paths
-    project_root = Path(__file__).parent.parent.parent
+    # Validate paths (project_root already set at top of function)
     for name, voice in registry.items():
         if not voice.speaker_wav:
             continue
@@ -97,12 +99,11 @@ def get_default_registry() -> Dict[str, Voice]:
     Returns:
         Dictionary with default narrator voice
     """
-    # Default narrator voice (p241 British male)
-    default_speaker = Path("data/voice_samples/british_male/british_male_p241.wav")
-    
     # Resolve relative to project root
-    project_root = Path(__file__).parent.parent.parent
-    default_speaker = project_root / default_speaker
+    project_root = Path(__file__).parent.parent.parent.parent
+    
+    # Default narrator voice (p241 British male)
+    default_speaker = project_root / "data" / "voice_samples" / "british_male" / "british_male_p241.wav"
     
     return {
         'narrator': Voice(

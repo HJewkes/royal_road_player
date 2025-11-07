@@ -1,9 +1,10 @@
 """FastAPI web application."""
 
+import os
 from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.utils.config import get_settings
@@ -34,55 +35,61 @@ project_root = Path(__file__).parent.parent.parent.parent
 # Mount audio files from data directory (relative to project root)
 app.mount("/audio", StaticFiles(directory=str(project_root / "data" / "books")), name="audio")
 
-# Serve React build in production (relative to project root)
+# Determine if we're in development mode
+# Check environment variable first (overrides .env file), then settings.debug, then dist existence
+DEV_SERVER_URL = "http://localhost:3000"
 dist_path = project_root / "frontend" / "dist"
-if dist_path.exists():
-    # Mount static assets (JS, CSS, etc.)
-    app.mount("/assets", StaticFiles(directory=str(dist_path / "assets")), name="assets")
+debug_env = os.getenv("DEBUG", "").lower() in ("true", "1", "yes")
+is_development = debug_env or settings.debug or not dist_path.exists()
+
+if is_development:
+    # Development mode - redirect to frontend dev server
+    @app.get("/")
+    async def root():
+        """Redirect to frontend dev server in development mode."""
+        return RedirectResponse(url=DEV_SERVER_URL, status_code=307)
     
-    # Serve index.html for all non-API routes (SPA routing)
+    # Also redirect all non-API routes to dev server in development
     @app.get("/{full_path:path}")
-    async def serve_spa(full_path: str, request: Request):
-        """Serve React app for all non-API routes."""
-        # Don't serve React for API routes
+    async def redirect_to_dev(full_path: str, request: Request):
+        """Redirect non-API routes to frontend dev server in development."""
+        # Don't redirect API or audio routes
         if full_path.startswith("api/") or full_path.startswith("audio/"):
             return {"detail": "Not found"}
         
-        # Serve index.html for all other routes
-        index_path = dist_path / "index.html"
-        if index_path.exists():
-            return FileResponse(index_path)
-        else:
-            return HTMLResponse("""
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <title>Audiobook Player</title>
-            </head>
-            <body>
-                <h1>Audiobook Player</h1>
-                <p>React build not found. Please run 'npm run build' to build the React app.</p>
-            </body>
-            </html>
-            """)
+        # Redirect to dev server, preserving the path
+        return RedirectResponse(url=f"{DEV_SERVER_URL}/{full_path}", status_code=307)
 else:
-    # Development mode - serve a message
-    @app.get("/", response_class=HTMLResponse)
-    async def root():
-        """Serve development message."""
-        return """
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Audiobook Player - Development</title>
-        </head>
-        <body>
-            <h1>Audiobook Player</h1>
-            <p>React build not found. Run 'npm run build' to build the React app, or use 'npm run dev' for development.</p>
-            <p>For development, start the React dev server with 'npm run dev' (runs on port 3000).</p>
-        </body>
-        </html>
-        """
+    # Production mode - serve React build
+    if dist_path.exists():
+        # Mount static assets (JS, CSS, etc.)
+        app.mount("/assets", StaticFiles(directory=str(dist_path / "assets")), name="assets")
+        
+        # Serve index.html for all non-API routes (SPA routing)
+        @app.get("/{full_path:path}")
+        async def serve_spa(full_path: str, request: Request):
+            """Serve React app for all non-API routes."""
+            # Don't serve React for API routes
+            if full_path.startswith("api/") or full_path.startswith("audio/"):
+                return {"detail": "Not found"}
+            
+            # Serve index.html for all other routes
+            index_path = dist_path / "index.html"
+            if index_path.exists():
+                return FileResponse(index_path)
+            else:
+                return HTMLResponse("""
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <title>Audiobook Player</title>
+                </head>
+                <body>
+                    <h1>Audiobook Player</h1>
+                    <p>React build not found. Please run 'npm run build' to build the React app.</p>
+                </body>
+                </html>
+                """)
 
 
 @app.get("/api/health")

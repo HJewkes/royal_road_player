@@ -11,6 +11,18 @@ from pydantic_settings import BaseSettings
 load_dotenv()
 
 
+def get_project_root() -> Path:
+    """
+    Get the project root directory.
+    
+    This resolves to the directory containing backend/ and frontend/ directories,
+    regardless of where the code is executed from.
+    """
+    # This file is at backend/src/utils/config.py
+    # Project root is 3 levels up: backend/src/utils -> backend/src -> backend -> project_root
+    return Path(__file__).parent.parent.parent.parent
+
+
 class Settings(BaseSettings):
     """Application settings."""
 
@@ -32,11 +44,13 @@ class Settings(BaseSettings):
     web_port: int = 8000
     debug: bool = False
 
-    # Data Paths
-    data_dir: Path = Path("./data")
-    books_dir: Path = Path("./data/books")
-    audio_dir: Path = Path("./data/books")
-    database_path: Path = Path("./data/databases/audiobook.db")
+    # Data Paths - will be computed relative to project root in __init__
+    # These are placeholders for Pydantic validation
+    data_dir: Optional[Path] = None
+    books_dir: Optional[Path] = None
+    audio_dir: Optional[Path] = None
+    database_path: Optional[Path] = None
+    log_dir: Optional[Path] = None
 
     # Scraper Configuration
     scraper_delay_seconds: int = 2
@@ -45,7 +59,6 @@ class Settings(BaseSettings):
 
     # Logging
     log_level: str = "INFO"
-    log_dir: Path = Path("./logs")
 
     class Config:
         """Pydantic config."""
@@ -57,6 +70,13 @@ class Settings(BaseSettings):
     def __init__(self, **kwargs):
         """Initialize settings and create directories."""
         super().__init__(**kwargs)
+        # Compute paths relative to project root (not current working directory)
+        project_root = get_project_root()
+        self.data_dir = project_root / "data"
+        self.books_dir = project_root / "data" / "books"
+        self.audio_dir = project_root / "data" / "books"
+        self.database_path = project_root / "data" / "databases" / "audiobook.db"
+        self.log_dir = project_root / "logs"
         # Ensure directories exist
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.books_dir.mkdir(parents=True, exist_ok=True)
