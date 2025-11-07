@@ -1,0 +1,41 @@
+.container {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 20px;
+  position: relative;
+  z-index: 1;
+}
+
+.header {
+  text-align: center;
+  margin-bottom: 30px;
+  color: var(--color-text-primary);
+  position: relative;
+}
+
+.title {
+  font-size: 2.5em;
+  text-shadow: 
+    0 0 20px rgba(205, 133, 63, 0.4),
+    0 0 40px rgba(107, 125, 142, 0.3),
+    2px 2px 4px rgba(0, 0, 0, 0.6);
+  background: linear-gradient(135deg, #f5f5f5 0%, #d0d0d0 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.title svg {
+  filter: drop-shadow(0 0 20px rgba(205, 133, 63, 0.4));
+  color: var(--color-orange-medium);
+}
+
+.main {
+  position: relative;
+  z-index: 1;
+}
+

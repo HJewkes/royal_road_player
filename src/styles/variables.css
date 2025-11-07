@@ -1,0 +1,75 @@
+/* CSS Variables for Theme */
+:root {
+  /* Charcoal Shades */
+  --color-charcoal-dark: #1a1a1a;
+  --color-charcoal-medium: #2b2b2b;
+  --color-charcoal-light: #3a3a3a;
+  --color-charcoal-lighter: #4a4a4a;
+  
+  /* Burnt Orange Shades */
+  --color-orange-dark: #8b4513;
+  --color-orange-medium: #cd853f;
+  --color-orange-light: #ff8c42;
+  --color-orange-lighter: #ffa366;
+  
+  /* Dusty/Steel Blue Shades */
+  --color-blue-dark: #4a5568;
+  --color-blue-medium: #6b7d8e;
+  --color-blue-light: #8b9baa;
+  --color-blue-lighter: #a8b5c0;
+  
+  /* Background Colors */
+  --color-bg-primary: var(--color-charcoal-dark);
+  --color-bg-secondary: var(--color-charcoal-medium);
+  --color-bg-tertiary: var(--color-charcoal-light);
+  
+  /* Text Colors */
+  --color-text-primary: #f5f5f5;
+  --color-text-secondary: #d0d0d0;
+  --color-text-tertiary: #a0a0a0;
+  
+  /* Accent Colors */
+  --color-accent-primary: var(--color-orange-medium);
+  --color-accent-secondary: var(--color-orange-light);
+  --color-accent-blue: var(--color-blue-medium);
+  --color-accent-blue-light: var(--color-blue-light);
+  
+  /* Status Colors */
+  --color-success: #6b8e23;
+  --color-warning: var(--color-orange-medium);
+  --color-error: #c44d3a;
+  
+  /* Glass Effects */
+  --glass-bg: rgba(255, 255, 255, 0.03);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-blur: blur(10px);
+  
+  /* Shadows */
+  --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.5);
+  --shadow-xl: 0 20px 60px rgba(0, 0, 0, 0.6);
+  --shadow-inset: inset 0 2px 4px rgba(0, 0, 0, 0.4);
+  --shadow-glow-orange: 0 0 20px rgba(205, 133, 63, 0.3);
+  --shadow-glow-blue: 0 0 20px rgba(107, 125, 142, 0.3);
+  
+  /* Spacing */
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 12px;
+  --spacing-lg: 16px;
+  --spacing-xl: 24px;
+  
+  /* Border Radius */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-xl: 24px;
+  --radius-full: 50%;
+  
+  /* Transitions */
+  --transition-fast: 0.2s ease;
+  --transition-normal: 0.3s ease;
+  --transition-slow: 0.5s ease;
+}
+

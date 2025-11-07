@@ -1,0 +1,1123 @@
+# Global Development Standards for Cursor AI
+
+> **Last Updated:** 2025-10-18
+> 
+> Comprehensive development standards, testing practices, and project management principles for AI-assisted software development.
+
+---
+
+## Table of Contents
+
+1. [Metrics-Driven Development](#metrics-driven-development) ⭐ CRITICAL
+2. [Testing & Validation](#testing--validation)
+3. [Project Planning & Management](#project-planning--management)
+4. [Project Structure & Organization](#project-structure--organization)
+5. [Code Quality Standards](#code-quality-standards)
+6. [Git Workflow](#git-workflow)
+7. [Tooling & Automation](#tooling--automation)
+8. [Language-Specific Standards](#language-specific-standards)
+9. [Security & Credentials](#security--credentials)
+10. [Documentation Standards](#documentation-standards)
+11. [Rules Maintenance](#rules-maintenance)
+
+---
+
+## Metrics-Driven Development
+
+### Philosophy: Measure, Validate, Then Document ⭐
+
+**Core Principle:** Never document features until metrics prove they work as intended.
+
+### Phase Development Cycle
+
+Every development phase MUST follow this order:
+
+1. **Define Success Metrics**
+   - Establish clear, measurable targets BEFORE implementation
+   - Document baseline measurements for comparison
+   - Set specific thresholds (e.g., "70% success rate", "< 5% duplicates")
+   - Define both quantitative and qualitative metrics
+   - Create acceptance criteria checklist
+
+2. **Implement Measurement Infrastructure FIRST**
+   - Create metrics collection system before feature implementation
+   - Instrument all key decision points
+   - Build automated reporting (JSON + human-readable)
+   - Establish golden datasets for reproducible testing
+   - Design comparison mechanisms (before/after)
+
+3. **Test-Driven Development**
+   - Write metric validation tests before implementation
+   - Create integration tests with real data
+   - Use fixtures/checkpoints for reproducibility
+   - Test against golden datasets
+   - Establish baseline benchmarks
+
+4. **Implement Features**
+   - Build with metrics collection integrated from start
+   - Log all relevant data for analysis
+   - Track performance continuously
+   - Collect detailed examples for debugging
+
+5. **Validate Against Metrics**
+   - Run comprehensive E2E tests with real APIs/data
+   - Compare actual results against targets
+   - Analyze golden dataset performance
+   - Validate consistency across multiple runs
+   - Document edge cases and failure modes
+
+6. **Iterate Until Targets Met**
+   - If metrics don't meet targets, identify root causes
+   - Make targeted improvements (not random changes)
+   - Re-measure and validate
+   - Repeat until ALL targets achieved
+   - Maintain detailed iteration log
+
+7. **Document Only After Validation**
+   - Only document features that meet their metrics
+   - Include actual measured performance in documentation
+   - Provide evidence (test results, reports, graphs)
+   - Update docs if metrics change
+   - Archive metrics reports with documentation
+
+### Required Metrics by Feature Type
+
+**Detection/Filtering Features:**
+- True positive/negative rates
+- False positive/negative rates
+- Precision and recall
+- Confidence score distributions
+- Filter effectiveness percentage
+- Performance vs baseline
+
+**Data Quality Features:**
+- Duplicate rates
+- Normalization accuracy
+- Consistency scores
+- Cache hit rates
+- Manual review queue size
+- Error rates by category
+
+**Performance Features:**
+- API costs per operation
+- Processing time per item (p50, p95, p99)
+- Resource usage (memory, CPU, disk)
+- Cost savings vs baseline
+- Throughput (items/second)
+- Latency percentiles
+
+**Reliability Features:**
+- Error rates by type
+- Recovery success rates
+- Uptime percentage
+- Consistency across runs
+- Regression test pass rates
+
+### Metrics Infrastructure Requirements
+
+**Comprehensive Tracking:**
+- Track EVERY key decision point
+- Record successes AND failures (don't cherry-pick)
+- Log detailed examples for analysis
+- Maintain historical data for trends
+- Version control metrics collection code
+
+**Automated Reporting:**
+- JSON reports for programmatic analysis
+- Human-readable summaries
+- Comparison reports (baseline vs improved)
+- Trend analysis across runs
+- Visualization-friendly formats
+
+**Golden Datasets:**
+- Create reproducible test datasets
+- Use checkpoints to capture real data
+- Version control datasets (or metadata)
+- Document dataset characteristics
+- Refresh periodically to avoid staleness
+
+**Validation Tests:**
+- Automated metric threshold tests
+- Integration tests with golden data
+- Baseline comparison tests
+- Regression detection
+- Performance benchmarks
+
+### Phase Completion Criteria Checklist
+
+A phase is NOT complete until:
+
+- [ ] All success metrics defined with specific, measurable targets
+- [ ] Baseline measurements captured (if improving existing feature)
+- [ ] Measurement infrastructure implemented and tested
+- [ ] Metrics validation tests created and passing
+- [ ] Golden dataset generated and versioned (if applicable)
+- [ ] E2E tests run with real APIs/data (not just mocks)
+- [ ] All metric targets achieved and validated
+- [ ] Results consistent across multiple runs (3+ runs)
+- [ ] Baseline comparison documented with graphs/tables
+- [ ] Edge cases identified and handled
+- [ ] Failure modes documented
+- [ ] Documentation updated with actual measured performance
+- [ ] Metrics reports archived with phase documentation
+
+### Anti-Patterns to Avoid
+
+**❌ DON'T:**
+- Document features before measuring their effectiveness
+- Set vague goals like "improve performance" without numbers
+- Skip E2E testing with real APIs/data
+- Assume features work as intended without measurement
+- Move to next phase with unmet metrics
+- Ignore negative results or failing metrics
+- Cherry-pick successful runs
+- Test only happy paths
+- Use unrealistic test data
+
+**✅ DO:**
+- Define specific, measurable targets upfront
+- Build measurement into every feature from day 1
+- Validate with real data and real APIs
+- Iterate until all targets are met
+- Document actual measured performance with evidence
+- Maintain golden datasets for regression testing
+- Test failure scenarios and edge cases
+- Use realistic, representative data
+- Track metrics over time for trends
+
+---
+
+## Testing & Validation
+
+### Testing Pyramid
+
+```
+       /\
+      /E2E\      ← Few, slow, expensive (real APIs)
+     /------\
+    /Integr-\   ← Some, moderate speed
+   /----------\
+  /   Unit     \ ← Many, fast, isolated
+ /--------------\
+```
+
+**Target Distribution:**
+- 70% Unit tests (fast, isolated, mocked)
+- 20% Integration tests (moderate, some real components)
+- 10% E2E tests (slow, expensive, real APIs)
+
+### Testing Standards
+
+**Coverage Requirements:**
+- Minimum 90% code coverage for production code
+- 100% coverage for critical paths
+- Test both success AND failure paths
+- Include edge cases and boundary conditions
+
+**Test Organization:**
+- `tests/` directory mirrors `src/` structure
+- One test file per source file (`test_module.py` for `module.py`)
+- Group related tests in classes
+- Use descriptive test names (`test_should_x_when_y`)
+
+**Test Types:**
+
+1. **Unit Tests**
+   - Test individual functions/methods in isolation
+   - Mock all external dependencies (APIs, DB, file system)
+   - Fast (< 1 second per test)
+   - Focus on logic and edge cases
+
+2. **Integration Tests**
+   - Test multiple components working together
+   - Minimize mocking (test real interactions)
+   - Use test databases/fixtures
+   - Validate data flow between components
+
+3. **End-to-End Tests**
+   - Test complete workflows with real APIs
+   - Use checkpoint/resume for expensive operations
+   - Generate golden datasets for reproducibility
+   - Run on CI before releases
+
+4. **Performance Tests**
+   - Establish baseline benchmarks
+   - Set acceptable thresholds
+   - Track metrics over time
+   - Fail on regressions
+
+5. **Regression Tests**
+   - Test for previously fixed bugs
+   - Ensure fixes stay fixed
+   - Document the original issue
+   - Include reproduction steps
+
+### Validation Best Practices (from Industry)
+
+**1. Clear, Measurable Requirements**
+- Use user stories and acceptance criteria
+- Define "done" precisely
+- Create validation checklists
+- Get stakeholder sign-off
+
+**2. Automated Testing in CI/CD**
+- Run tests on every commit
+- Block merges on test failures
+- Fast feedback loops
+- Parallel test execution
+
+**3. User Acceptance Testing (UAT)**
+- Involve actual users when possible
+- Test in realistic scenarios
+- Collect qualitative feedback
+- Validate assumptions
+
+**4. Regular Code Reviews & Inspections**
+- Review all code before merge
+- Check for test coverage
+- Validate against requirements
+- Pair programming for complex features
+
+**5. Prototyping & Mockups**
+- Validate ideas before full implementation
+- Get early feedback
+- Iterate cheaply
+- Reduce rework
+
+**6. Configuration Management**
+- Version control everything
+- Reproducible builds
+- Environment parity (dev/staging/prod)
+- Dependency pinning
+
+**7. Risk Assessment**
+- Identify high-risk areas
+- Prioritize testing efforts
+- Plan mitigation strategies
+- Monitor risk indicators
+
+### Test Data Management
+
+**Golden Datasets:**
+- Capture real production-like data
+- Version control or document generation method
+- Refresh periodically
+- Anonymize sensitive data
+
+**Fixtures:**
+- Small, focused test data
+- Stored in version control
+- Easy to understand
+- Cover common scenarios
+
+**Checkpoint-Based Testing:**
+- Capture expensive API responses
+- Reuse for fast, consistent tests
+- Version control checkpoints
+- Document data provenance
+
+---
+
+## Project Planning & Management
+
+### Planning Philosophy
+
+**Key Principles:**
+- Plan for human-in-the-loop (HIL) workflows
+- Automate everything that can be automated
+- Make manual steps explicit and upfront
+- Build recovery mechanisms from day 1
+
+### Human-in-the-Loop (HIL) Planning
+
+**Identify Manual Steps:**
+- Always distinguish: human-required vs. automatable
+- Put ALL manual steps at the TOP of the plan
+- Minimize manual steps wherever possible
+
+**Automatable "Manual" Steps:**
+- ✅ Checking system requirements → `command --version`
+- ✅ Initializing git → `git init`
+- ✅ Creating config files → direct file writes
+- ✅ Setting up environment → scripts
+- ❌ Getting API keys → truly requires human web interaction
+- ❌ User feedback/decisions → requires human judgment
+
+**For Credentials:**
+- User provides values (paste from website)
+- Agent creates `.env` file directly
+- No interactive scripts that prompt for input
+- Validate format immediately
+
+### Plan Structure
+
+1. **Prerequisites & Manual Steps**
+   - Clear list of what requires human action
+   - Links to where to get credentials
+   - Expected format/validation criteria
+
+2. **Pre-flight Checks**
+   - Automated system validation
+   - Dependency checks
+   - Version verification
+   - Report status clearly (✅/❌/⚠️)
+
+3. **Setup Phase**
+   - Automated environment preparation
+   - One-command setup if possible
+   - Create all necessary directories
+   - Install dependencies
+
+4. **Implementation Phase**
+   - Test-Driven Development approach
+   - Build with metrics from start
+   - Incremental commits
+   - Continuous validation
+
+5. **Validation Phase**
+   - Run all test suites
+   - Validate metrics
+   - E2E testing with real APIs
+   - Performance benchmarking
+
+6. **Documentation Phase**
+   - Only after validation passes
+   - Include actual metrics
+   - Provide usage examples
+   - Document known limitations
+
+7. **Finalization Phase**
+   - Clean git history
+   - Tag releases
+   - Archive completed plans
+   - Post-mortem/lessons learned
+
+### Phase Transitions
+
+**Before Moving to Next Phase:**
+- Complete ALL checklist items
+- Validate ALL metrics met
+- Run full test suite
+- Get stakeholder approval (if applicable)
+- Archive phase documentation
+- Update project roadmap
+
+---
+
+## Project Structure & Organization
+
+### Directory Organization
+
+```
+project-root/
+├── src/                    # Source code
+│   ├── __init__.py
+│   └── module.py
+├── tests/                  # Test code (mirrors src/)
+│   ├── __init__.py
+│   └── test_module.py
+├── data/                   # Runtime data (gitignored)
+│   ├── databases/
+│   ├── uploads/
+│   ├── exports/
+│   └── checkpoints/
+├── logs/                   # Application logs (gitignored)
+├── docs/                   # Living documentation
+│   ├── ARCHITECTURE.md
+│   ├── API.md
+│   └── RUNBOOK.md
+├── .archive/               # Temporal documentation
+│   ├── plans/
+│   └── reports/
+├── scripts/                # Utility scripts
+├── .github/workflows/      # CI/CD configurations
+├── .cursorrules           # Project-specific rules
+├── README.md              # Main documentation
+├── SETUP.md               # Setup instructions
+├── requirements.txt       # Production dependencies
+├── requirements-dev.txt   # Development dependencies
+├── Makefile               # Build automation
+├── pytest.ini             # Test configuration
+├── .gitignore
+└── .env.example           # Credential template
+```
+
+### Documentation Organization
+
+**Living Documentation** (constantly updated):
+- `docs/` directory
+- README.md, SETUP.md in root
+- Keep current with code changes
+- Version control
+
+**Temporal Documentation** (point-in-time snapshots):
+- `.archive/` directory
+- Completed plans
+- Progress reports
+- Design decisions
+- Review summaries
+- Never delete, only archive
+
+**Generated Documentation:**
+- API docs (auto-generated)
+- Coverage reports
+- Metrics reports
+- Performance benchmarks
+
+### Runtime Data Management
+
+**Principles:**
+- NEVER commit runtime data
+- Use `.gitkeep` to track empty directories
+- Tools create directories automatically
+- Default paths point to organized locations
+
+**Data Categories:**
+- `data/` - All runtime-generated files
+- `logs/` - All application and test logs
+- `cache/` - Temporary cache files
+- `.pytest_cache/`, `.mypy_cache/` - Tool caches
+
+### Path Management
+
+- Use relative paths from project root
+- Make paths configurable via environment variables
+- Group related files together
+- Document default paths clearly
+
+---
+
+## Code Quality Standards
+
+### General Principles
+
+- **Readability:** Code is read more than written
+- **Simplicity:** Simple beats clever
+- **Consistency:** Follow established patterns
+- **Maintainability:** Think about future developers
+- **Testability:** Design for testing
+
+### Naming Conventions
+
+**Variables & Functions:**
+- Descriptive names (avoid abbreviations)
+- `snake_case` for Python, Java methods
+- `camelCase` for JavaScript, TypeScript
+- No single-letter except iterators (i, j, k)
+- Boolean variables: `is_`, `has_`, `can_`
+
+**Classes:**
+- `PascalCase` for all languages
+- Noun-based names
+- Descriptive of purpose
+
+**Constants:**
+- `UPPER_SNAKE_CASE`
+- Group related constants
+
+**Files:**
+- `snake_case.py` for Python
+- `kebab-case.ts` for TypeScript
+- One class per file (preferred)
+- Test files: `test_module.py`
+
+### Code Organization
+
+**Function Design:**
+- Single Responsibility Principle
+- Keep functions small (< 50 lines ideal)
+- Clear inputs and outputs
+- Minimize side effects
+- Use type hints
+
+**Class Design:**
+- Single Responsibility Principle
+- Composition over inheritance
+- Keep classes focused
+- Clear public interfaces
+- Private methods prefixed with `_`
+
+**Module Design:**
+- Logical grouping
+- Minimal dependencies
+- Clear public API
+- Hide implementation details
+
+### Error Handling
+
+**Best Practices:**
+- Explicit exception handling
+- Never use bare `except:` clauses
+- Create custom exceptions for domain errors
+- Log errors with context
+- Graceful degradation
+- Retry with exponential backoff for transient errors
+
+**Error Levels:**
+- DEBUG: Detailed diagnostic information
+- INFO: General informational messages
+- WARNING: Something unexpected but recoverable
+- ERROR: Serious problem, operation failed
+- CRITICAL: System instability
+
+### Performance Considerations
+
+- Profile before optimizing
+- Optimize hot paths first
+- Use appropriate data structures
+- Avoid premature optimization
+- Cache expensive operations
+- Lazy load when possible
+
+---
+
+## Git Workflow
+
+### Commit Standards
+
+**Conventional Commits Format:**
+```
+<type>(<scope>): <subject>
+
+<body>
+
+<footer>
+```
+
+**Types:**
+- `feat`: New feature
+- `fix`: Bug fix
+- `docs`: Documentation changes
+- `test`: Test additions/changes
+- `refactor`: Code refactoring
+- `chore`: Maintenance tasks
+- `perf`: Performance improvements
+- `ci`: CI/CD changes
+
+**Rules:**
+- Atomic commits (one logical change)
+- Write meaningful commit messages
+- Reference issues/tickets
+- Keep subject line < 72 characters
+- Use imperative mood ("Add" not "Added")
+
+### Branch Strategy
+
+**Branch Types:**
+- `main/master`: Production-ready code
+- `develop`: Integration branch
+- `feature/*`: New features
+- `fix/*`: Bug fixes
+- `hotfix/*`: Critical production fixes
+
+**Branch Naming:**
+- Descriptive names: `feature/user-authentication`
+- Include issue number: `fix/123-login-error`
+- Use kebab-case
+
+### Pre-commit Checklist
+
+Before committing:
+- [ ] All tests pass
+- [ ] Linters pass (no warnings)
+- [ ] Type checking passes
+- [ ] Code formatted
+- [ ] No debug code
+- [ ] No commented-out code
+- [ ] Documentation updated
+- [ ] CHANGELOG updated (if applicable)
+
+### Git Best Practices
+
+- Pull before push
+- Review diffs before committing
+- Use `.gitignore` properly
+- Never commit credentials
+- Keep commit history clean
+- Squash "fix typo" commits
+- Write useful commit messages
+- Tag releases
+
+---
+
+## Tooling & Automation
+
+### Makefile Design (CRITICAL)
+
+Every project should have a comprehensive Makefile:
+
+**Essential Targets:**
+```makefile
+.PHONY: help setup teardown rebuild check-system
+
+help:          # Show available commands
+setup:         # Complete one-command setup
+teardown:      # Complete cleanup to clean state
+rebuild:       # Teardown + setup (recovery)
+check-system:  # Validate prerequisites
+
+# Development
+install:       # Install dependencies only
+dev:           # Run in development mode
+test:          # Run all tests
+test-coverage: # Run tests with coverage
+lint:          # Run all linters
+format:        # Format code
+format-check:  # Check formatting
+
+# Operations
+run:           # Run application
+clean:         # Remove build artifacts
+```
+
+**Makefile Best Practices:**
+- Echo clear status messages (✅/❌/⚠️)
+- Use `.PHONY` for non-file targets
+- Provide `help` target as default
+- Handle errors gracefully (`|| true` for cleanup)
+- Test on clean system
+- Document each target
+
+**Setup Target Should:**
+- Check system requirements
+- Create virtual environment
+- Install dependencies
+- Set up configuration
+- Run initial tests
+- Report success/failure clearly
+
+**Teardown Target Should:**
+- Remove virtual environment
+- Delete runtime data
+- Remove cache files
+- Clear logs
+- Reset to clean slate
+- Use `|| true` to not fail on missing files
+
+### Linting Configuration
+
+**Python:**
+- `black` - Formatting (line length 100)
+- `pylint` - Code analysis
+- `flake8` - Style enforcement
+- `mypy` - Type checking
+- `isort` - Import sorting
+
+**JavaScript/TypeScript:**
+- `eslint` - Linting
+- `prettier` - Formatting
+- `tsc` - Type checking
+
+**Configuration Files:**
+- Keep in project root
+- Version control
+- Share team settings
+- Document overrides
+
+### Pre-commit Hooks
+
+**Recommended Hooks:**
+- Trailing whitespace removal
+- EOF newline enforcement
+- Large file prevention
+- Credential scanning
+- Linting
+- Type checking
+- Test execution (fast tests only)
+
+**Setup:**
+```yaml
+# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-added-large-files
+  # Add language-specific hooks
+```
+
+### CI/CD Pipeline
+
+**Essential Steps:**
+1. Install dependencies
+2. Run linters
+3. Run type checkers
+4. Run tests with coverage
+5. Check coverage thresholds
+6. Build artifacts
+7. Deploy (if applicable)
+
+**Best Practices:**
+- Fast feedback (< 10 minutes)
+- Fail fast (stop on first error)
+- Parallel execution
+- Cache dependencies
+- Test matrix (multiple versions)
+- Store artifacts
+
+---
+
+## Language-Specific Standards
+
+### Python (3.10+)
+
+**Style:**
+- Follow PEP 8
+- Black formatting (line length 100)
+- Type hints required
+- Google-style docstrings
+
+**Project Structure:**
+- `src/` for source code
+- Virtual environments (venv)
+- `requirements.txt` + `requirements-dev.txt`
+
+**Best Practices:**
+- Use `pathlib` for paths
+- Context managers for resources
+- List comprehensions (readable ones)
+- F-strings for formatting
+- Logging over print
+
+**Type Hints:**
+```python
+def process_data(items: list[dict[str, Any]]) -> dict[str, int]:
+    """Process data and return summary."""
+    pass
+```
+
+**Docstrings:**
+```python
+def function(param1: str, param2: int) -> bool:
+    """Brief description.
+    
+    Longer description if needed.
+    
+    Args:
+        param1: Description of param1
+        param2: Description of param2
+        
+    Returns:
+        Description of return value
+        
+    Raises:
+        ValueError: When something is invalid
+    """
+    pass
+```
+
+### JavaScript/TypeScript
+
+**Style:**
+- ESLint + Prettier
+- 2 or 4 space indentation (consistent)
+- Semicolons (or consistently not)
+
+**Best Practices:**
+- Use TypeScript for type safety
+- Async/await over callbacks
+- Destructuring
+- Spread operators
+- Arrow functions for lambdas
+
+**TypeScript:**
+```typescript
+interface Config {
+  apiKey: string;
+  timeout: number;
+}
+
+async function fetchData(config: Config): Promise<Data> {
+  // Implementation
+}
+```
+
+### Go
+
+**Style:**
+- Follow `gofmt`
+- Use `golint`, `go vet`
+- Package naming: lowercase, no underscores
+
+**Best Practices:**
+- Error handling (explicit)
+- Defer for cleanup
+- Interfaces for abstraction
+- Table-driven tests
+
+---
+
+## Security & Credentials
+
+### Credential Management
+
+**Rules:**
+- NEVER commit credentials to git
+- Use `.env` files (in `.gitignore`)
+- Provide `.env.example` template
+- Validate format immediately
+- Use environment variables
+- Rotate credentials regularly
+
+**`.env` File:**
+```bash
+# API Keys
+OPENAI_API_KEY=sk-...
+REDDIT_CLIENT_ID=...
+
+# Database
+DATABASE_URL=postgresql://...
+
+# Application
+DEBUG=false
+LOG_LEVEL=info
+```
+
+### `.gitignore` Essentials
+
+```
+# Credentials
+.env
+.env.local
+*.key
+*.pem
+secrets/
+
+# Runtime Data
+data/
+logs/
+*.log
+*.db
+*.db-*
+
+# Dependencies
+venv/
+node_modules/
+__pycache__/
+*.pyc
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build
+dist/
+build/
+*.egg-info/
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+```
+
+### Security Best Practices
+
+- Validate all inputs
+- Sanitize outputs
+- Use HTTPS everywhere
+- Keep dependencies updated
+- Scan for vulnerabilities
+- Principle of least privilege
+- Audit logs
+- Rate limiting
+- SQL injection prevention (parameterized queries)
+- XSS prevention (output escaping)
+
+---
+
+## Documentation Standards
+
+### README.md Structure
+
+```markdown
+# Project Name
+
+Brief description (1-2 sentences)
+
+## Features
+
+- Feature 1
+- Feature 2
+
+## Quick Start
+
+### Installation
+```bash
+# Commands here
+```
+
+### Usage
+```bash
+# Examples
+```
+
+## Documentation
+
+- [Setup Guide](SETUP.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [API Reference](docs/API.md)
+
+## Development
+
+### Running Tests
+### Contributing
+
+## License
+```
+
+### Code Documentation
+
+**Docstrings:**
+- All public classes, functions, methods
+- Describe purpose, parameters, returns
+- Include examples for complex APIs
+- Document exceptions raised
+
+**Inline Comments:**
+- Explain WHY, not WHAT
+- Complex algorithms
+- Non-obvious decisions
+- TODOs with context
+
+**Architecture Documentation:**
+- System overview
+- Component interactions
+- Data flow diagrams
+- Design decisions
+- Technology choices (and why)
+
+### Keeping Docs Current
+
+- Update with code changes
+- Review during code review
+- Automated checks for staleness
+- Version control
+- Date last updated
+
+---
+
+## Rules Maintenance
+
+### When to Update Rules
+
+Update these rules when:
+1. **Planning Phase** - Identified problems to prevent
+2. **Implementation Phase** - Discovered patterns worth enforcing
+3. **Review Phase** - Found violations of intended structure
+4. **Post-Project** - Lessons learned from project lifecycle
+5. **Quarterly Review** - Scheduled maintenance
+
+### Integration into Planning
+
+**Before Each Phase:**
+1. Review current rules
+2. Identify structural issues
+3. Document principles
+4. Update rules FIRST
+5. Reference in plan
+
+**During Development:**
+- Apply rules consistently
+- Document exceptions (and why)
+- Collect improvement ideas
+
+**After Phase Completion:**
+- Review what worked/didn't
+- Update rules with learnings
+- Archive lessons learned
+- Share with team
+
+### Rule Update Process
+
+1. **Identify Issue**
+   - Observe problem
+   - Document impact
+   - Check if rule exists
+
+2. **Extract Principle**
+   - Universal or specific?
+   - Root cause or symptom?
+   - Actionable or vague?
+
+3. **Document Rule**
+   - Clear statement
+   - Rationale included
+   - Examples provided
+   - Cross-references
+
+4. **Validate Rule**
+   - Check compliance
+   - Update code if needed
+   - Add to checklists
+   - Communicate to team
+
+### Rule Categories
+
+**Global Rules** (`~/.cursorrules`):
+- Applicable to any project
+- Language/framework agnostic where possible
+- Focus on principles over implementation
+- Long-lived and stable
+
+**Project Rules** (`.cursorrules` in project root):
+- Specific to current codebase
+- Reference actual file paths
+- Include project-specific patterns
+- Can evolve more rapidly
+
+### Keeping Rules Current
+
+- Review quarterly or after major milestones
+- Remove outdated rules (archive reason)
+- Update examples with current code
+- Ensure no contradictions
+- Keep concise and actionable
+- Get team buy-in
+
+---
+
+## Version History
+
+- **v1.0** (2025-10-18): Initial comprehensive version incorporating metrics-driven development, testing best practices, and project structure standards from Reddit Tier List Scraper project.
+
+---
+
+## Quick Reference
+
+### Must-Haves for Every Project
+
+- [ ] Comprehensive `Makefile` (setup, teardown, rebuild, check-system)
+- [ ] Metrics tracking infrastructure
+- [ ] Golden dataset for testing
+- [ ] Automated test suite (90%+ coverage)
+- [ ] CI/CD pipeline
+- [ ] Clear documentation (README, SETUP, architecture)
+- [ ] `.gitignore` with credentials excluded
+- [ ] `.env.example` template
+- [ ] Validation before documentation
+- [ ] Phase completion checklists
+
+### Red Flags
+
+- ❌ No tests
+- ❌ No metrics
+- ❌ Documentation without validation
+- ❌ Credentials in git
+- ❌ Manual setup steps that could be automated
+- ❌ No teardown/cleanup
+- ❌ Vague success criteria
+- ❌ No baseline comparisons
+- ❌ Untested code in production
+
+---
+
+**Remember:** These are guidelines, not laws. Apply judgment based on project context, but document exceptions and reasoning.
+
