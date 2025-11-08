@@ -213,8 +213,8 @@ class JobManager:
         book_url = job['book_url']
         filter_book_number = job['parameters'].get('filter_book_number')
         
-        # Import scraper from main codebase
-        from src.scraper.royal_road import RoyalRoadScraper
+        # Use new RoyalRoadController
+        from src.scraper.royal_road_controller import RoyalRoadController
         
         job['message'] = 'Scraping chapters...'
         self._save_jobs()
@@ -222,9 +222,9 @@ class JobManager:
         # Run scraper in thread pool (it's blocking I/O)
         try:
             def run_scraper():
-                scraper = RoyalRoadScraper()
-                return scraper.scrape_book(
-                    book_url,
+                controller = RoyalRoadController()
+                return controller.scrape_book(
+                    book_url=book_url,
                     output_dir=None,  # Use default
                     max_chapters=None,
                     filter_book_number=filter_book_number,
@@ -233,7 +233,7 @@ class JobManager:
             result = await asyncio.to_thread(run_scraper)
             
             job['status'] = JobStatus.COMPLETED.value
-            job['message'] = f'Scraping completed: {result["successful_chapters"]}/{result["total_chapters"]} chapters'
+            job['message'] = f'Scraping completed: {result["successful_chapters"]}/{result["chapters_to_scrape"]} chapters'
             job['progress'] = 100
         except Exception as e:
             logger.error(f"Scraping job {job_id} failed: {e}", exc_info=True)
@@ -424,18 +424,12 @@ class JobManager:
         existing_chunks_before = set(text_file.parent.glob(f"{chapter_title}_chunk_*.wav"))
         
         if chunk_file.exists():
-            # Check if flagged
-            from src.utils.metadata_tracker import MetadataTracker
-            tracker = MetadataTracker(book_dir)
-            metadata = tracker.load()
-            chapter_meta = next((ch for ch in metadata.get('chapters', []) if ch.get('title') == chapter_title), {})
-            flagged_chunks = chapter_meta.get('flagged_chunks', [])
-            
-            if chunk_index in flagged_chunks:
-                # Delete the chunk file to force regeneration
-                chunk_file.unlink()
-                logger.info(f"Deleted flagged chunk file: {chunk_file.name}")
-                existing_chunks_before.discard(chunk_file)  # Remove from set since we deleted it
+            # Note: Flagged chunk checking is now handled by ChunkController
+            # This legacy job handler uses chapter_title instead of chapter_number
+            # TODO: Migrate this job handler to use chapter_number and ChunkController
+            # For now, skip the flagged check - chunks are managed via the new API endpoints
+            # If a chunk needs to be regenerated, it should be flagged via the API first
+            pass
         
         # Generate audio using main codebase - the generator will only generate missing chunks
         from src.tts.generator import AudioGenerator
@@ -465,12 +459,9 @@ class JobManager:
             new_chunks = existing_chunks_after - existing_chunks_before
             
             if chunk_file.exists() or new_chunks:
-                # Refresh metadata to reflect new chunks
-                from src.utils.metadata_tracker import MetadataTracker
-                tracker = MetadataTracker(book_dir)
-                tracker.refresh_from_filesystem()
-                
-                # Also try to update chunk metadata if we can read the text file
+                # Note: Metadata is now handled by TTSController automatically
+                # This legacy job handler is deprecated
+                # TODO: Migrate to use TTSController instead of AudioGenerator
                 try:
                     # Re-run chunking to get positions and update metadata
                     from src.tts.chunker import chunk_text_by_paragraphs

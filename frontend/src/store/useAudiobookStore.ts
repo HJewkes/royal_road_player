@@ -21,15 +21,15 @@ interface AudiobookStore {
   
   setCurrentChapter: (chapterNumber: number, startTime?: number) => Promise<void>
   
-  loadChunkMetadata: (chapterTitle: string) => Promise<void>
+  loadChunkMetadata: (chapterNumber: number) => Promise<void>
   
   refreshBook: () => Promise<void>
   
-  chunkChapter: (chapterTitle: string, chunkDurationMinutes?: number) => Promise<ChunkChapterResult>
+  chunkChapter: (chapterNumber: number, chunkDurationMinutes?: number) => Promise<ChunkChapterResult>
   
-  generateChunks: (chapterTitle: string, chunkIndices?: number[] | null) => Promise<GenerateChunksResult>
+  generateChunks: (chapterNumber: number, chunkIndices?: number[] | null) => Promise<GenerateChunksResult>
   
-  generateSingleChunk: (chapterTitle: string, chunkIndex: number) => Promise<GenerateChunksResult>
+  generateSingleChunk: (chapterNumber: number, chunkIndex: number) => Promise<GenerateChunksResult>
 }
 
 const useAudiobookStore = create<AudiobookStore>((set, get) => ({
@@ -51,14 +51,27 @@ const useAudiobookStore = create<AudiobookStore>((set, get) => ({
   },
   
   setCurrentBook: async (book: Book) => {
-    set({ currentBook: book, chapters: book?.chapters || [] })
+    set({ currentBook: book })
     
-    // If book has chapters, load the first one by default
-    if (book?.chapters && book.chapters.length > 0 && !get().currentChapter) {
-      const firstChapter = book.chapters[0]
-      if (firstChapter) {
-        await get().setCurrentChapter(firstChapter.chapter_number, 0)
+    // Fetch full chapter data
+    try {
+      const chaptersResponse = await fetch(`/api/books/${book.id}/chapters`)
+      if (chaptersResponse.ok) {
+        const chaptersData = await chaptersResponse.json() as { chapters?: Chapter[] }
+        const chapters = chaptersData.chapters || []
+        set({ chapters })
+        
+        // If book has chapters, load the first one by default
+        if (chapters.length > 0 && !get().currentChapter) {
+          const firstChapter = chapters[0]
+          if (firstChapter) {
+            await get().setCurrentChapter(firstChapter.chapter_number, 0)
+          }
+        }
       }
+    } catch (error) {
+      console.error('Failed to load chapters:', error)
+      set({ chapters: [] })
     }
   },
   
@@ -70,21 +83,24 @@ const useAudiobookStore = create<AudiobookStore>((set, get) => ({
       
       // Load chunk metadata if chapter is chunked
       if (chapter.is_chunked && chapter.chunk_count > 0) {
-        await get().loadChunkMetadata(chapter.title)
+        await get().loadChunkMetadata(chapter.chapter_number)
       } else {
         set({ chunkMetadata: null, chapterTextLength: 0 })
       }
     }
   },
   
-  loadChunkMetadata: async (chapterTitle: string) => {
+  loadChunkMetadata: async (chapterNumber: number) => {
     const { currentBook } = get()
-    if (!currentBook || !chapterTitle) return
+    if (!currentBook || !chapterNumber) return
     
     try {
       const response = await fetch(
-        `/api/books/${currentBook.id}/chapters/${encodeURIComponent(chapterTitle)}/chunks`
+        `/api/books/${currentBook.id}/chapters/${chapterNumber}/chunks`
       )
+      if (!response.ok) {
+        throw new Error(`Failed to load chunk metadata: ${response.statusText}`)
+      }
       const data = await response.json() as { chunks?: ChunkMetadata[]; text_length?: number }
       set({
         chunkMetadata: data.chunks || [],
@@ -101,17 +117,30 @@ const useAudiobookStore = create<AudiobookStore>((set, get) => ({
     if (!currentBook) return
     
     try {
-      const response = await fetch(`/api/books/${currentBook.id}`)
-      const bookData = await response.json() as Book
+      // Fetch book info
+      const bookResponse = await fetch(`/api/books/${currentBook.id}`)
+      if (!bookResponse.ok) {
+        throw new Error(`Failed to fetch book: ${bookResponse.statusText}`)
+      }
+      const bookData = await bookResponse.json() as Book
+      
+      // Fetch full chapter data
+      const chaptersResponse = await fetch(`/api/books/${currentBook.id}/chapters`)
+      if (!chaptersResponse.ok) {
+        throw new Error(`Failed to fetch chapters: ${chaptersResponse.statusText}`)
+      }
+      const chaptersData = await chaptersResponse.json() as { chapters?: Chapter[] }
+      const chapters = chaptersData.chapters || []
+      
       set({ 
         currentBook: bookData,
-        chapters: bookData.chapters || [],
+        chapters: chapters,
       })
       
       // Update current chapter if it exists
       const { currentChapter } = get()
       if (currentChapter) {
-        const updatedChapter = bookData.chapters?.find(
+        const updatedChapter = chapters.find(
           (c) => c.chapter_number === currentChapter.chapter_number
         )
         if (updatedChapter) {
@@ -121,7 +150,7 @@ const useAudiobookStore = create<AudiobookStore>((set, get) => ({
           
           // Reload chunk metadata if needed
           if (updatedChapter.is_chunked && updatedChapter.chunk_count > 0) {
-            await get().loadChunkMetadata(updatedChapter.title)
+            await get().loadChunkMetadata(updatedChapter.chapter_number)
           }
         }
       }
@@ -130,7 +159,7 @@ const useAudiobookStore = create<AudiobookStore>((set, get) => ({
     }
   },
   
-  chunkChapter: async (chapterTitle: string, chunkDurationMinutes = 1.0): Promise<ChunkChapterResult> => {
+  chunkChapter: async (chapterNumber: number, chunkDurationMinutes = 1.0): Promise<ChunkChapterResult> => {
     const { currentBook } = get()
     if (!currentBook) throw new Error('No book selected')
     
@@ -139,22 +168,26 @@ const useAudiobookStore = create<AudiobookStore>((set, get) => ({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         book_id: currentBook.id,
-        chapter_title: chapterTitle,
+        chapter_number: chapterNumber,
         chunk_duration_minutes: chunkDurationMinutes,
       }),
     })
     
     if (!response.ok) {
-      const error = await response.json() as { detail?: string }
-      throw new Error(error.detail || 'Failed to chunk chapter')
+      const error = await response.json() as { detail?: string; error?: string }
+      throw new Error(error.detail || error.error || 'Failed to chunk chapter')
     }
     
-    const data = await response.json() as { result: ChunkChapterResult }
+    const data = await response.json() as { status: string; result?: ChunkChapterResult; error?: string }
+    if (data.status === 'error') {
+      throw new Error(data.error || 'Failed to chunk chapter')
+    }
+    
     await get().refreshBook()
-    return data.result
+    return data.result as ChunkChapterResult
   },
   
-  generateChunks: async (chapterTitle: string, chunkIndices: number[] | null = null): Promise<GenerateChunksResult> => {
+  generateChunks: async (chapterNumber: number, chunkIndices: number[] | null = null): Promise<GenerateChunksResult> => {
     const { currentBook } = get()
     if (!currentBook) throw new Error('No book selected')
     
@@ -163,38 +196,46 @@ const useAudiobookStore = create<AudiobookStore>((set, get) => ({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         book_id: currentBook.id,
-        chapter_title: chapterTitle,
+        chapter_number: chapterNumber,
         chunk_indices: chunkIndices,
       }),
     })
     
     if (!response.ok) {
-      const error = await response.json() as { detail?: string }
-      throw new Error(error.detail || 'Failed to generate chunks')
+      const error = await response.json() as { detail?: string; error?: string }
+      throw new Error(error.detail || error.error || 'Failed to generate chunks')
     }
     
-    const data = await response.json() as { result: GenerateChunksResult }
+    const data = await response.json() as { status: string; result?: GenerateChunksResult; error?: string }
+    if (data.status === 'error') {
+      throw new Error(data.error || 'Failed to generate chunks')
+    }
+    
     await get().refreshBook()
-    return data.result
+    return data.result as GenerateChunksResult
   },
   
-  generateSingleChunk: async (chapterTitle: string, chunkIndex: number): Promise<GenerateChunksResult> => {
+  generateSingleChunk: async (chapterNumber: number, chunkIndex: number): Promise<GenerateChunksResult> => {
     const { currentBook } = get()
     if (!currentBook) throw new Error('No book selected')
     
     const response = await fetch(
-      `/api/chunks/${chunkIndex}/generate?book_id=${encodeURIComponent(currentBook.id)}&chapter_title=${encodeURIComponent(chapterTitle)}`,
+      `/api/chunks/${chunkIndex}/generate?book_id=${encodeURIComponent(currentBook.id)}&chapter_number=${chapterNumber}`,
       { method: 'POST' }
     )
     
     if (!response.ok) {
-      const error = await response.json() as { detail?: string }
-      throw new Error(error.detail || 'Failed to generate chunk')
+      const error = await response.json() as { detail?: string; error?: string }
+      throw new Error(error.detail || error.error || 'Failed to generate chunk')
     }
     
-    const data = await response.json() as { result: GenerateChunksResult }
+    const data = await response.json() as { status: string; result?: GenerateChunksResult; error?: string }
+    if (data.status === 'error') {
+      throw new Error(data.error || 'Failed to generate chunk')
+    }
+    
     await get().refreshBook()
-    return data.result
+    return data.result as GenerateChunksResult
   },
 }))
 

@@ -12,36 +12,51 @@ export interface Book {
 }
 
 export interface BookStats {
-  scraping?: {
-    total_chapters: number
-    scraped_chapters: number
-    last_scraped: string | null
-  }
-  tts?: {
-    total_chapters: number
-    generated_chapters: number
-    last_generated: string | null
-  }
-  chunks?: {
-    total_chunks: number
-    chunks_by_chapter: Record<string, number>
-  }
+  book_id: string
+  title: string
+  total_chapters: number
+  chapters_with_text: number
+  chapters_with_audio: number
+  chapters_chunked: number
+  total_chunks: number
+  completed_chunks: number
+  pending_chunks: number
 }
 
-export interface Chapter {
-  id?: number
+export interface ChapterStats {
+  book_id: string
   chapter_number: number
   title: string
-  text_path?: string
-  audio_paths?: string[]
+  has_text: boolean
+  word_count: number | null
+  text_size: number | null
   is_chunked: boolean
   chunk_count: number
   has_audio: boolean
-  scraped: boolean
-  word_count?: number
+  total_chunks: number
+  completed_chunks: number
+  pending_chunks: number
+  failed_chunks: number
+  flagged_chunks: number
+}
+
+export interface Chapter {
+  id?: string | null
+  chapter_number: number
+  title: string
+  number?: number | null  // Royal Road number
+  url?: string | null
+  text_path?: string | null
+  audio_urls?: string[]  // Changed from audio_paths
+  is_chunked: boolean
+  chunk_count: number
+  has_audio: boolean
+  scraped: boolean  // Maps to has_text
+  word_count?: number | null
   duration_seconds?: number | null
   book_id?: string
   startTime?: number
+  stats?: ChapterStats  // New nested stats
 }
 
 export interface ChunkMetadata {
@@ -59,7 +74,8 @@ export interface ChunkMetadata {
 
 export interface ChunksData {
   chunks: ChunkMetadata[]
-  chapter_title: string
+  chapter_number: number
+  chapter_title: string  // Keep for display purposes
   text_length: number
 }
 
@@ -68,7 +84,7 @@ export interface Job {
   type: string
   status: 'pending' | 'running' | 'completed' | 'failed'
   book_id?: string
-  chapter_title?: string
+  chapter_number?: number  // Changed from chapter_title
   message?: string
   created_at?: string
   updated_at?: string

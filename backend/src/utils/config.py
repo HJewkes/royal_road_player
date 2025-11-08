@@ -49,7 +49,6 @@ class Settings(BaseSettings):
     data_dir: Optional[Path] = None
     books_dir: Optional[Path] = None
     audio_dir: Optional[Path] = None
-    database_path: Optional[Path] = None
     log_dir: Optional[Path] = None
 
     # Scraper Configuration
@@ -75,13 +74,11 @@ class Settings(BaseSettings):
         self.data_dir = project_root / "data"
         self.books_dir = project_root / "data" / "books"
         self.audio_dir = project_root / "data" / "books"
-        self.database_path = project_root / "data" / "databases" / "audiobook.db"
         self.log_dir = project_root / "logs"
         # Ensure directories exist
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.books_dir.mkdir(parents=True, exist_ok=True)
         self.audio_dir.mkdir(parents=True, exist_ok=True)
-        self.database_path.parent.mkdir(parents=True, exist_ok=True)
         self.log_dir.mkdir(parents=True, exist_ok=True)
 
 

@@ -27,7 +27,7 @@ function ChapterActions({ chapter }: ChapterActionsProps) {
 
     setChunking(true)
     try {
-      const result = await chunkChapter(chapter.title, 1.0)
+      const result = await chunkChapter(chapter.chapter_number, 1.0)
       toast.success(`Chapter chunked successfully! Created ${result.chunk_count} chunks.`)
     } catch (error) {
       console.error('Failed to chunk chapter:', error)
@@ -49,7 +49,7 @@ function ChapterActions({ chapter }: ChapterActionsProps) {
 
     setGenerating(true)
     try {
-      const result = await generateChunks(chapter.title, null)
+      const result = await generateChunks(chapter.chapter_number, null)
       toast.success(`Started generation! Will process ${result.generated + result.skipped + result.failed} chunks.`)
     } catch (error) {
       console.error('Failed to generate chunks:', error)

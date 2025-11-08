@@ -53,9 +53,6 @@ function LibraryView({ onBookSelect }: LibraryViewProps) {
         ) : (
           books.map((book) => {
             const stats = book.stats
-            const scraping = stats?.scraping
-            const tts = stats?.tts
-            const chunks = stats?.chunks
             
             return (
               <div
@@ -72,35 +69,35 @@ function LibraryView({ onBookSelect }: LibraryViewProps) {
                     <span className={styles.statLabel}>Chapters:</span>
                     <span className={styles.statValue}>{book.chapter_count}</span>
                   </div>
-                  {scraping && scraping.scraped_chapters !== undefined && scraping.total_chapters !== undefined && (
-                    <div className={styles.statItem}>
-                      <span className={styles.statLabel}>Scraped:</span>
-                      <span className={styles.statValue}>
-                        {scraping.scraped_chapters} / {scraping.total_chapters}
-                      </span>
-                    </div>
-                  )}
-                  {tts && tts.generated_chapters !== undefined && tts.total_chapters !== undefined && (
-                    <div className={styles.statItem}>
-                      <span className={styles.statLabel}>Audio:</span>
-                      <span className={styles.statValue}>
-                        {tts.generated_chapters} / {tts.total_chapters}
-                      </span>
-                    </div>
-                  )}
-                  {chunks && chunks.total_chunks !== undefined && (
-                    <div className={styles.statItem}>
-                      <span className={styles.statLabel}>Chunks:</span>
-                      <span className={styles.statValue}>{chunks.total_chunks}</span>
-                    </div>
+                  {stats && (
+                    <>
+                      <div className={styles.statItem}>
+                        <span className={styles.statLabel}>Scraped:</span>
+                        <span className={styles.statValue}>
+                          {stats.chapters_with_text} / {stats.total_chapters}
+                        </span>
+                      </div>
+                      <div className={styles.statItem}>
+                        <span className={styles.statLabel}>Audio:</span>
+                        <span className={styles.statValue}>
+                          {stats.chapters_with_audio} / {stats.total_chapters}
+                        </span>
+                      </div>
+                      {stats.total_chunks > 0 && (
+                        <div className={styles.statItem}>
+                          <span className={styles.statLabel}>Chunks:</span>
+                          <span className={styles.statValue}>{stats.total_chunks}</span>
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
-                {scraping && scraping.scraped_chapters !== undefined && scraping.total_chapters !== undefined && scraping.total_chapters > 0 && (
+                {stats && stats.total_chapters > 0 && (
                   <div className={styles.progressBar}>
                     <div
                       className={styles.progressBarFill}
                       style={{
-                        width: `${(scraping.scraped_chapters / scraping.total_chapters) * 100}%`
+                        width: `${(stats.chapters_with_text / stats.total_chapters) * 100}%`
                       }}
                     />
                   </div>

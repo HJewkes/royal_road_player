@@ -75,7 +75,7 @@ function AudioPlayer({ book, chapter, onChapterChange, onAudioRef }: AudioPlayer
       if (chapterDetails.audio_urls && chapterDetails.audio_urls.length > 0) {
         if (chapterDetails.is_chunked) {
           // Load chunk metadata for timeline
-          await loadChunkMetadata(chapterData.title)
+          await loadChunkMetadata(chapterData.chapter_number)
           // Load chunked audio
           await loadChunkedAudio(chapterDetails.audio_urls, chapterData.startTime || 0, shouldPlay)
         } else {
@@ -472,17 +472,7 @@ function AudioPlayer({ book, chapter, onChapterChange, onAudioRef }: AudioPlayer
         ? (currentChunkIndex >= chunkAudios.length - 1 && audioRef.current.ended)
         : audioRef.current.ended
       
-      void fetch('/api/progress', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          book_id: book.id,
-          chapter_id: chapter.chapter_number,
-          position_seconds: positionSeconds,
-          completed: completed,
-        }),
-      })
-      
+      // Progress tracking removed - using URL and localStorage instead
       // Update URL and localStorage
       const params = new URLSearchParams()
       params.set('book', book.id)

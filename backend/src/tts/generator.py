@@ -1,7 +1,14 @@
-"""Audio generation pipeline."""
+"""Audio generation pipeline.
+
+DEPRECATED: This class is deprecated and will be removed in a future version.
+Use TTSController instead, which works with the new nested structure and controller architecture.
+
+Legacy code paths (jobs.py) still use this class for backward compatibility with the old flat structure.
+"""
 
 import json
 import logging
+import warnings
 from pathlib import Path
 from typing import List, Optional
 
@@ -11,16 +18,26 @@ from src.tts.dsl_parser import parse_dsl, Event
 from src.tts.dsl_mapper import map_dsl_to_segments
 from src.tts.segmenter import Segment
 from src.utils.config import get_settings
-from src.utils.metadata_tracker import MetadataTracker
 
 logger = logging.getLogger(__name__)
 
 
 class AudioGenerator:
-    """Generate audio from text files."""
+    """
+    Generate audio from text files.
+    
+    DEPRECATED: Use TTSController instead. This class works with the old flat structure
+    (chapters/{chapter_title}.txt) and will be removed once jobs are migrated.
+    """
 
     def __init__(self):
         """Initialize audio generator."""
+        warnings.warn(
+            "AudioGenerator is deprecated. Use TTSController instead. "
+            "See docs/ARCHITECTURE_CONTROLLERS.md for migration guide.",
+            DeprecationWarning,
+            stacklevel=2
+        )
         self.settings = get_settings()
         self.engine = get_tts_engine()
         
@@ -118,14 +135,8 @@ class AudioGenerator:
 
         logger.info(f"✅ Audio generated successfully: {audio_path}")
         
-        # Update metadata tracker
-        try:
-            book_dir = text_path.parent.parent  # Go up from chapters/ to book/
-            tracker = MetadataTracker(book_dir)
-            chapter_title = text_path.stem
-            tracker.mark_chapter_audio_generated(chapter_title, str(audio_path))
-        except Exception as e:
-            logger.warning(f"Failed to update metadata tracker: {e}")
+        # Note: Metadata is now handled by TTSController
+        # This legacy generator is deprecated in favor of TTSController
         
         return audio_path
 
@@ -359,25 +370,9 @@ class AudioGenerator:
                 # Update text_length to reflect the extended coverage
                 current_chunk['text_length'] = next_start - current_chunk.get('text_start', 0)
         
-        # Update metadata tracker with chunk positions and timing
-        try:
-            book_dir = output_dir.parent.parent  # Go up from chapters/ to book/
-            tracker = MetadataTracker(book_dir)
-            # Use provided chapter_title or fall back to text_path.stem
-            metadata_chapter_title = chapter_title if chapter_title else text_path.stem
-            
-            # Adjust positions if text_offset is provided (for limited text scenarios)
-            if text_offset > 0:
-                for chunk_meta in chunk_metadata:
-                    chunk_meta['text_start'] = chunk_meta.get('text_start', 0) + text_offset
-                    chunk_meta['text_end'] = chunk_meta.get('text_end', 0) + text_offset
-            
-            tracker.mark_chapter_audio_generated(metadata_chapter_title)
-            tracker.update_chunk_count(metadata_chapter_title, len(audio_files))
-            # Store detailed chunk metadata
-            tracker.update_chunk_metadata(metadata_chapter_title, chunk_metadata)
-        except Exception as e:
-            logger.warning(f"Failed to update metadata tracker: {e}")
+        # Note: Metadata is now handled by TTSController automatically
+        # This legacy generator is deprecated in favor of TTSController
+        # Chunk metadata is saved via ChunkController.save_chunk() in the new architecture
         
         return audio_files
 

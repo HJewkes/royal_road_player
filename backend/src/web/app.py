@@ -8,19 +8,15 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.utils.config import get_settings
-from src.web.database import init_db
 from src.web.routes import router
 
 app = FastAPI(title="Audiobook System", version="0.1.0")
 settings = get_settings()
 
-# Initialize database
-init_db()
-
 # CORS middleware for development (React dev server)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

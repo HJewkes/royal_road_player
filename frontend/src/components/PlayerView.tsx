@@ -6,7 +6,7 @@ import SeriesPanel from './SeriesPanel'
 import JobsPanel from './JobsPanel'
 import useAudiobookStore from '../store/useAudiobookStore'
 import useToastStore from '../store/useToastStore'
-import type { Book, Chapter } from '../types'
+import type { Book, Chapter, BookStats } from '../types'
 import styles from './PlayerView.module.css'
 
 interface PlayerViewProps {
@@ -45,11 +45,21 @@ function PlayerView({ onBack }: PlayerViewProps) {
       if (!response.ok) {
         throw new Error(`Failed to fetch book: ${response.statusText}`)
       }
-      const bookData = await response.json() as Book
-      await useAudiobookStore.getState().setCurrentBook(bookData)
-      if (bookData.chapters && bookData.chapters.length > 0) {
-        await useAudiobookStore.getState().setCurrentChapter(1, 0)
+      const bookInfo = await response.json() as { book_id: string; book_title: string; book_url: string | null; author: string | null; filter_book_number: number | null; stats: BookStats; chapters: Array<{ chapter_number: number | null; title: string; number: number | null; url: string | null }> }
+      
+      // Transform BookInfo to Book format
+      const bookData: Book = {
+        id: bookInfo.book_id,
+        title: bookInfo.book_title,
+        author: bookInfo.author,
+        url: bookInfo.book_url || '',
+        chapter_count: bookInfo.stats.total_chapters,
+        path: '', // Not in BookInfo, will be set from other sources if needed
+        stats: bookInfo.stats,
       }
+      
+      // setCurrentBook will fetch chapters and set the first one automatically
+      await useAudiobookStore.getState().setCurrentBook(bookData)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to load book')
     }

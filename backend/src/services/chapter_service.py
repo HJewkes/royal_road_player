@@ -1,12 +1,20 @@
 """Service for managing individual chapter downloads."""
 
 import logging
-from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, List
 
-from src.scraper.royal_road import RoyalRoadScraper
+import attr
+
+from src.scraper.royal_road_controller import RoyalRoadController
+from src.controllers.book_controller import BookController
+from src.controllers.chapter_controller import ChapterController
+from src.models.chapter import Chapter
+from src.models.responses import (
+    DownloadChapterResult,
+    ChapterInfo,
+    ChapterStats,
+)
 from src.utils.config import get_settings
-from src.utils.metadata_tracker import MetadataTracker
 
 logger = logging.getLogger(__name__)
 
@@ -16,39 +24,16 @@ class ChapterService:
     
     def __init__(self):
         """Initialize chapter service."""
-        self.settings = get_settings()
-        self.scraper = RoyalRoadScraper()
-    
-    def find_book_dir(self, book_id: str) -> Optional[Path]:
-        """
-        Find book directory by book_id.
-        
-        Args:
-            book_id: Book identifier
-            
-        Returns:
-            Path to book directory or None if not found
-        """
-        for dir_path in self.settings.books_dir.iterdir():
-            if dir_path.is_dir() and book_id in dir_path.name:
-                metadata_path = dir_path / "metadata.json"
-                if metadata_path.exists():
-                    import json
-                    try:
-                        with open(metadata_path, 'r', encoding='utf-8') as f:
-                            metadata = json.load(f)
-                        if metadata.get('book_id') == book_id:
-                            return dir_path
-                    except Exception:
-                        continue
-        return None
+        self.rr_ctrl = RoyalRoadController()
+        self.book_ctrl = BookController()
+        self.chapter_ctrl = ChapterController()
     
     def download_chapter(
         self,
         book_id: str,
         chapter_url: str,
         chapter_number: Optional[int] = None,
-    ) -> Dict[str, Any]:
+    ) -> DownloadChapterResult:
         """
         Download a single chapter.
         
@@ -62,76 +47,170 @@ class ChapterService:
         """
         logger.info(f"Downloading chapter from: {chapter_url}")
         
-        # Find book directory
-        book_dir = self.find_book_dir(book_id)
-        if not book_dir:
+        # Verify book exists
+        book = self.book_ctrl.get_book(book_id)
+        if book is None:
             raise ValueError(f"Book not found: {book_id}")
         
-        # Scrape chapter
-        chapter_data = self.scraper.scrape_chapter(chapter_url, chapter_number)
+        # Scrape chapter using Royal Road controller
+        chapter_data = self.rr_ctrl.scrape_chapter(chapter_url, chapter_number)
+        
+        # Determine chapter number if not provided
+        if chapter_number is None:
+            # Use Royal Road number from chapter data (if available)
+            chapter_number = 1  # Default to 1 if not provided
+        
+        # Create chapter directory structure
+        from src.utils.config import get_settings
+        settings = get_settings()
+        book_dir = settings.books_dir / book.path if book.path else None
+        if book_dir is None:
+            # Find book directory
+            for dir_path in settings.books_dir.iterdir():
+                if dir_path.is_dir() and book_id in dir_path.name:
+                    book_dir = dir_path
+                    break
+        
+        if book_dir is None:
+            raise ValueError(f"Book directory not found for {book_id}")
+        
+        # Create chapter directory (zero-padded)
+        chapter_dir = book_dir / "chapters" / f"{chapter_number:02d}"
+        chapter_dir.mkdir(parents=True, exist_ok=True)
         
         # Save chapter text file
-        chapters_dir = book_dir / "chapters"
-        chapters_dir.mkdir(parents=True, exist_ok=True)
+        text_path = chapter_dir / "text.txt"
+        text_path.write_text(chapter_data.content, encoding="utf-8")
         
-        from src.scraper.royal_road import sanitize_chapter_filename
-        chapter_title = chapter_data.get("title", f"Chapter {chapter_number or 'Unknown'}")
-        text_filename = sanitize_chapter_filename(chapter_number or 0, chapter_title)
-        text_path = chapters_dir / text_filename
-        text_path.write_text(chapter_data["content"], encoding="utf-8")
+        # Create chapter model and save
+        chapter_title = chapter_data.title or f"Chapter {chapter_number}"
+        chapter = Chapter(
+            book_id=book_id,
+            title=chapter_title,
+            id=f"{book_id}_{chapter_number:02d}",
+            chapter_number=chapter_number,
+            number=None,  # Royal Road number not available from scrape_chapter result
+            url=chapter_url,
+            path=str(chapter_dir),
+        )
+        self.chapter_ctrl.save_chapter(chapter)
         
-        # Update metadata
-        tracker = MetadataTracker(book_dir)
-        word_count = len(chapter_data["content"].split())
-        tracker.mark_chapter_scraped(text_filename.replace('.txt', ''), word_count)
+        word_count = chapter_data.word_count
+        logger.info(f"✅ Chapter downloaded: {text_path} ({word_count} words)")
         
-        logger.info(f"✅ Chapter downloaded: {text_path}")
-        
-        return {
-            'chapter_title': text_filename.replace('.txt', ''),
-            'text_path': str(text_path),
-            'word_count': word_count,
-            'content_length': len(chapter_data["content"]),
-        }
+        return DownloadChapterResult(
+            book_id=book_id,
+            chapter_number=chapter_number,
+            title=chapter_title,
+            text_path=str(text_path),
+            word_count=word_count,
+            content_length=len(chapter_data.content),
+        )
     
-    def get_chapter_info(self, book_id: str, chapter_title: str) -> Optional[Dict[str, Any]]:
+    def get_chapter_info(self, book_id: str, chapter_number: int) -> Optional[ChapterInfo]:
         """
         Get chapter information and metadata.
         
         Args:
             book_id: Book identifier
-            chapter_title: Chapter title (filename without extension)
+            chapter_number: Chapter number
             
         Returns:
-            Chapter metadata dictionary or None if not found
+            ChapterInfo object or None if not found
         """
-        book_dir = self.find_book_dir(book_id)
-        if not book_dir:
+        chapter = self.chapter_ctrl.get_chapter(book_id, chapter_number)
+        if chapter is None:
             return None
         
-        tracker = MetadataTracker(book_dir)
-        metadata = tracker.load()
+        # Get chapter statistics
+        stats = self.chapter_ctrl.get_chapter_stats(book_id, chapter_number)
+        if stats is None:
+            return None
         
-        chapter_meta = next(
-            (ch for ch in metadata.get('chapters', []) if ch.get('title') == chapter_title),
-            None
+        # Get audio URLs
+        audio_urls = self.get_chapter_audio_urls(book_id, chapter_number)
+        
+        return ChapterInfo(
+            id=chapter.id,
+            book_id=book_id,
+            chapter_number=chapter_number,
+            title=chapter.title,
+            number=chapter.number,  # Royal Road number
+            url=chapter.url,
+            text_path=str(chapter.text_path) if chapter.text_path else None,
+            audio_urls=audio_urls,
+            has_text=chapter.has_text,
+            word_count=chapter.word_count,
+            is_chunked=chapter.is_chunked,
+            chunk_count=chapter.chunk_count,
+            has_audio=chapter.has_audio,
+            stats=stats,
         )
+    
+    def discover_chapters(self, book_id: str) -> List[dict]:
+        """
+        Discover chapters for a book.
         
-        if not chapter_meta:
-            return None
+        Args:
+            book_id: Book identifier
+            
+        Returns:
+            List of chapter dictionaries
+        """
+        chapters = self.book_ctrl.get_chapters(book_id)
         
-        # Check if text file exists
-        chapters_dir = book_dir / "chapters"
-        text_file = chapters_dir / f"{chapter_title}.txt"
+        result = []
+        for chapter in chapters:
+            # Get chapter statistics
+            stats = self.chapter_ctrl.get_chapter_stats(book_id, chapter.chapter_number or 0)
+            
+            # Get audio URLs
+            audio_urls = self.get_chapter_audio_urls(book_id, chapter.chapter_number or 0)
+            
+            result.append({
+                'id': chapter.id,
+                'chapter_number': chapter.chapter_number,
+                'title': chapter.title,
+                'number': chapter.number,  # Royal Road number
+                'url': chapter.url,
+                'text_path': str(chapter.text_path) if chapter.text_path else None,
+                'audio_urls': sorted(audio_urls),
+                'is_chunked': chapter.is_chunked,
+                'chunk_count': chapter.chunk_count,
+                'has_audio': chapter.has_audio,
+                'scraped': chapter.has_text,
+                'word_count': chapter.word_count,
+                'duration_seconds': None,  # Would need to calculate from audio
+            })
         
-        return {
-            'title': chapter_title,
-            'scraped': chapter_meta.get('scraped', False),
-            'has_audio': chapter_meta.get('has_audio', False),
-            'is_chunked': chapter_meta.get('is_chunked', False),
-            'chunk_count': chapter_meta.get('chunk_count', 0),
-            'chunk_metadata': chapter_meta.get('chunk_metadata', []),
-            'text_file_exists': text_file.exists(),
-            'text_length': len(text_file.read_text(encoding='utf-8')) if text_file.exists() else 0,
-        }
+        return result
+    
+    def get_chapter_audio_urls(self, book_id: str, chapter_number: int) -> List[str]:
+        """
+        Get audio file URLs for a chapter.
+        
+        Args:
+            book_id: Book identifier
+            chapter_number: Chapter number
+            
+        Returns:
+            List of audio file URLs (relative to /audio mount)
+        """
+        chapter = self.chapter_ctrl.get_chapter(book_id, chapter_number)
+        if chapter is None or not chapter.has_audio:
+            return []
+        
+        audio_urls = []
+        if chapter.chunks_dir and chapter.chunks_dir.exists():
+            # Find audio files in chunk directories
+            settings = get_settings()
+            for chunk_dir in chapter.chunks_dir.iterdir():
+                if chunk_dir.is_dir() and chunk_dir.name.isdigit():
+                    audio_file = chunk_dir / "audio.wav"
+                    if audio_file.exists():
+                        # Convert to URL relative to /audio mount
+                        rel_path = audio_file.relative_to(settings.books_dir)
+                        audio_urls.append(f"/audio/{rel_path.as_posix()}")
+        
+        return sorted(audio_urls)
 

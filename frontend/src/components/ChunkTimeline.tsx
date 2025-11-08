@@ -143,7 +143,7 @@ function ChunkTimeline({ currentTime, totalDuration, currentChunkIndex }: ChunkT
     
     setGeneratingChunks((prev) => new Set(prev).add(chunkIndex))
     try {
-      await generateSingleChunk(currentChapter.title, chunkIndex)
+      await generateSingleChunk(currentChapter.chapter_number, chunkIndex)
       toast.success(`Chunk ${chunkIndex} generated successfully!`)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to generate chunk')
@@ -164,7 +164,7 @@ function ChunkTimeline({ currentTime, totalDuration, currentChunkIndex }: ChunkT
     }
     
     try {
-      await generateChunks(currentChapter.title, null)
+      await generateChunks(currentChapter.chapter_number, null)
       toast.success('Started generating pending chunks!')
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to generate chunks')

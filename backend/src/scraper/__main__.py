@@ -10,7 +10,7 @@ if __name__ == "__main__":
     if str(backend_path) not in sys.path:
         sys.path.insert(0, str(backend_path))
 
-from src.scraper.royal_road import RoyalRoadScraper
+from src.scraper.royal_road_controller import RoyalRoadController
 
 
 def main():
@@ -42,14 +42,18 @@ def main():
 
     args = parser.parse_args()
 
-    scraper = RoyalRoadScraper()
+    controller = RoyalRoadController()
     try:
-        result = scraper.scrape_book(
-            args.url, args.output, args.max_chapters, filter_book_number=args.book_number
+        result = controller.scrape_book(
+            book_url=args.url,
+            output_dir=args.output,
+            max_chapters=args.max_chapters,
+            filter_book_number=args.book_number,
         )
-        print(f"\n✅ Successfully scraped {result['successful_chapters']}/{result['total_chapters']} chapters")
+        print(f"\n✅ Successfully scraped {result['successful_chapters']}/{result['chapters_to_scrape']} chapters")
         print(f"📁 Output directory: {result['output_dir']}")
-        print(f"📊 Metrics saved to: {result['metrics_path']}")
+        if 'metrics_path' in result:
+            print(f"📊 Metrics saved to: {result['metrics_path']}")
         sys.exit(0)
     except Exception as e:
         print(f"\n❌ Error: {e}", file=sys.stderr)

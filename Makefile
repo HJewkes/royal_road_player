@@ -1,4 +1,4 @@
-.PHONY: help setup teardown rebuild check-system install dev test test-coverage lint format format-check run clean
+.PHONY: help setup teardown rebuild check-system install dev dev-all test test-coverage lint format format-check run clean
 
 help: ## Show available commands
 	@echo "Available commands:"
@@ -123,9 +123,12 @@ install: ## Install dependencies only
 	@. venv/bin/activate && pip install -r backend/requirements-dev.txt
 	@echo "✅ Dependencies installed"
 
-dev: ## Run in development mode
-	@echo "🔧 Starting development server..."
-	@. venv/bin/activate && cd backend && DEBUG=true python -m src.web.app --reload
+dev: ## Run backend in development mode
+	@echo "🔧 Starting backend development server..."
+	@if [ ! -d "venv" ]; then \
+		echo "❌ Virtual environment not found. Run 'make setup' first." && exit 1; \
+	fi
+	@. venv/bin/activate && cd backend && PYTHONPATH=. python -m uvicorn src.web.app:app --host 127.0.0.1 --port 8000 --reload
 
 test: ## Run all tests
 	@echo "🧪 Running tests..."
@@ -178,6 +181,22 @@ dev-frontend: ## Run React dev server (for development)
 		echo "❌ npm not found. Please install Node.js." && exit 1; \
 	fi
 	@cd frontend && npm run dev
+
+dev-all: ## Start both backend and frontend dev servers concurrently
+	@echo "🚀 Starting backend and frontend dev servers..."
+	@if [ ! -d "venv" ]; then \
+		echo "❌ Virtual environment not found. Run 'make setup' first." && exit 1; \
+	fi
+	@if ! command -v npm > /dev/null 2>&1; then \
+		echo "❌ npm not found. Please install Node.js." && exit 1; \
+	fi
+	@echo "📡 Backend will be available at http://localhost:8000"
+	@echo "🌐 Frontend will be available at http://localhost:3000"
+	@echo "🛑 Press Ctrl+C to stop both servers"
+	@trap 'pkill -P $$' EXIT INT TERM; \
+	(. venv/bin/activate && cd backend && PYTHONPATH=. python -m uvicorn src.web.app:app --host 127.0.0.1 --port 8000 --reload) & \
+	(cd frontend && npm run dev) & \
+	wait
 
 clean: ## Remove build artifacts
 	@echo "🧹 Cleaning build artifacts..."

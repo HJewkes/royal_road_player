@@ -3,20 +3,21 @@
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+import attr
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
 
-from src.web.database import get_db
-from src.web.models import Book, Chapter, Progress
-from src.web.book_discovery import discover_books, discover_chapters, get_chapter_audio_urls, find_series_books
-from src.web.jobs import get_job_manager, JobType
 from src.services.book_service import BookService
 from src.services.chapter_service import ChapterService
+from src.web.jobs import get_job_manager, JobType
 from src.services.chunking_service import ChunkingService
 from src.services.tts_service import TTSChunkService
+from src.models.responses import (
+    ChunkInfo,
+    ChunkListResponse,
+    OperationResult,
+)
 
-from src.web.book_discovery import search_royal_road
 
 # Initialize job manager on module load
 _ = get_job_manager()
@@ -27,251 +28,129 @@ router = APIRouter()
 @router.get("/api/books")
 async def list_books():
     """List all books."""
-    books = discover_books()
-    return {"books": books}
+    service = BookService()
+    books = service.discover_books()
+    # Convert models to dicts for FastAPI JSON serialization
+    return {"books": [attr.asdict(book) for book in books]}
 
 
 @router.get("/api/books/preview")
 async def get_book_preview(book_url: str, book_number: Optional[int] = None):
     """Get preview information for a book from Royal Road."""
-    from src.web.book_discovery import fetch_book_preview
-    
-    preview = fetch_book_preview(book_url, book_number)
-    return preview
+    service = BookService()
+    preview = service.get_book_preview(book_url, book_number)
+    return attr.asdict(preview)
 
 
 @router.get("/api/books/{book_id}")
 async def get_book(book_id: str):
     """Get book details."""
-    books = discover_books()
-    book = next((b for b in books if b['id'] == book_id), None)
+    book_service = BookService()
     
-    if not book:
+    book_info = book_service.get_book_info(book_id)
+    if not book_info:
         raise HTTPException(status_code=404, detail="Book not found")
     
-    # Get chapters
-    chapters = discover_chapters(book_id)
-    book['chapters'] = chapters
-    
-    return book
+    return attr.asdict(book_info)
 
 
 @router.get("/api/books/{book_id}/chapters")
 async def list_chapters(book_id: str):
     """List chapters for a book."""
-    chapters = discover_chapters(book_id)
+    service = ChapterService()
+    chapters = service.discover_chapters(book_id)
+    # discover_chapters still returns dicts for now (legacy format)
     return {"chapters": chapters}
 
 
 # Put chunk routes BEFORE chapter_number route to avoid route matching conflicts
 # FastAPI matches routes in order, so more specific routes must come first
 
-@router.get("/api/books/{book_id}/chapters/{chapter_title}/chunks")
-async def get_chunk_info(book_id: str, chapter_title: str):
+@router.get("/api/books/{book_id}/chapters/{chapter_number}/chunks")
+async def get_chunk_info(book_id: str, chapter_number: int):
     """Get chunk information including text mapping."""
-    from src.utils.metadata_tracker import MetadataTracker
+    from src.controllers.chapter_controller import ChapterController
+    from src.controllers.chunk_controller import ChunkController
     from src.utils.config import get_settings
-    from pathlib import Path
-    from urllib.parse import unquote
     
-    # Decode URL-encoded chapter title
-    chapter_title = unquote(chapter_title)
+    chapter_ctrl = ChapterController()
+    chunk_ctrl = ChunkController()
     
+    # Get chapter
+    chapter = chapter_ctrl.get_chapter(book_id, chapter_number)
+    if chapter is None:
+        raise HTTPException(status_code=404, detail="Chapter not found")
+    
+    # Get chapter text
+    text_content = chapter_ctrl.get_chapter_text(book_id, chapter_number) or ""
+    
+    # Get chunks
+    chunks = chapter_ctrl.get_chunks(book_id, chapter_number)
+    
+    # Build chunks info
+    chunks_info = []
     settings = get_settings()
     
-    # Find book directory
-    book_dir = None
-    for dir_path in settings.books_dir.iterdir():
-        if dir_path.is_dir() and book_id in dir_path.name:
-            metadata_path = dir_path / "metadata.json"
-            if metadata_path.exists():
-                import json
-                try:
-                    with open(metadata_path, 'r', encoding='utf-8') as f:
-                        metadata = json.load(f)
-                    if metadata.get('book_id') == book_id:
-                        book_dir = dir_path
-                        break
-                except Exception:
-                    continue
-    
-    if not book_dir:
-        raise HTTPException(status_code=404, detail="Book not found")
-    
-    chapters_dir = book_dir / "chapters"
-    chunk_files = sorted(chapters_dir.glob(f"{chapter_title}_chunk_*.wav"))
-    
-    # Get text file
-    text_file = chapters_dir / f"{chapter_title}.txt"
-    text_content = ""
-    if text_file.exists():
-        try:
-            text_content = text_file.read_text(encoding='utf-8')
-        except Exception as e:
-            import logging
-            logging.getLogger(__name__).error(f"Failed to read text file {text_file}: {e}")
-    
-    # Get metadata
-    tracker = MetadataTracker(book_dir)
-    metadata = tracker.load()
-    chapter_meta = next(
-        (ch for ch in metadata.get('chapters', []) if ch.get('title') == chapter_title),
-        {}
-    )
-    
-    # Get chunk metadata from chapter metadata
-    chunk_metadata_list = chapter_meta.get('chunk_metadata', [])
-    chunk_metadata_dict = {ch['index']: ch for ch in chunk_metadata_list}
-    
-    import logging
-    logger = logging.getLogger(__name__)
-    logger.debug(f"Chapter '{chapter_title}': found {len(chunk_metadata_list)} metadata entries, {len(chunk_files)} chunk files")
-    if chunk_metadata_list:
-        logger.debug(f"First metadata entry: {chunk_metadata_list[0]}")
-    
-    # Map chunks to text segments with positions
-    # First, create a set of chunk indices that have files
-    chunks_with_files = set()
-    chunks_info = []
-    
-    for chunk_file in chunk_files:
-        # Extract chunk number from filename
-        chunk_num_str = chunk_file.stem.rsplit('_chunk_', 1)[-1]
-        try:
-            chunk_index = int(chunk_num_str)
-            chunks_with_files.add(chunk_index)
-        except ValueError:
-            continue
-        
-        # Get metadata for this chunk
-        meta = chunk_metadata_dict.get(chunk_index, {})
-        
-        # Convert filesystem path to URL relative to /audio mount
-        # Path: data/books/Book Name (book_id)/chapters/file.wav
-        # URL: /audio/Book Name (book_id)/chapters/file.wav
-        rel_path = chunk_file.relative_to(settings.books_dir)
-        audio_url = f"/audio/{rel_path.as_posix()}"
+    for chunk in chunks:
+        # Get audio URL if exists
+        audio_url = None
+        if chunk.has_audio and chunk.audio_path:
+            rel_path = chunk.audio_path.relative_to(settings.books_dir)
+            audio_url = f"/audio/{rel_path.as_posix()}"
         
         chunk_info = {
-            'index': chunk_index,
-            'filename': chunk_file.name,
-            'path': str(chunk_file),
-            'url': audio_url,  # Add URL for easier frontend access
-            'flagged': chunk_index in chapter_meta.get('flagged_chunks', []),
-            'text_start': meta.get('text_start', 0),
-            'text_end': meta.get('text_end', 0),
-            'text_length': meta.get('text_length', 0),
-            'status': meta.get('status', 'completed'),
-            'generation_time_seconds': meta.get('generation_time_seconds'),
+            'index': chunk.index,
+            'filename': chunk.audio_path.name if chunk.audio_path else None,
+            'path': str(chunk.audio_path) if chunk.audio_path else None,
+            'url': audio_url,
+            'flagged': chunk.is_flagged,
+            'text_start': chunk.text_start,
+            'text_end': chunk.text_end,
+            'text_length': chunk.text_length,
+            'status': chunk.status.value,
+            'generation_time_seconds': chunk.generation_time_seconds,
         }
         chunks_info.append(chunk_info)
-    
-    # Also include pending chunks from metadata that don't have files yet
-    # This allows the UI to show gaps and pending chunks properly
-    for chunk_meta in chunk_metadata_list:
-        chunk_index = chunk_meta.get('index')
-        if chunk_index not in chunks_with_files:
-            # This is a pending chunk without a file
-            chunks_info.append({
-                'index': chunk_index,
-                'filename': None,
-                'path': None,
-                'flagged': chunk_index in chapter_meta.get('flagged_chunks', []),
-                'text_start': chunk_meta.get('text_start', 0),
-                'text_end': chunk_meta.get('text_end', 0),
-                'text_length': chunk_meta.get('text_length', 0),
-                'status': chunk_meta.get('status', 'pending'),
-                'generation_time_seconds': chunk_meta.get('generation_time_seconds'),
-            })
     
     # Sort chunks by index
     chunks_info.sort(key=lambda x: x['index'])
     
-    # Calculate total text length
-    total_text_length = len(text_content) if text_content else 0
+    # Get flagged chunks
+    flagged_chunks = [ch.index for ch in chunks if ch.is_flagged]
     
     return {
-        'chapter_title': chapter_title,
-        'text_file': str(text_file) if text_file.exists() else None,
-        'text_length': total_text_length,
+        'chapter_number': chapter_number,
+        'chapter_title': chapter.title,
+        'text_file': str(chapter.text_path) if chapter.text_path else None,
+        'text_length': len(text_content),
         'chunks': chunks_info,
-        'flagged_chunks': chapter_meta.get('flagged_chunks', []),
+        'flagged_chunks': flagged_chunks,
     }
 
 
 @router.get("/api/books/{book_id}/chapters/{chapter_number}")
 async def get_chapter(book_id: str, chapter_number: int):
     """Get chapter details."""
-    chapters = discover_chapters(book_id)
-    chapter = next((c for c in chapters if c['chapter_number'] == chapter_number), None)
+    from src.controllers.chapter_controller import ChapterController
+    
+    chapter_ctrl = ChapterController()
+    chapter = chapter_ctrl.get_chapter(book_id, chapter_number)
     
     if not chapter:
         raise HTTPException(status_code=404, detail="Chapter not found")
     
     # Get audio URLs
-    chapter_title = Path(chapter['text_path']).stem
-    audio_urls = get_chapter_audio_urls(book_id, chapter_title)
-    chapter['audio_urls'] = audio_urls
+    chapter_service = ChapterService()
+    audio_urls = chapter_service.get_chapter_audio_urls(book_id, chapter_number)
     
-    return chapter
-
-
-@router.get("/api/progress/{book_id}")
-async def get_progress(book_id: str, db: Session = Depends(get_db)):
-    """Get playback progress for a book."""
-    progress = db.query(Progress).filter(Progress.book_id == book_id).first()
+    # Get chapter info using service (which returns ChapterInfo model)
+    chapter_service = ChapterService()
+    chapter_info = chapter_service.get_chapter_info(book_id, chapter_number)
     
-    if not progress:
-        return {
-            "book_id": book_id,
-            "current_chapter": 1,
-            "position_seconds": 0.0,
-            "completed": False,
-        }
+    if not chapter_info:
+        raise HTTPException(status_code=404, detail="Chapter not found")
     
-    return {
-        "book_id": progress.book_id,
-        "current_chapter": progress.chapter_id,
-        "position_seconds": progress.position_seconds,
-        "completed": bool(progress.completed),
-    }
-
-
-@router.post("/api/progress")
-async def update_progress(
-    book_id: str,
-    chapter_id: int,
-    position_seconds: float,
-    completed: bool = False,
-    db: Session = Depends(get_db),
-):
-    """Update playback progress."""
-    progress = db.query(Progress).filter(
-        Progress.book_id == book_id,
-        Progress.chapter_id == chapter_id,
-    ).first()
-    
-    if progress:
-        progress.position_seconds = position_seconds
-        progress.completed = 1 if completed else 0
-    else:
-        progress = Progress(
-            book_id=book_id,
-            chapter_id=chapter_id,
-            position_seconds=position_seconds,
-            completed=1 if completed else 0,
-        )
-        db.add(progress)
-    
-    db.commit()
-    db.refresh(progress)
-    
-    return {
-        "book_id": progress.book_id,
-        "chapter_id": progress.chapter_id,
-        "position_seconds": progress.position_seconds,
-        "completed": bool(progress.completed),
-    }
+    return attr.asdict(chapter_info)
 
 
 # Job management routes
@@ -283,13 +162,13 @@ class ScrapeBookRequest(BaseModel):
 
 class GenerateAudioRequest(BaseModel):
     book_id: str
-    chapter_title: Optional[str] = None
+    chapter_number: Optional[int] = None
     speaker: Optional[str] = None
 
 
 class GenerateChunkRequest(BaseModel):
     book_id: str
-    chapter_title: str
+    chapter_number: int
     chunk_index: int
     speaker: Optional[str] = None
 
@@ -308,7 +187,7 @@ class DownloadChapterRequest(BaseModel):
 
 class ChunkChapterRequest(BaseModel):
     book_id: str
-    chapter_title: str
+    chapter_number: int
     chunk_duration_minutes: Optional[float] = 1.0
     target_chars: Optional[int] = None
     min_chars: Optional[int] = None
@@ -317,7 +196,7 @@ class ChunkChapterRequest(BaseModel):
 
 class GenerateChunksRequest(BaseModel):
     book_id: str
-    chapter_title: str
+    chapter_number: int
     chunk_indices: Optional[list[int]] = None
     speaker: Optional[str] = None
     language: Optional[str] = None
@@ -328,7 +207,8 @@ class GenerateChunksRequest(BaseModel):
 @router.get("/api/books/{book_id}/series")
 async def get_series_books(book_id: str):
     """Get other books in the same series."""
-    series_books = find_series_books(book_id)
+    service = BookService()
+    series_books = service.find_series_books(book_id)
     return {"books": series_books}
 
 
@@ -349,11 +229,11 @@ async def create_generate_audio_job(request: GenerateAudioRequest):
     """Create an audio generation job."""
     job_manager = get_job_manager()
     
-    if request.chapter_title:
+    if request.chapter_number:
         job_id = job_manager.create_job(
             JobType.GENERATE_CHAPTER_AUDIO,
             book_id=request.book_id,
-            chapter_title=request.chapter_title,
+            chapter_number=request.chapter_number,
             speaker=request.speaker,
         )
     else:
@@ -374,7 +254,7 @@ async def create_generate_chunk_job(request: GenerateChunkRequest):
     job_id = job_manager.create_job(
         JobType.GENERATE_CHUNK_AUDIO,
         book_id=request.book_id,
-        chapter_title=request.chapter_title,
+        chapter_number=request.chapter_number,
         chunk_index=request.chunk_index,
         speaker=request.speaker,
     )
@@ -426,9 +306,12 @@ async def download_book(request: DownloadBookRequest):
             filter_book_number=request.filter_book_number,
             max_chapters=request.max_chapters,
         )
-        return {"status": "success", "result": result}
+        return attr.asdict(OperationResult(
+            status="success",
+            result=attr.asdict(result) if hasattr(result, '__attrs_attrs__') else result,
+        ))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return attr.asdict(OperationResult(status="error", error=str(e)))
 
 
 @router.post("/api/chapters/download")
@@ -441,9 +324,12 @@ async def download_chapter(request: DownloadChapterRequest):
             chapter_url=request.chapter_url,
             chapter_number=request.chapter_number,
         )
-        return {"status": "success", "result": result}
+        return attr.asdict(OperationResult(
+            status="success",
+            result=attr.asdict(result) if hasattr(result, '__attrs_attrs__') else result,
+        ))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return attr.asdict(OperationResult(status="error", error=str(e)))
 
 
 @router.post("/api/chapters/chunk")
@@ -453,22 +339,25 @@ async def chunk_chapter(request: ChunkChapterRequest):
     try:
         result = service.chunk_chapter(
             book_id=request.book_id,
-            chapter_title=request.chapter_title,
+            chapter_number=request.chapter_number,
             chunk_duration_minutes=request.chunk_duration_minutes or 1.0,
             target_chars=request.target_chars,
             min_chars=request.min_chars,
             max_chars=request.max_chars,
         )
-        return {"status": "success", "result": result}
+        return attr.asdict(OperationResult(
+            status="success",
+            result=attr.asdict(result) if hasattr(result, '__attrs_attrs__') else result,
+        ))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return attr.asdict(OperationResult(status="error", error=str(e)))
 
 
 # Note: Specific route must come before generic route
 @router.post("/api/chunks/{chunk_index}/generate")
 async def generate_single_chunk(
     book_id: str,
-    chapter_title: str,
+    chapter_number: int,
     chunk_index: int,
     speaker: Optional[str] = None,
     language: Optional[str] = None,
@@ -480,16 +369,19 @@ async def generate_single_chunk(
     try:
         result = service.generate_chunk_audio(
             book_id=book_id,
-            chapter_title=chapter_title,
+            chapter_number=chapter_number,
             chunk_index=chunk_index,
             speaker=speaker,
             language=language,
             speed=speed,
             emotion=emotion,
         )
-        return {"status": "success", "result": result}
+        return attr.asdict(OperationResult(
+            status="success",
+            result=attr.asdict(result) if hasattr(result, '__attrs_attrs__') else result,
+        ))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return attr.asdict(OperationResult(status="error", error=str(e)))
 
 
 @router.post("/api/chunks/generate")
@@ -499,84 +391,50 @@ async def generate_chunks(request: GenerateChunksRequest):
     try:
         result = service.generate_chapter_chunks(
             book_id=request.book_id,
-            chapter_title=request.chapter_title,
+            chapter_number=request.chapter_number,
             chunk_indices=request.chunk_indices,
             speaker=request.speaker,
             language=request.language,
             speed=request.speed,
             emotion=request.emotion,
         )
-        return {"status": "success", "result": result}
+        return attr.asdict(OperationResult(
+            status="success",
+            result=attr.asdict(result) if hasattr(result, '__attrs_attrs__') else result,
+        ))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return attr.asdict(OperationResult(status="error", error=str(e)))
 
 
 # Chunk management routes
 
-@router.post("/api/books/{book_id}/chapters/{chapter_title}/chunks/{chunk_index}/flag")
-async def flag_chunk(book_id: str, chapter_title: str, chunk_index: int):
+@router.post("/api/books/{book_id}/chapters/{chapter_number}/chunks/{chunk_index}/flag")
+async def flag_chunk(book_id: str, chapter_number: int, chunk_index: int):
     """Flag a chunk for reprocessing."""
-    from src.utils.metadata_tracker import MetadataTracker
-    from src.utils.config import get_settings
-    from urllib.parse import unquote
+    from src.controllers.chunk_controller import ChunkController
     
-    # Decode URL-encoded chapter title
-    chapter_title = unquote(chapter_title)
+    chunk_ctrl = ChunkController()
     
-    settings = get_settings()
+    # Flag the chunk
+    chunk = chunk_ctrl.flag_chunk(book_id, chapter_number, chunk_index, flagged=True)
     
-    # Find book directory
-    book_dir = None
-    for dir_path in settings.books_dir.iterdir():
-        if dir_path.is_dir() and book_id in dir_path.name:
-            metadata_path = dir_path / "metadata.json"
-            if metadata_path.exists():
-                import json
-                try:
-                    with open(metadata_path, 'r', encoding='utf-8') as f:
-                        metadata = json.load(f)
-                    if metadata.get('book_id') == book_id:
-                        book_dir = dir_path
-                        break
-                except Exception:
-                    continue
+    if chunk is None:
+        raise HTTPException(status_code=404, detail="Chunk not found")
     
-    if not book_dir:
-        raise HTTPException(status_code=404, detail="Book not found")
-    
-    tracker = MetadataTracker(book_dir)
-    metadata = tracker.load()
-    
-    # Find chapter entry
-    chapter_found = False
-    for ch in metadata.get('chapters', []):
-        if ch.get('title') == chapter_title:
-            if 'flagged_chunks' not in ch:
-                ch['flagged_chunks'] = []
-            if chunk_index not in ch['flagged_chunks']:
-                ch['flagged_chunks'].append(chunk_index)
-            chapter_found = True
-            break
-    
-    if not chapter_found:
-        # Add chapter entry
-        if 'chapters' not in metadata:
-            metadata['chapters'] = []
-        metadata['chapters'].append({
-            'title': chapter_title,
-            'flagged_chunks': [chunk_index],
-        })
-    
-    tracker.save()
-    
-    return {"status": "flagged", "chapter_title": chapter_title, "chunk_index": chunk_index}
+    return {
+        "status": "flagged",
+        "book_id": book_id,
+        "chapter_number": chapter_number,
+        "chunk_index": chunk_index,
+    }
 
 
 @router.get("/api/search")
 async def search_books(query: str):
     """Search Royal Road for books."""
     try:
-        results = search_royal_road(query)
+        service = BookService()
+        results = service.search_royal_road(query)
         return {"books": results}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")

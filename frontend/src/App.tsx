@@ -5,7 +5,7 @@ import PlayerView from './components/PlayerView'
 import ToastContainer from './components/ToastContainer'
 import useAudiobookStore from './store/useAudiobookStore'
 import useToastStore from './store/useToastStore'
-import type { Book } from './types'
+import type { Book, BookStats } from './types'
 import styles from './components/App.module.css'
 
 interface SavedState {
@@ -62,7 +62,18 @@ function App() {
       if (!response.ok) {
         throw new Error(`Failed to fetch book: ${response.statusText}`)
       }
-      const book = await response.json() as Book
+      const bookInfo = await response.json() as { book_id: string; book_title: string; book_url: string | null; author: string | null; filter_book_number: number | null; stats: BookStats; chapters: Array<{ chapter_number: number | null; title: string; number: number | null; url: string | null }> }
+      
+      // Transform BookInfo to Book format
+      const book: Book = {
+        id: bookInfo.book_id,
+        title: bookInfo.book_title,
+        author: bookInfo.author,
+        url: bookInfo.book_url || '',
+        chapter_count: bookInfo.stats.total_chapters,
+        path: '', // Not in BookInfo, will be set from other sources if needed
+        stats: bookInfo.stats,
+      }
       
       await setCurrentBook(book)
       setCurrentView('player')
@@ -71,25 +82,14 @@ function App() {
       let targetChapter: number | null = chapterNumber
       let targetPosition: number | null = position
       
-      // If not provided, try to load from server progress
+      // If not provided, default to first chapter
+      // Note: setCurrentBook will fetch chapters and set the first one automatically
+      // but we still need to handle the case where a specific chapter is requested
       if (targetChapter === null) {
-        try {
-          const progressResponse = await fetch(`/api/progress/${bookId}`)
-          if (progressResponse.ok) {
-            const progress = await progressResponse.json() as { current_chapter?: number; position_seconds?: number }
-            if (progress.current_chapter && progress.current_chapter > 0) {
-              targetChapter = progress.current_chapter
-              targetPosition = progress.position_seconds ?? 0
-            }
-          }
-        } catch {
-          // Ignore progress fetch errors
-        }
-        
-        if (targetChapter === null && book.chapters && book.chapters.length > 0) {
-          targetChapter = 1
-          targetPosition = 0
-        }
+        // Wait a bit for chapters to load, then check
+        // The store will set the first chapter automatically, but we can override if needed
+        targetChapter = 1
+        targetPosition = 0
       }
       
       // Update URL and localStorage
