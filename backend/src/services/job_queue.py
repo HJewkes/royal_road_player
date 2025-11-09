@@ -1,70 +1,25 @@
 """Job queue service for processing chunks sequentially."""
 
 import asyncio
-import logging
 import json
+import logging
+import time
+from dataclasses import asdict
+from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, Optional, Dict, Any, Callable, Tuple
-from dataclasses import dataclass, asdict
-from enum import Enum
+from typing import List, Optional, Dict, Any, Callable, Tuple, Set
 
 from src.controllers.tts_controller import TTSController
-from src.data.data_synchronizer import DataSynchronizer
+from src.data.database import db_session
+from src.data.db_repository import ChapterRepository, ChunkRepository
 from src.models.chunk import Chunk
 from src.models.enums import ChunkStatus
+from src.services.chunk_job import ChunkJob
+from src.services.job_status import JobStatus
+from src.services.queue_events import get_event_manager
 from src.utils.config import get_settings
 
 logger = logging.getLogger(__name__)
-
-
-class JobStatus(str, Enum):
-    """Status of a job in the queue."""
-    
-    PENDING = 'pending'
-    RUNNING = 'running'
-    COMPLETED = 'completed'
-    FAILED = 'failed'
-
-
-@dataclass
-class ChunkJob:
-    """Represents a job to process a chunk."""
-    
-    book_id: str
-    chapter_number: int
-    chunk_index: int
-    speaker: Optional[str] = None
-    speed: Optional[float] = None
-    status: JobStatus = JobStatus.PENDING
-    error: Optional[str] = None
-    created_at: Optional[str] = None
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for JSON serialization."""
-        return {
-            'book_id': self.book_id,
-            'chapter_number': self.chapter_number,
-            'chunk_index': self.chunk_index,
-            'speaker': self.speaker,
-            'speed': self.speed,
-            'status': self.status.value,
-            'error': self.error,
-            'created_at': self.created_at,
-        }
-    
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'ChunkJob':
-        """Create from dictionary."""
-        return cls(
-            book_id=data['book_id'],
-            chapter_number=data['chapter_number'],
-            chunk_index=data['chunk_index'],
-            speaker=data.get('speaker'),
-            speed=data.get('speed'),
-            status=JobStatus(data.get('status', 'pending')),
-            error=data.get('error'),
-            created_at=data.get('created_at'),
-        )
 
 
 class ChunkJobQueue:
@@ -80,6 +35,7 @@ class ChunkJobQueue:
         self._processor_task: Optional[asyncio.Task] = None  # Keep reference to background task
         self._last_recovery_time: float = 0.0  # Track when we last ran recovery
         self._recovery_interval: float = 30.0  # Only recover every 30 seconds
+        self._retried_failed_chunks: Set[str] = set()  # Track failed chunks retried in this processor run
         
         # Recover any stuck jobs on startup
         self.recover_stuck_jobs()
@@ -102,8 +58,6 @@ class ChunkJobQueue:
         Returns:
             Number of chunks queued
         """
-        from src.data.db_repository import ChunkRepository
-        
         added = 0
         skipped_completed = 0
         skipped_pending_or_running = 0
@@ -129,7 +83,6 @@ class ChunkJobQueue:
                 
                 if job_chapter_number is None:
                     # Try to load from DB
-                    from src.data.db_repository import ChapterRepository
                     chapter = ChapterRepository.get_by_id(chunk.chapter_id)
                     if chapter:
                         job_chapter_number = chapter.chapter_number
@@ -201,8 +154,7 @@ class ChunkJobQueue:
         Returns:
             Number of jobs added to queue
         """
-        sync = DataSynchronizer(books_dir=self.settings.books_dir)
-        chunks = sync.load_chunks(book_id, chapter_number)
+        chunks = ChunkRepository.get_by_chapter(book_id, chapter_number)
         
         if not chunks:
             logger.warning(f"No chunks found for chapter {chapter_number}")
@@ -224,9 +176,6 @@ class ChunkJobQueue:
             logger.info(f"Filtered to {len(chunks)} chunks (pending + failed)")
         
         # Reset failed chunks to PENDING status in database so they can be retried
-        from src.models.enums import ChunkStatus
-        from src.data.db_repository import ChunkRepository
-        
         failed_chunks_to_reset = [ch for ch in chunks if ch.is_failed]
         logger.info(f"Found {len(failed_chunks_to_reset)} failed chunks to reset (out of {len(chunks)} total chunks)")
         
@@ -252,7 +201,6 @@ class ChunkJobQueue:
             # Update chunks list in memory - mark failed chunks as pending
             for i, chunk in enumerate(chunks):
                 if chunk.is_failed:
-                    from src.models.chunk import Chunk
                     updated_chunk = Chunk(
                         index=chunk.index,
                         book_id=chunk.book_id,
@@ -288,28 +236,38 @@ class ChunkJobQueue:
         Recover chunks stuck in RUNNING state (e.g., after server crash).
         Queries database for RUNNING chunks and checks if they're actually stuck.
         
+        If background processor is disabled, all RUNNING chunks are considered stuck
+        and will be recovered immediately.
+        
         Returns:
             Number of chunks recovered
         """
-        from src.data.db_repository import ChunkRepository
-        from src.data.database import get_session
-        from src.data.db_models import ChunkDB
-        from src.models.enums import ChunkStatus
-        from sqlalchemy import and_
-        from datetime import datetime, timedelta
-        
         recovered = 0
-        session = get_session()
-        try:
-            # Find all RUNNING chunks
-            running_chunks = session.query(ChunkDB).filter(
-                ChunkDB.status == ChunkStatus.RUNNING.value
-            ).all()
+        with db_session() as session:
+            # Find all RUNNING chunks using repository
+            running_chunks = ChunkRepository.get_running_chunks(session=session)
+            
+            # If background processor is disabled, all RUNNING chunks are stuck
+            processor_enabled = self.settings.enable_background_processor
+            
+            # Check if processor is actually processing (has current_job)
+            # If processor is enabled but has no current job, all RUNNING chunks are likely stuck
+            processor_actually_processing = (
+                processor_enabled and 
+                self._current_chunk_id is not None and 
+                self._processing
+            )
             
             for chunk_db in running_chunks:
-                # Check if processing_started_at is old (> 2 minutes)
+                # Check if processing_started_at is old (> 2 minutes) or processor is disabled
                 should_recover = False
-                if chunk_db.processing_started_at:
+                if not processor_enabled:
+                    # Processor disabled - all RUNNING chunks are stuck
+                    should_recover = True
+                elif not processor_actually_processing:
+                    # Processor enabled but not actually processing - all RUNNING chunks are stuck
+                    should_recover = True
+                elif chunk_db.processing_started_at:
                     age = datetime.utcnow() - chunk_db.processing_started_at
                     if age > timedelta(minutes=2):
                         should_recover = True
@@ -319,8 +277,10 @@ class ChunkJobQueue:
                 
                 if should_recover:
                     # Check if chunk actually has audio file
-                    sync = DataSynchronizer(books_dir=self.settings.books_dir)
-                    chunk = sync.load_chunk(chunk_db.book_id, chunk_db.chapter_number, chunk_db.index)
+                    # Load chunk from database to check file existence
+                    chunk = ChunkRepository.get_by_book_chapter_index(
+                        chunk_db.book_id, chunk_db.chapter_number, chunk_db.index
+                    )
                     
                     if chunk and chunk.has_audio:
                         # Has audio - mark as completed
@@ -328,7 +288,8 @@ class ChunkJobQueue:
                             chunk_db.book_id,
                             chunk_db.chapter_number,
                             chunk_db.index,
-                            ChunkStatus.COMPLETED
+                            ChunkStatus.COMPLETED,
+                            session=session
                         )
                         recovered += 1
                         logger.info(f"Recovered completed chunk {chunk_db.book_id}/{chunk_db.chapter_number}/{chunk_db.index}")
@@ -338,7 +299,8 @@ class ChunkJobQueue:
                             chunk_db.book_id,
                             chunk_db.chapter_number,
                             chunk_db.index,
-                            ChunkStatus.PENDING
+                            ChunkStatus.PENDING,
+                            session=session
                         )
                         recovered += 1
                         logger.info(f"Recovered stuck chunk {chunk_db.book_id}/{chunk_db.chapter_number}/{chunk_db.index}")
@@ -351,27 +313,16 @@ class ChunkJobQueue:
                         book_id = parts[0]
                         chapter_num = int(parts[1])
                         chunk_idx = int(parts[2])
-                        # Check if this chunk was recovered
-                        recovered_chunk = session.query(ChunkDB).filter(
-                            and_(
-                                ChunkDB.book_id == book_id,
-                                ChunkDB.chapter_number == chapter_num,
-                                ChunkDB.index == chunk_idx
-                            )
-                        ).first()
+                        # Check if this chunk was recovered using repository
+                        recovered_chunk = ChunkRepository.get_chunk_for_recovery_check(
+                            book_id, chapter_num, chunk_idx, session=session
+                        )
                         if recovered_chunk and recovered_chunk.status != ChunkStatus.RUNNING.value:
                             self._current_chunk_id = None
                             self._processing = False
                             logger.info("Cleared current chunk after recovery")
                     except (ValueError, IndexError):
                         pass
-            
-            session.commit()
-        except Exception as e:
-            session.rollback()
-            logger.error(f"Error recovering stuck jobs: {e}", exc_info=True)
-        finally:
-            session.close()
         
         if recovered > 0:
             logger.info(f"✅ Recovered {recovered} stuck chunks")
@@ -395,16 +346,22 @@ class ChunkJobQueue:
         Returns:
             Dictionary with queue statistics and progress
         """
-        # Only recover stuck jobs periodically (every 30 seconds) to avoid performance hit
-        import time
-        current_time = time.time()
-        if current_time - self._last_recovery_time > self._recovery_interval:
-            self.recover_stuck_jobs()
-            self._last_recovery_time = current_time
-        
         # Query database for counts
-        from src.data.db_repository import ChunkRepository
-        from src.models.enums import ChunkStatus
+        # Recover stuck jobs if needed
+        current_time = time.time()
+        
+        # If background processor is disabled, recover stuck jobs immediately
+        # (they'll show as 0 running after recovery)
+        if not self.settings.enable_background_processor:
+            # Force recovery if processor is disabled (don't wait for interval)
+            if current_time - self._last_recovery_time > 1.0:  # At least 1 second between recoveries
+                self.recover_stuck_jobs()
+                self._last_recovery_time = current_time
+        else:
+            # Only recover stuck jobs periodically (every 30 seconds) to avoid performance hit
+            if current_time - self._last_recovery_time > self._recovery_interval:
+                self.recover_stuck_jobs()
+                self._last_recovery_time = current_time
         
         pending = ChunkRepository.count_by_status(book_id, chapter_number, ChunkStatus.PENDING)
         running = ChunkRepository.count_by_status(book_id, chapter_number, ChunkStatus.RUNNING)
@@ -418,9 +375,9 @@ class ChunkJobQueue:
         if total > 0:
             progress_percent = ((completed + failed) / total) * 100
         
-        # Get current job details if processing
+        # Get current job details if processing (only if processor is enabled)
         current_job_dict = None
-        if self._current_chunk_id:
+        if self.settings.enable_background_processor and self._current_chunk_id:
             parts = self._current_chunk_id.split('_')
             if len(parts) >= 3:
                 try:
@@ -438,14 +395,12 @@ class ChunkJobQueue:
                             curr_book_id, curr_chapter_num, curr_chunk_idx
                         )
                         if chunk:
-                            current_job_dict = {
-                                'book_id': curr_book_id,
-                                'chapter_number': curr_chapter_num,
-                                'chunk_index': curr_chunk_idx,
-                                'status': 'running',
-                                'speaker': chunk.voice_name,
-                                'speed': chunk.speed,
-                            }
+                            current_job = ChunkJob.from_chunk(
+                                chunk,
+                                chapter_number=curr_chapter_num,
+                                status=JobStatus.RUNNING
+                            )
+                            current_job_dict = current_job.to_dict()
                 except (ValueError, IndexError):
                     pass
         
@@ -470,7 +425,11 @@ class ChunkJobQueue:
             avg_time_per_char = eta_result['avg_time_per_char']
         
         # is_processing is True if actively processing OR if there are running jobs
-        is_processing = self._processing or running > 0
+        # But only if the background processor is enabled
+        is_processing = (
+            self.settings.enable_background_processor 
+            and (self._processing or running > 0)
+        )
         
         result = {
             'total': total,
@@ -532,9 +491,6 @@ class ChunkJobQueue:
         Returns:
             Tuple of (list of job dictionaries, total count)
         """
-        from src.data.db_repository import ChunkRepository
-        from src.models.enums import ChunkStatus
-        
         # For pending jobs, use DB query ordered by book/chapter/chunk
         if status_filter == JobStatus.PENDING:
             # Get total count first
@@ -562,107 +518,77 @@ class ChunkJobQueue:
                 # Re-sort to maintain book/chapter/chunk order
                 pending_chunks_with_numbers.sort(key=lambda x: (x[0].book_id, x[1], x[0].index))
             
-            # Convert to job dictionaries from chunk data
-            jobs_dict = []
-            for chunk, chapter_number in pending_chunks_with_numbers:
-                jobs_dict.append({
-                    'book_id': chunk.book_id,
-                    'chapter_number': chapter_number,
-                    'chunk_index': chunk.index,
-                    'status': 'pending',
-                    'speaker': chunk.voice_name,
-                    'speed': chunk.speed,
-                    'error': None,
-                    'created_at': None,
-                })
+            # Convert to ChunkJob objects from chunk data
+            jobs = [
+                ChunkJob.from_chunk(chunk, chapter_number=chapter_number, status=JobStatus.PENDING)
+                for chunk, chapter_number in pending_chunks_with_numbers
+            ]
             
             # Apply pagination
             if limit is not None:
-                jobs_dict = jobs_dict[offset:offset + limit]
+                jobs = jobs[offset:offset + limit]
             
-            return jobs_dict, total_count
+            # Convert to dictionaries for API response
+            return [job.to_dict() for job in jobs], total_count
         
-        # For failed jobs, use DB query
+        # For failed jobs, use repository
         elif status_filter == JobStatus.FAILED:
-            # Query failed chunks from DB
-            from src.data.database import get_session
-            from src.data.db_models import ChunkDB
-            
-            session = get_session()
-            try:
-                query = session.query(ChunkDB).filter(
-                    ChunkDB.status == ChunkStatus.FAILED.value
-                ).order_by(
-                    ChunkDB.book_id,
-                    ChunkDB.chapter_number,
-                    ChunkDB.index
+            # Use a session to ensure objects remain attached
+            with db_session() as session:
+                # Get total count first
+                total_count = ChunkRepository.count_by_status(status=ChunkStatus.FAILED, session=session)
+                
+                # Get chunks using repository (pass session to keep objects attached)
+                failed_chunks_db = ChunkRepository.get_chunks_by_status(
+                    status=ChunkStatus.FAILED,
+                    limit=limit,
+                    offset=offset,
+                    order_by_updated=False,
+                    session=session
                 )
                 
-                total_count = query.count()
+                # Convert to ChunkJob objects from chunk data (while session is active)
+                jobs = [
+                    ChunkJob.from_chunk(chunk_db, status=JobStatus.FAILED)
+                    for chunk_db in failed_chunks_db
+                ]
                 
-                if limit is not None:
-                    query = query.offset(offset).limit(limit)
-                
-                failed_chunks_db = query.all()
-                
-                # Convert to job dictionaries from chunk data
-                jobs_dict = []
-                for chunk_db in failed_chunks_db:
-                    jobs_dict.append({
-                        'book_id': chunk_db.book_id,
-                        'chapter_number': chunk_db.chapter_number,
-                        'chunk_index': chunk_db.index,
-                        'status': 'failed',
-                        'speaker': chunk_db.voice_name,
-                        'speed': chunk_db.speed,
-                        'error': chunk_db.error,
-                        'created_at': chunk_db.created_at.isoformat() if chunk_db.created_at else None,
-                    })
-                
-                return jobs_dict, total_count
-            finally:
-                session.close()
+                # Convert to dictionaries for API response
+                return [job.to_dict() for job in jobs], total_count
         
-        # For other statuses, query DB
-        from src.data.database import get_session
-        from src.data.db_models import ChunkDB
-        
+        # For other statuses, use repository
         if status_filter:
-            status_value = status_filter.value if hasattr(status_filter, 'value') else str(status_filter)
+            status_enum = ChunkStatus(status_filter.value) if hasattr(status_filter, 'value') else None
         else:
-            status_value = None
+            status_enum = None
         
-        session = get_session()
-        try:
-            query = session.query(ChunkDB)
-            if status_value:
-                query = query.filter(ChunkDB.status == status_value)
-            
-            query = query.order_by(ChunkDB.book_id, ChunkDB.chapter_number, ChunkDB.index)
-            
-            total_count = query.count()
-            
-            if limit is not None:
-                query = query.offset(offset).limit(limit)
-            
-            chunks_db = query.all()
-            
-            jobs_dict = []
-            for chunk_db in chunks_db:
-                jobs_dict.append({
-                    'book_id': chunk_db.book_id,
-                    'chapter_number': chunk_db.chapter_number,
-                    'chunk_index': chunk_db.index,
-                    'status': chunk_db.status,
-                    'speaker': chunk_db.voice_name,
-                    'speed': chunk_db.speed,
-                    'error': chunk_db.error,
-                    'created_at': chunk_db.created_at.isoformat() if chunk_db.created_at else None,
-                })
-            
-            return jobs_dict, total_count
-        finally:
-            session.close()
+        if status_enum:
+            # Use a session to ensure objects remain attached
+            with db_session() as session:
+                # Get total count first
+                total_count = ChunkRepository.count_by_status(status=status_enum, session=session)
+                
+                # Get chunks using repository (pass session to keep objects attached)
+                chunks_db = ChunkRepository.get_chunks_by_status(
+                    status=status_enum,
+                    limit=limit,
+                    offset=offset,
+                    order_by_updated=False,
+                    session=session
+                )
+                
+                # Convert to ChunkJob objects (while session is active)
+                jobs = [
+                    ChunkJob.from_chunk(chunk_db)
+                    for chunk_db in chunks_db
+                ]
+                
+                # Convert to dictionaries for API response
+                return [job.to_dict() for job in jobs], total_count
+        else:
+            # No status filter - get all chunks (unlikely use case, but handle it)
+            # This would require a new repository method, but for now return empty
+            return [], 0
     
     def get_progress_details(self) -> Dict[str, Any]:
         """
@@ -673,79 +599,57 @@ class ChunkJobQueue:
         """
         status = self.get_queue_status()
         
-        # Get recent completed/failed/pending jobs from DB
-        from src.data.database import get_session
-        from src.data.db_models import ChunkDB
-        from src.models.enums import ChunkStatus
+        # Get recent completed/failed/pending jobs using repository
+        # Recent completed (last 10, ordered by updated_at DESC)
+        recent_completed_db = ChunkRepository.get_chunks_by_status(
+            status=ChunkStatus.COMPLETED,
+            limit=10,
+            order_by_updated=True
+        )
         
-        session = get_session()
-        try:
-            # Recent completed (last 10)
-            recent_completed_db = session.query(ChunkDB).filter(
-                ChunkDB.status == ChunkStatus.COMPLETED.value
-            ).order_by(ChunkDB.updated_at.desc()).limit(10).all()
-            
-            recent_completed = [{
-                'book_id': c.book_id,
-                'chapter_number': c.chapter_number,
-                'chunk_index': c.index,
-                'status': 'completed',
-                'speaker': c.voice_name,
-                'speed': c.speed,
-            } for c in recent_completed_db]
-            
-            # Recent failed (last 10)
-            recent_failed_db = session.query(ChunkDB).filter(
-                ChunkDB.status == ChunkStatus.FAILED.value
-            ).order_by(ChunkDB.updated_at.desc()).limit(10).all()
-            
-            recent_failed = [{
-                'book_id': c.book_id,
-                'chapter_number': c.chapter_number,
-                'chunk_index': c.index,
-                'status': 'failed',
-                'error': c.error,
-                'speaker': c.voice_name,
-                'speed': c.speed,
-            } for c in recent_failed_db]
-            
-            # Next pending (first 10)
-            next_pending_db = session.query(ChunkDB).filter(
-                ChunkDB.status == ChunkStatus.PENDING.value
-            ).order_by(ChunkDB.book_id, ChunkDB.chapter_number, ChunkDB.index).limit(10).all()
-            
-            next_pending = [{
-                'book_id': c.book_id,
-                'chapter_number': c.chapter_number,
-                'chunk_index': c.index,
-                'status': 'pending',
-                'speaker': c.voice_name,
-                'speed': c.speed,
-            } for c in next_pending_db]
-            
-            return {
-                **status,
-                'recent_completed': recent_completed,
-                'recent_failed': recent_failed,
-                'next_pending': next_pending,
-            }
-        finally:
-            session.close()
+        recent_completed = [
+            ChunkJob.from_chunk(c, status=JobStatus.COMPLETED).to_dict()
+            for c in recent_completed_db
+        ]
+        
+        # Recent failed (last 10, ordered by updated_at DESC)
+        recent_failed_db = ChunkRepository.get_chunks_by_status(
+            status=ChunkStatus.FAILED,
+            limit=10,
+            order_by_updated=True
+        )
+        
+        recent_failed = [
+            ChunkJob.from_chunk(c, status=JobStatus.FAILED).to_dict()
+            for c in recent_failed_db
+        ]
+        
+        # Next pending (first 10, ordered by book/chapter/index)
+        next_pending_db = ChunkRepository.get_chunks_by_status(
+            status=ChunkStatus.PENDING,
+            limit=10,
+            order_by_updated=False
+        )
+        
+        next_pending = [
+            ChunkJob.from_chunk(c, status=JobStatus.PENDING).to_dict()
+            for c in next_pending_db
+        ]
+        
+        return {
+            **status,
+            'recent_completed': recent_completed,
+            'recent_failed': recent_failed,
+            'next_pending': next_pending,
+        }
     
     def clear_queue(self) -> None:
         """Reset all PENDING and RUNNING chunks to PENDING (effectively clearing queue)."""
-        from src.data.db_repository import ChunkRepository
-        from src.data.database import get_session
-        from src.data.db_models import ChunkDB
-        from src.models.enums import ChunkStatus
-        
-        session = get_session()
-        try:
-            # Reset all RUNNING chunks to PENDING
-            running_chunks = session.query(ChunkDB).filter(
-                ChunkDB.status == ChunkStatus.RUNNING.value
-            ).all()
+        with db_session() as session:
+            # Get all RUNNING chunks using repository
+            running_chunks = ChunkRepository.get_running_chunks(session=session)
             
+            # Reset all RUNNING chunks to PENDING
             for chunk_db in running_chunks:
                 ChunkRepository.update_status(
                     chunk_db.book_id,
@@ -755,15 +659,9 @@ class ChunkJobQueue:
                     session=session
                 )
             
-            session.commit()
             self._current_chunk_id = None
             self._processing = False
             logger.info(f"Cleared queue: reset {len(running_chunks)} RUNNING chunks to PENDING")
-        except Exception as e:
-            session.rollback()
-            logger.error(f"Failed to clear queue: {e}", exc_info=True)
-        finally:
-            session.close()
     
     async def process_next(self) -> Optional[ChunkJob]:
         """
@@ -776,19 +674,64 @@ class ChunkJobQueue:
             logger.debug("Already processing a job, skipping")
             return None
         
-        # Query database for next pending chunk in order
-        from src.data.db_repository import ChunkRepository
-        from src.models.enums import ChunkStatus
-        from datetime import datetime
+        # Query database for next pending or failed chunk in order
+        # Get pending chunks and failed chunks (for retry)
+        # We'll filter out already-retried failed chunks below
+        chunks_with_numbers = ChunkRepository.get_pending_chunks_ordered(limit=10, include_failed=True)
         
-        pending_chunks_with_numbers = ChunkRepository.get_pending_chunks_ordered(limit=1)
-        
-        if not pending_chunks_with_numbers:
-            logger.debug("No pending chunks in database")
+        if not chunks_with_numbers:
+            logger.debug("No pending or failed chunks in database")
             return None
         
-        # Get first pending chunk
-        chunk, chapter_number = pending_chunks_with_numbers[0]
+        # Find first chunk that's either pending, or failed but not yet retried
+        chunk = None
+        chapter_number = None
+        for candidate_chunk, candidate_chapter_number in chunks_with_numbers:
+            chunk_id = f"{candidate_chunk.book_id}_{candidate_chapter_number}_{candidate_chunk.index}"
+            
+            if candidate_chunk.status == ChunkStatus.PENDING:
+                # Pending chunk - process it
+                chunk = candidate_chunk
+                chapter_number = candidate_chapter_number
+                break
+            elif candidate_chunk.status == ChunkStatus.FAILED:
+                # Failed chunk - check if we've already retried it
+                if chunk_id not in self._retried_failed_chunks:
+                    # Not retried yet - reset to PENDING and retry
+                    logger.info(f"Retrying failed chunk {chunk_id} (first retry)")
+                    ChunkRepository.update_status(
+                        candidate_chunk.book_id,
+                        candidate_chapter_number,
+                        candidate_chunk.index,
+                        ChunkStatus.PENDING,
+                        error=None  # Clear error message
+                    )
+                    self._retried_failed_chunks.add(chunk_id)
+                    chunk = candidate_chunk
+                    chapter_number = candidate_chapter_number
+                    # Update chunk status to PENDING in memory
+                    chunk = Chunk(
+                        index=candidate_chunk.index,
+                        book_id=candidate_chunk.book_id,
+                        text_start=candidate_chunk.text_start,
+                        text_end=candidate_chunk.text_end,
+                        status=ChunkStatus.PENDING,
+                        chapter_id=candidate_chunk.chapter_id,
+                        path=candidate_chunk.path,
+                        generation_time_seconds=candidate_chunk.generation_time_seconds,
+                        voice_name=candidate_chunk.voice_name,
+                        speed=candidate_chunk.speed,
+                        pre_pause_ms=candidate_chunk.pre_pause_ms,
+                        post_pause_ms=candidate_chunk.post_pause_ms,
+                        is_dialogue=candidate_chunk.is_dialogue,
+                        is_scene_break=candidate_chunk.is_scene_break,
+                    )
+                    break
+                # else: Already retried, skip and try next chunk
+        
+        if chunk is None:
+            logger.debug("No chunks available (all pending chunks processed or all failed chunks already retried)")
+            return None
         
         # Mark as RUNNING in database
         ChunkRepository.update_status(
@@ -812,6 +755,16 @@ class ChunkJobQueue:
         
         self._processing = True
         self._current_chunk_id = f"{chunk.book_id}_{chapter_number}_{chunk.index}"
+        
+        # Emit job started event
+        try:
+            event_manager = get_event_manager()
+            await event_manager.broadcast_job_started(next_job.to_dict())
+            # Also broadcast status update
+            status = self.get_queue_status(include_eta=True)
+            await event_manager.broadcast_status_update(status)
+        except Exception as e:
+            logger.debug(f"Failed to emit job_started event: {e}")
         
         try:
             # Initialize TTS controller if needed
@@ -845,6 +798,16 @@ class ChunkJobQueue:
             next_job.status = JobStatus.COMPLETED
             logger.info(f"✅ Completed chunk {next_job.chunk_index}")
             
+            # Emit job completed event
+            try:
+                event_manager = get_event_manager()
+                await event_manager.broadcast_job_completed(next_job.to_dict())
+                # Also broadcast status update
+                status = self.get_queue_status(include_eta=True)
+                await event_manager.broadcast_status_update(status)
+            except Exception as e:
+                logger.debug(f"Failed to emit job_completed event: {e}")
+            
         except Exception as e:
             error_msg = str(e)
             logger.error(f"Failed to process chunk {next_job.chunk_index}: {error_msg}")
@@ -859,6 +822,16 @@ class ChunkJobQueue:
             )
             next_job.status = JobStatus.FAILED
             next_job.error = error_msg
+            
+            # Emit job failed event
+            try:
+                event_manager = get_event_manager()
+                await event_manager.broadcast_job_failed(next_job.to_dict())
+                # Also broadcast status update
+                status = self.get_queue_status(include_eta=True)
+                await event_manager.broadcast_status_update(status)
+            except Exception as e:
+                logger.debug(f"Failed to emit job_failed event: {e}")
         
         finally:
             self._processing = False
@@ -929,6 +902,10 @@ class ChunkJobQueue:
             processor_logger.info("Background processor started")
             processor_logger.info(f"Polling interval: {interval_seconds} seconds")
             processor_logger.info("=" * 80)
+            
+            # Reset retry tracking for this processor run
+            # Failed chunks will be retried once, then skipped if they fail again
+            self._retried_failed_chunks.clear()
             
             consecutive_empty_polls = 0
             while True:

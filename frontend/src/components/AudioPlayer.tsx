@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { SkipBack, Play, Pause, SkipForward, ArrowLeft, BookOpen, Volume2, VolumeX, Gauge } from 'lucide-react'
+import { Play, Pause, Volume2, VolumeX, Gauge, HelpCircle, FileText } from 'lucide-react'
 import useAudiobookStore from '../store/useAudiobookStore'
 import useToastStore from '../store/useToastStore'
 import type { Book, Chapter } from '../types'
@@ -9,8 +9,6 @@ interface AudioPlayerProps {
   book: Book | null
   // Chapter is now managed internally via playingChapter from store
   onAudioRef?: (audio: HTMLAudioElement | null) => void
-  onBack?: () => void
-  onShowSeries?: () => void
 }
 
 interface ChunkTimeInfo {
@@ -23,7 +21,7 @@ function ChunkTextDisplay({
   bookId, 
   chapterNumber, 
   chunkMetadata, 
-  displayedChunkIndex 
+  displayedChunkIndex
 }: { 
   bookId?: string
   chapterNumber?: number
@@ -96,18 +94,20 @@ function ChunkTextDisplay({
   
   if (!chunkToDisplay) return null
   
+  // Always use compact mode (streamlined display)
   return (
-    <div className={styles.chunkTextContainer}>
-      <div className={styles.chunkTextLabel}>Current Text:</div>
-      <div className={styles.chunkText}>
+    <>
+      {!loadingText && (
+        <span className={styles.chunkIdFixed}>Chunk {chunkToDisplay.index}</span>
+      )}
+      <div className={styles.chunkTextContent}>
         {loadingText ? 'Loading...' : (chunkText || 'No text available')}
       </div>
-      <div className={styles.chunkId}>Chunk {chunkToDisplay.index}</div>
-    </div>
+    </>
   )
 }
 
-function AudioPlayer({ book, onAudioRef, onBack, onShowSeries }: AudioPlayerProps) {
+function AudioPlayer({ book, onAudioRef }: AudioPlayerProps) {
   const { loadPlayingChunkMetadata, playingChapter, chapters, setPlayingChapter, currentBook, currentChapter, playingChunkMetadata } = useAudiobookStore()
   const toast = useToastStore()
   const chapter = playingChapter // Use playingChapter from store instead of prop
@@ -122,10 +122,19 @@ function AudioPlayer({ book, onAudioRef, onBack, onShowSeries }: AudioPlayerProp
   const [volume, setVolume] = useState(1.0)
   const [showSpeedMenu, setShowSpeedMenu] = useState(false)
   const [showVolumeSlider, setShowVolumeSlider] = useState(false)
+  const [showKeyboardHelp, setShowKeyboardHelp] = useState(false)
+  const [showChunkText, setShowChunkText] = useState(false)
+  const [isClosingChunkText, setIsClosingChunkText] = useState(false)
+  const [skipDuration, setSkipDuration] = useState(10) // Default 10 seconds
   const speedControlRef = useRef<HTMLDivElement>(null)
+  const keyboardHelpRef = useRef<HTMLDivElement>(null)
+  const chunkTextRef = useRef<HTMLDivElement>(null)
   
   // Speed presets (common speeds used in modern players)
   const speedPresets = [0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
+  
+  // Skip duration presets (common skip durations)
+  const skipPresets = [5, 10, 15, 30, 60]
   
   // Chunked audio state
   const [chunkAudios, setChunkAudios] = useState<string[]>([])
@@ -987,23 +996,82 @@ function AudioPlayer({ book, onAudioRef, onBack, onShowSeries }: AudioPlayerProp
     return () => { document.removeEventListener('mousedown', handleClickOutside) }
   }, [showSpeedMenu])
 
+  // Close keyboard help when clicking outside
+  useEffect(() => {
+    if (!showKeyboardHelp) return
+    
+    const handleClickOutside = (e: MouseEvent): void => {
+      const target = e.target as HTMLElement
+      if (keyboardHelpRef.current && !keyboardHelpRef.current.contains(target)) {
+        // Don't close if clicking the help button
+        if (!target.closest(`.${styles.btnKeyboardHelp}`)) {
+          setShowKeyboardHelp(false)
+        }
+      }
+    }
+    
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => { document.removeEventListener('mousedown', handleClickOutside) }
+  }, [showKeyboardHelp])
+
+  // Close chunk text panel when clicking outside
+  useEffect(() => {
+    if (!showChunkText) return
+    
+    const handleClickOutside = (e: MouseEvent): void => {
+      const target = e.target as HTMLElement
+      if (chunkTextRef.current && !chunkTextRef.current.contains(target)) {
+        // Don't close if clicking the chunk text button
+        if (!target.closest(`.${styles.btnChunkText}`)) {
+          if (showChunkText && !isClosingChunkText) {
+            setIsClosingChunkText(true)
+            setTimeout(() => {
+              setShowChunkText(false)
+              setIsClosingChunkText(false)
+            }, 300)
+          }
+        }
+      }
+    }
+    
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => { document.removeEventListener('mousedown', handleClickOutside) }
+  }, [showChunkText, isClosingChunkText])
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent): void => {
-      if (e.code === 'Space' && (e.target as HTMLElement).tagName !== 'INPUT') {
+      // Don't handle if typing in an input
+      if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'TEXTAREA') {
+        return
+      }
+      
+      if (e.code === 'Space') {
         e.preventDefault()
         togglePlayPause()
       } else if (e.code === 'ArrowLeft') {
         e.preventDefault()
-        seekBackward(10)
+        seekBackward(skipDuration)
       } else if (e.code === 'ArrowRight') {
         e.preventDefault()
-        seekForward(10)
+        seekForward(skipDuration)
+      } else if (e.key === '?' || (e.key === 'h' && e.shiftKey)) {
+        // Show keyboard help
+        e.preventDefault()
+        setShowKeyboardHelp(!showKeyboardHelp)
+      } else if (e.key === 'Escape') {
+        // Close modals/inputs
+        if (showKeyboardHelp) {
+          setShowKeyboardHelp(false)
+        }
+        if (showSpeedMenu) {
+          setShowSpeedMenu(false)
+        }
       }
     }
 
     document.addEventListener('keydown', handleKeyDown)
     return () => { document.removeEventListener('keydown', handleKeyDown) }
-  }, [])
+  }, [showKeyboardHelp, showChunkText, showSpeedMenu])
 
   const togglePlayPause = (): void => {
     const audio = activeAudioRef.current || audioRef.current
@@ -1026,30 +1094,6 @@ function AudioPlayer({ book, onAudioRef, onBack, onShowSeries }: AudioPlayerProp
     }
   }
 
-  const playPreviousChapter = async (): Promise<void> => {
-    if (!chapter || !book) return
-    const prevNum = chapter.chapter_number - 1
-    if (prevNum >= 1) {
-      const prevChapter = chapters.find((c) => c.chapter_number === prevNum)
-      if (prevChapter && prevChapter.has_audio) {
-        await setPlayingChapter(prevChapter.chapter_number, 0)
-      }
-    }
-  }
-
-  const playNextChapter = async (): Promise<void> => {
-    if (!chapter || !book) return
-    const nextNum = chapter.chapter_number + 1
-    const nextChapter = chapters.find((c) => c.chapter_number === nextNum)
-    if (nextChapter && nextChapter.has_audio) {
-      await setPlayingChapter(nextChapter.chapter_number, 0)
-    } else {
-      if (audioRef.current) {
-        audioRef.current.pause()
-      }
-      setIsPlaying(false)
-    }
-  }
 
   const seekToTotalTime = (totalTime: number, preservePlayState = true): void => {
     if (!audioRef.current) return
@@ -1231,29 +1275,7 @@ function AudioPlayer({ book, onAudioRef, onBack, onShowSeries }: AudioPlayerProp
   }
 
   return (
-    <div className={styles.playerMain}>
-      {/* Header section with back button and book/chapter info */}
-      <div className={styles.headerSection}>
-        {onBack && (
-          <button className={styles.btnBack} onClick={onBack}>
-            <ArrowLeft size={16} />
-            Back to Library
-          </button>
-        )}
-        {currentBook && (
-          <div className={styles.titleSection}>
-            <h2 className={styles.bookTitle}>{currentBook.title}</h2>
-            {currentChapter && <h3 className={styles.chapterTitle}>{currentChapter.title}</h3>}
-          </div>
-        )}
-        {onShowSeries && (
-          <button className={styles.btnSeries} onClick={onShowSeries}>
-            <BookOpen size={16} />
-            Series
-          </button>
-        )}
-      </div>
-
+    <>
       <audio 
         ref={audioRef} 
         preload="metadata"
@@ -1266,148 +1288,269 @@ function AudioPlayer({ book, onAudioRef, onBack, onShowSeries }: AudioPlayerProp
         style={{ display: 'none' }}
       ></audio>
 
-      <div className={styles.controls}>
-        <button className={styles.btnControl} onClick={playPreviousChapter} title="Previous Chapter">
-          <SkipBack size={20} />
-        </button>
-        <button className={styles.btnPlayPause} onClick={togglePlayPause} title="Play/Pause">
-          {isPlaying ? <Pause size={24} /> : <Play size={24} />}
-        </button>
-        <button className={styles.btnControl} onClick={playNextChapter} title="Next Chapter">
-          <SkipForward size={20} />
-        </button>
-        
-        {/* Speed Control - Icon button with dropdown */}
-        <div className={styles.speedControlContainer} ref={speedControlRef}>
-          <button 
-            className={styles.speedButton}
-            onClick={() => setShowSpeedMenu(!showSpeedMenu)}
-            title={`Playback Speed: ${playbackRate.toFixed(2)}x`}
-          >
-            <Gauge size={18} />
-            <span className={styles.speedButtonValue}>{playbackRate.toFixed(2)}x</span>
-          </button>
-          {showSpeedMenu && (
-            <div className={styles.speedMenu}>
-              {speedPresets.map((speed) => (
-                <button
-                  key={speed}
-                  className={`${styles.speedOption} ${playbackRate === speed ? styles.speedOptionActive : ''}`}
-                  onClick={() => {
-                    setPlaybackRate(speed)
-                    setShowSpeedMenu(false)
-                  }}
-                >
-                  {speed.toFixed(2)}x
+      {/* Player Controls Container */}
+      <div className={styles.playerControlsContainer}>
+            {/* Controls Row */}
+            <div className={styles.controls}>
+              {/* Primary Playback Controls */}
+              <div className={styles.primaryControls}>
+                <button className={`${styles.btnPlayPause} ${isPlaying ? styles.btnPlayPausePlaying : ''}`} onClick={togglePlayPause} title="Play/Pause">
+                  {isPlaying ? <Pause size={18} /> : <Play size={18} />}
                 </button>
-              ))}
-              <div className={styles.speedCustom}>
-                <label>Custom:</label>
-                <input
-                  type="range"
-                  className={styles.speedCustomSlider}
-                  min="0.5"
-                  max="2.0"
-                  step="0.05"
-                  value={playbackRate}
-                  onChange={(e) => { setPlaybackRate(parseFloat(e.target.value)) }}
-                />
-                <span>{playbackRate.toFixed(2)}x</span>
               </div>
-            </div>
-          )}
-        </div>
 
-        {/* Volume Control - Icon button with slider */}
-        <div 
-          className={styles.volumeControlContainer}
-          onMouseEnter={() => setShowVolumeSlider(true)}
-          onMouseLeave={(e) => {
-            // Check if mouse is moving to slider container or its children
-            const relatedTarget = e.relatedTarget as HTMLElement
-            if (relatedTarget) {
-              const sliderContainer = relatedTarget.closest(`.${styles.volumeSliderContainer}`)
-              const controlContainer = relatedTarget.closest(`.${styles.volumeControlContainer}`)
-              // Don't hide if moving to slider or staying within control container
-              if (sliderContainer || controlContainer) {
-                return
-              }
-            }
-            setShowVolumeSlider(false)
-          }}
-        >
-          <button 
-            className={styles.volumeButton}
-            onClick={() => {
-              if (volume > 0) {
-                setVolume(0)
-              } else {
-                setVolume(1.0)
-              }
-            }}
-            title={`Volume: ${Math.round(volume * 100)}%`}
-          >
-            {volume === 0 ? <VolumeX size={18} /> : <Volume2 size={18} />}
-          </button>
-          {showVolumeSlider && (
+              {/* Book and Chapter Title - In the middle */}
+              {currentBook && (
+                <div className={styles.titleSection}>
+                  <h2 className={styles.bookTitle}>{currentBook.title}</h2>
+                  {currentChapter && <h3 className={styles.chapterTitle}>{currentChapter.title}</h3>}
+                </div>
+              )}
+
+              {/* Secondary Controls (Speed & Volume) */}
+              <div className={styles.secondaryControls}>
+            {/* Speed Control - Icon button with dropdown */}
+            <div className={styles.speedControlContainer} ref={speedControlRef}>
+              <button 
+                className={styles.speedButton}
+                onClick={() => setShowSpeedMenu(!showSpeedMenu)}
+                title={`Playback Speed: ${playbackRate.toFixed(2)}x`}
+              >
+                <Gauge size={16} />
+                <span className={styles.speedButtonValue}>{playbackRate.toFixed(2)}x</span>
+              </button>
+              {showSpeedMenu && (
+                <div className={styles.speedMenu}>
+                  {speedPresets.map((speed) => (
+                    <button
+                      key={speed}
+                      className={`${styles.speedOption} ${playbackRate === speed ? styles.speedOptionActive : ''}`}
+                      onClick={() => {
+                        setPlaybackRate(speed)
+                        setShowSpeedMenu(false)
+                      }}
+                    >
+                      {speed.toFixed(2)}x
+                    </button>
+                  ))}
+                  <div className={styles.speedCustom}>
+                    <label>Custom:</label>
+                    <input
+                      type="range"
+                      className={styles.speedCustomSlider}
+                      min="0.5"
+                      max="2.0"
+                      step="0.05"
+                      value={playbackRate}
+                      onChange={(e) => { setPlaybackRate(parseFloat(e.target.value)) }}
+                    />
+                    <span>{playbackRate.toFixed(2)}x</span>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Volume Control - Icon button with slider */}
             <div 
-              className={styles.volumeSliderContainer}
+              className={styles.volumeControlContainer}
               onMouseEnter={() => setShowVolumeSlider(true)}
               onMouseLeave={(e) => {
-                // Check if mouse is moving back to button or control container
+                // Check if mouse is moving to slider container or its children
                 const relatedTarget = e.relatedTarget as HTMLElement
                 if (relatedTarget) {
+                  const sliderContainer = relatedTarget.closest(`.${styles.volumeSliderContainer}`)
                   const controlContainer = relatedTarget.closest(`.${styles.volumeControlContainer}`)
-                  if (controlContainer) {
+                  // Don't hide if moving to slider or staying within control container
+                  if (sliderContainer || controlContainer) {
                     return
                   }
                 }
                 setShowVolumeSlider(false)
               }}
             >
-              <input
-                type="range"
-                className={styles.volumeSlider}
-                min="0"
-                max="100"
-                value={volume * 100}
-                onChange={(e) => { setVolume(parseFloat(e.target.value) / 100) }}
-              />
-              <div className={styles.volumeValue}>{Math.round(volume * 100)}%</div>
+              <button 
+                className={styles.volumeButton}
+                onClick={() => {
+                  if (volume > 0) {
+                    setVolume(0)
+                  } else {
+                    setVolume(1.0)
+                  }
+                }}
+                title={`Volume: ${Math.round(volume * 100)}%`}
+              >
+                {volume === 0 ? <VolumeX size={16} /> : <Volume2 size={16} />}
+              </button>
+              {showVolumeSlider && (
+                <div 
+                  className={styles.volumeSliderContainer}
+                  onMouseEnter={() => setShowVolumeSlider(true)}
+                  onMouseLeave={(e) => {
+                    // Check if mouse is moving back to button or control container
+                    const relatedTarget = e.relatedTarget as HTMLElement
+                    if (relatedTarget) {
+                      const controlContainer = relatedTarget.closest(`.${styles.volumeControlContainer}`)
+                      if (controlContainer) {
+                        return
+                      }
+                    }
+                    setShowVolumeSlider(false)
+                  }}
+                >
+                  <input
+                    type="range"
+                    className={styles.volumeSlider}
+                    min="0"
+                    max="100"
+                    value={volume * 100}
+                    onChange={(e) => { setVolume(parseFloat(e.target.value) / 100) }}
+                  />
+                  <div className={styles.volumeValue}>{Math.round(volume * 100)}%</div>
+                </div>
+              )}
             </div>
-          )}
+          </div>
         </div>
-      </div>
 
-      <div className={styles.progressContainer}>
-        <div className={styles.progressBar}>
-          <div className={styles.progressFilled} style={{ width: `${progressPercent}%` }}></div>
-          <input
-            type="range"
-            className={styles.progressSlider}
-            min="0"
-            max="100"
-            value={progressPercent}
-            step="0.1"
-            onChange={handleProgressChange}
-          />
+        {/* Progress Bar - Below controls with timestamps on ends */}
+        <div className={styles.progressContainerBelow}>
+          <div className={styles.timeDisplayLeftContainer}>
+            <span className={styles.timeDisplayLeft}>{formatTime(displayTime)}</span>
+          </div>
+          <div className={styles.progressBar}>
+            <div className={styles.progressFilled} style={{ width: `${progressPercent}%` }}></div>
+            {/* Chunk boundary markers */}
+            {chapter && chapter.is_chunked && playingChunkMetadata && playingChunkMetadata.length > 0 && totalDuration > 0 && (
+              <div className={styles.chunkMarkers}>
+                {playingChunkMetadata
+                  .filter(c => c.audio_start_time !== null && c.audio_start_time !== undefined && c.audio_start_time < totalDuration)
+                  .map((chunk) => {
+                    const percent = ((chunk.audio_start_time || 0) / totalDuration) * 100
+                    return (
+                      <div
+                        key={chunk.index}
+                        className={styles.chunkMarker}
+                        style={{ left: `${percent}%` }}
+                        title={`Chunk ${chunk.index}`}
+                      />
+                    )
+                  })}
+              </div>
+            )}
+            <input
+              type="range"
+              className={styles.progressSlider}
+              min="0"
+              max="100"
+              value={progressPercent}
+              step="0.1"
+              onChange={handleProgressChange}
+            />
+          </div>
+          <div className={styles.timeDisplayRightContainer}>
+            <span className={styles.timeDisplayRight}>{formatTime(displayDuration)}</span>
+            <div className={styles.utilityButtons}>
+              {/* Chunk Text Toggle - Small icon button */}
+              {chapter && chapter.is_chunked && playingChunkMetadata && playingChunkMetadata.length > 0 && (
+                <button
+                  className={styles.btnChunkText}
+                  onClick={() => {
+                    if (showChunkText) {
+                      // Start closing animation
+                      setIsClosingChunkText(true)
+                      setTimeout(() => {
+                        setShowChunkText(false)
+                        setIsClosingChunkText(false)
+                      }, 300) // Match animation duration
+                    } else {
+                      setShowChunkText(true)
+                      setIsClosingChunkText(false)
+                    }
+                  }}
+                  title="Show current text"
+                >
+                  <FileText size={12} />
+                </button>
+              )}
+              <button
+                className={styles.btnKeyboardHelp}
+                onClick={() => { setShowKeyboardHelp(!showKeyboardHelp) }}
+                title="Keyboard shortcuts (?)"
+              >
+                <HelpCircle size={12} />
+              </button>
+            </div>
+          </div>
         </div>
-        <div className={styles.timeDisplay}>
-          <span>{formatTime(displayTime)}</span>
-          <span>{formatTime(displayDuration)}</span>
-        </div>
-      </div>
 
-      {/* Display current chunk text */}
-      {chapter && chapter.is_chunked && playingChunkMetadata && playingChunkMetadata.length > 0 && (
-        <ChunkTextDisplay
-          bookId={currentBook?.id}
-          chapterNumber={chapter.chapter_number}
-          chunkMetadata={playingChunkMetadata}
-          displayedChunkIndex={displayedChunkIndex}
-        />
-      )}
-    </div>
+        {/* Keyboard Shortcuts Help */}
+        {showKeyboardHelp && (
+          <div className={styles.keyboardHelp} ref={keyboardHelpRef}>
+            <div className={styles.keyboardHelpHeader}>
+              <h4>Keyboard Shortcuts</h4>
+              <button
+                className={styles.keyboardHelpClose}
+                onClick={() => { setShowKeyboardHelp(false) }}
+              >
+                ×
+              </button>
+            </div>
+            <div className={styles.keyboardHelpContent}>
+              <div className={styles.keyboardHelpItem}>
+                <kbd>Space</kbd>
+                <span>Play/Pause</span>
+              </div>
+              <div className={styles.keyboardHelpItem}>
+                <kbd>←</kbd>
+                <span>Seek backward {skipDuration}s</span>
+              </div>
+              <div className={styles.keyboardHelpItem}>
+                <kbd>→</kbd>
+                <span>Seek forward {skipDuration}s</span>
+              </div>
+              <div className={styles.keyboardHelpDivider}></div>
+              <div className={`${styles.keyboardHelpItem} ${styles.keyboardHelpItemFullWidth}`}>
+                <span>Skip duration:</span>
+                <div className={styles.skipDurationControls}>
+                  {skipPresets.map((preset) => (
+                    <button
+                      key={preset}
+                      className={`${styles.skipDurationButton} ${skipDuration === preset ? styles.skipDurationButtonActive : ''}`}
+                      onClick={() => { setSkipDuration(preset) }}
+                      title={`Set skip duration to ${preset}s`}
+                    >
+                      {preset}s
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className={styles.keyboardHelpItem}>
+                <kbd>?</kbd>
+                <span>Show/hide shortcuts</span>
+              </div>
+              <div className={styles.keyboardHelpItem}>
+                <kbd>Esc</kbd>
+                <span>Close dialogs</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Chunk Text Panel - Inside player controls */}
+        {(showChunkText || isClosingChunkText) && chapter && chapter.is_chunked && playingChunkMetadata && playingChunkMetadata.length > 0 && (
+          <div className={`${styles.chunkTextPanelWrapper} ${isClosingChunkText ? styles.chunkTextPanelWrapperClosing : ''}`} ref={chunkTextRef}>
+            <div className={styles.chunkTextPanel}>
+              <ChunkTextDisplay
+                bookId={currentBook?.id}
+                chapterNumber={chapter.chapter_number}
+                chunkMetadata={playingChunkMetadata}
+                displayedChunkIndex={displayedChunkIndex}
+              />
+            </div>
+          </div>
+        )}
+      </div>
+    </>
   )
 }
 

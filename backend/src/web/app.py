@@ -25,15 +25,18 @@ async def lifespan(app: FastAPI):
     init_db()
     print("✅ Database initialized")
     
-    # Startup: Start background processor
+    # Startup: Start background processor (if enabled)
     queue = get_queue()
-    queue.start_background_processor(interval_seconds=1.0)
-    print("✅ Background job processor started (logs: logs/queue_processor.log)")
+    if settings.enable_background_processor:
+        queue.start_background_processor(interval_seconds=1.0)
+        print("✅ Background job processor started (logs: logs/queue_processor.log)")
+    else:
+        print("⚠️  Background job processor disabled (set ENABLE_BACKGROUND_PROCESSOR=true to enable)")
     
     yield
     
-    # Shutdown: Stop background processor
-    if queue._processor_task and not queue._processor_task.done():
+    # Shutdown: Stop background processor (if it was started)
+    if settings.enable_background_processor and queue._processor_task and not queue._processor_task.done():
         queue._processor_task.cancel()
         try:
             await queue._processor_task

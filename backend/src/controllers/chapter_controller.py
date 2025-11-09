@@ -4,11 +4,12 @@ import logging
 from pathlib import Path
 from typing import List, Optional
 
-from src.data.data_synchronizer import DataSynchronizer
+from src.data.db_repository import ChapterRepository, ChunkRepository
 from src.models.chapter import Chapter
 from src.models.chunk import Chunk
 from src.models.responses import ChapterStats
 from src.utils.config import get_settings
+from src.utils.file_operations import get_chapter_text
 
 logger = logging.getLogger(__name__)
 
@@ -16,15 +17,9 @@ logger = logging.getLogger(__name__)
 class ChapterController:
     """Controller for chapter-level business logic operations."""
     
-    def __init__(self, synchronizer: Optional[DataSynchronizer] = None):
-        """
-        Initialize chapter controller.
-        
-        Args:
-            synchronizer: Optional DataSynchronizer instance (creates new one if not provided)
-        """
+    def __init__(self):
+        """Initialize chapter controller."""
         self.settings = get_settings()
-        self.sync = synchronizer or DataSynchronizer(books_dir=self.settings.books_dir)
     
     def get_chapter(self, book_id: str, chapter_number: int) -> Optional[Chapter]:
         """
@@ -37,7 +32,7 @@ class ChapterController:
         Returns:
             Chapter instance or None if not found
         """
-        return self.sync.load_chapter(book_id, chapter_number)
+        return ChapterRepository.get_by_book_and_number(book_id, chapter_number)
     
     def get_chunks(self, book_id: str, chapter_number: int) -> List[Chunk]:
         """
@@ -50,7 +45,7 @@ class ChapterController:
         Returns:
             List of Chunk instances
         """
-        return self.sync.load_chunks(book_id, chapter_number)
+        return ChunkRepository.get_by_chapter(book_id, chapter_number)
     
     def get_chapter_stats(self, book_id: str, chapter_number: int, lightweight: bool = False) -> Optional[ChapterStats]:
         """
@@ -197,16 +192,21 @@ class ChapterController:
     
     def save_chapter(self, chapter: Chapter) -> None:
         """
-        Save chapter to filesystem.
+        Save chapter to database and filesystem.
         
         Args:
             chapter: Chapter instance to save
         """
-        self.sync.save_chapter(chapter)
+        # Save to database
+        ChapterRepository.create_or_update(chapter)
+        
+        # Save metadata file to filesystem for backward compatibility
+        from src.utils.file_operations import save_chapter_metadata
+        save_chapter_metadata(chapter)
     
     def get_chapter_text(self, book_id: str, chapter_number: int) -> Optional[str]:
         """
-        Get chapter text content.
+        Get chapter text content from filesystem.
         
         Args:
             book_id: Book identifier
@@ -216,16 +216,7 @@ class ChapterController:
             Chapter text content or None if not found
         """
         chapter = self.get_chapter(book_id, chapter_number)
-        if chapter is None or not chapter.has_text:
+        if chapter is None:
             return None
-        
-        text_file = chapter.text_path
-        if text_file is None:
-            return None
-        
-        try:
-            return text_file.read_text(encoding='utf-8')
-        except Exception as e:
-            logger.error(f"Failed to read chapter text: {e}")
-            return None
+        return get_chapter_text(chapter)
 

@@ -6,13 +6,14 @@ import wave
 from pathlib import Path
 from typing import List, Optional
 
-from src.data.data_synchronizer import DataSynchronizer
+from src.data.db_repository import ChunkRepository
 from src.models.chunk import Chunk
 from src.models.enums import ChunkStatus
 from src.models.responses import AudioGenerationResult, ChapterAudioGenerationResult
 from src.tts.engine import get_tts_engine
 from src.tts.voice_registry import load_voice_registry
 from src.utils.config import get_settings
+from src.utils.file_operations import save_chunk_metadata, get_chunk_text
 
 logger = logging.getLogger(__name__)
 
@@ -20,15 +21,9 @@ logger = logging.getLogger(__name__)
 class TTSController:
     """Controller for TTS audio generation operations."""
     
-    def __init__(self, synchronizer: Optional[DataSynchronizer] = None):
-        """
-        Initialize TTS controller.
-        
-        Args:
-            synchronizer: Optional DataSynchronizer instance (creates new one if not provided)
-        """
+    def __init__(self):
+        """Initialize TTS controller."""
         self.settings = get_settings()
-        self.sync = synchronizer or DataSynchronizer(books_dir=self.settings.books_dir)
         self.engine = get_tts_engine()
         self.voice_registry = load_voice_registry()
         # Get default voice from registry (narrator or first available)
@@ -62,8 +57,8 @@ class TTSController:
         """
         logger.info(f"Generating audio for chunk: {book_id}/{chapter_number}/chunk_{chunk_index}")
         
-        # Load chunk
-        chunk = self.sync.load_chunk(book_id, chapter_number, chunk_index)
+        # Load chunk from database
+        chunk = ChunkRepository.get_by_book_chapter_index(book_id, chapter_number, chunk_index)
         if chunk is None:
             raise ValueError(f"Chunk {chunk_index} not found for chapter {chapter_number}")
         
@@ -77,21 +72,16 @@ class TTSController:
                 skipped=True,
             )
         
-        # Get chunk text
-        if not chunk.has_text:
+        # Get chunk text from filesystem
+        chunk_text = get_chunk_text(chunk)
+        if chunk_text is None:
             raise ValueError(f"Chunk {chunk_index} text file not found")
         
-        text_file = chunk.text_path
-        if text_file is None:
-            raise ValueError("Chunk text path is None")
-        
-        chunk_text = text_file.read_text(encoding='utf-8')
-        
-        # Update chunk status to running
-        updated_chunk = self.sync.update_chunk_status(
+        # Update chunk status to running in database
+        success = ChunkRepository.update_status(
             book_id, chapter_number, chunk_index, ChunkStatus.RUNNING
         )
-        if updated_chunk is None:
+        if not success:
             raise ValueError("Failed to update chunk status")
         
         # Load model if not already loaded
@@ -120,8 +110,17 @@ class TTSController:
                 resolved_speaker = voice.speaker_wav
                 logger.info(f"Resolved speaker parameter as voice name: {voice.name}")
             else:
-                # Treat as direct path (backward compatibility)
-                resolved_speaker = speaker
+                # Check if it's a valid file path (backward compatibility)
+                speaker_path = Path(speaker)
+                if speaker_path.exists() and speaker_path.is_file():
+                    resolved_speaker = speaker
+                    logger.info(f"Using speaker parameter as file path: {speaker}")
+                else:
+                    # Not a valid voice name or file path - ignore and use default
+                    logger.warning(
+                        f"Speaker parameter '{speaker}' is not a valid voice name or file path. "
+                        "Falling back to default voice."
+                    )
         
         # Use default if no speaker resolved yet
         if resolved_speaker is None and self._default_speaker:
@@ -166,16 +165,14 @@ class TTSController:
             # Calculate audio duration from the generated WAV file
             audio_duration = None
             if generated_path and Path(generated_path).exists():
-                try:
-                    with wave.open(str(generated_path), 'rb') as wav_file:
-                        n_frames = wav_file.getnframes()
-                        framerate = wav_file.getframerate()
-                        audio_duration = n_frames / framerate if framerate > 0 else None
-                        logger.debug(f"Chunk {chunk_index} audio duration: {audio_duration:.2f}s")
-                except Exception as e:
-                    logger.warning(f"Failed to read audio duration for chunk {chunk_index}: {e}")
+                from src.utils.file_operations import get_audio_duration
+                audio_duration = get_audio_duration(Path(generated_path))
+                if audio_duration:
+                    logger.debug(f"Chunk {chunk_index} audio duration: {audio_duration:.2f}s")
+                else:
+                    logger.warning(f"Failed to read audio duration for chunk {chunk_index}")
             
-            # Update chunk status to completed
+            # Update chunk status to completed in database
             # Note: We need to update the chunk with generation_time_seconds and audio_duration_seconds
             # Since models are frozen, we need to create a new instance
             completed_chunk = Chunk(
@@ -195,7 +192,9 @@ class TTSController:
                 is_dialogue=chunk.is_dialogue,
                 is_scene_break=chunk.is_scene_break,
             )
-            self.sync.save_chunk(completed_chunk, chapter_number)
+            # Save to database and filesystem
+            ChunkRepository.create_or_update(completed_chunk, chapter_number)
+            save_chunk_metadata(completed_chunk)
             
             logger.info(f"✅ Generated audio for chunk {chunk_index}: {generated_path}")
             
@@ -210,10 +209,14 @@ class TTSController:
         except Exception as e:
             logger.error(f"Failed to generate audio for chunk {chunk_index}: {e}")
             
-            # Update chunk status to failed
-            self.sync.update_chunk_status(
-                book_id, chapter_number, chunk_index, ChunkStatus.FAILED
+            # Update chunk status to failed in database
+            ChunkRepository.update_status(
+                book_id, chapter_number, chunk_index, ChunkStatus.FAILED, error=str(e)
             )
+            # Update metadata file on filesystem
+            failed_chunk = ChunkRepository.get_by_book_chapter_index(book_id, chapter_number, chunk_index)
+            if failed_chunk:
+                save_chunk_metadata(failed_chunk)
             
             raise
     
@@ -243,8 +246,8 @@ class TTSController:
         """
         logger.info(f"Generating audio for chapter: {book_id}/{chapter_number}")
         
-        # Load chunks
-        chunks = self.sync.load_chunks(book_id, chapter_number)
+        # Load chunks from database
+        chunks = ChunkRepository.get_by_chapter(book_id, chapter_number)
         
         if not chunks:
             raise ValueError(f"Chapter {chapter_number} has no chunks. Chunk the chapter first.")

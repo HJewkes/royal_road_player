@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { BookOpen } from 'lucide-react'
+import { BookOpen, ArrowLeft } from 'lucide-react'
 import LibraryView from './components/LibraryView'
 import PlayerView from './components/PlayerView'
 import AudioPlayer from './components/AudioPlayer'
@@ -173,6 +173,12 @@ function App() {
       <ToastContainer />
       <ConfirmModal />
       <header className={styles.header}>
+        {currentView === 'player' && currentBook && (
+          <button className={styles.btnBack} onClick={showLibraryView}>
+            <ArrowLeft size={16} />
+            Back to Library
+          </button>
+        )}
         <h1 className={styles.title}>
           <BookOpen size={32} style={{ display: 'inline-block', verticalAlign: 'middle', marginRight: '8px' }} />
           Audiobook Player
@@ -188,13 +194,9 @@ function App() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             {/* Audio player at book level - independent of chapter views */}
             {currentBook && (
-              <div style={{ backgroundColor: 'var(--color-bg-primary)', padding: '20px', borderRadius: '20px', border: '1px solid rgba(255, 255, 255, 0.1)' }}>
-                <AudioPlayer 
-                  book={currentBook} 
-                  onBack={showLibraryView}
-                  onShowSeries={() => { setShowSeriesPanel(true) }}
-                />
-              </div>
+              <AudioPlayer 
+                book={currentBook}
+              />
             )}
             <PlayerView onBack={showLibraryView} showSeriesPanel={showSeriesPanel} onCloseSeriesPanel={() => { setShowSeriesPanel(false) }} />
           </div>

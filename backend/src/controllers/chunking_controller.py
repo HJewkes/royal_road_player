@@ -5,7 +5,7 @@ import shutil
 from pathlib import Path
 from typing import List, Optional
 
-from src.data.data_synchronizer import DataSynchronizer
+from src.data.db_repository import ChapterRepository, ChunkRepository
 from src.models.chapter import Chapter
 from src.models.chunk import Chunk
 from src.models.enums import ChunkStatus
@@ -13,6 +13,7 @@ from src.models.responses import ChunkingResult
 from src.text_processing.chunker import TextChunker
 from src.text_processing.processor import UnifiedTextProcessor, ProcessingConfig
 from src.utils.config import get_settings
+from src.utils.file_operations import save_chunk_metadata, write_text_file, get_chapter_text
 
 logger = logging.getLogger(__name__)
 
@@ -20,15 +21,9 @@ logger = logging.getLogger(__name__)
 class ChunkingController:
     """Controller for chunking chapter text into segments."""
     
-    def __init__(self, synchronizer: Optional[DataSynchronizer] = None):
-        """
-        Initialize chunking controller.
-        
-        Args:
-            synchronizer: Optional DataSynchronizer instance (creates new one if not provided)
-        """
+    def __init__(self):
+        """Initialize chunking controller."""
         self.settings = get_settings()
-        self.sync = synchronizer or DataSynchronizer(books_dir=self.settings.books_dir)
     
     def create_chunks(
         self,
@@ -109,9 +104,9 @@ class ChunkingController:
             # Extract chunk text from normalized text (positions are relative to normalized text)
             chunk_text = normalized_text[chunk.text_start:chunk.text_end]
             
-            # Save chunk text file
+            # Save chunk text file to filesystem
             chunk_text_path = chunk_dir / "text.txt"
-            chunk_text_path.write_text(chunk_text, encoding='utf-8')
+            write_text_file(chunk_text_path, chunk_text)
             
             # Update chunk with path
             chunk_with_path = Chunk(
@@ -131,8 +126,9 @@ class ChunkingController:
                 is_scene_break=chunk.is_scene_break,
             )
             
-            # Save chunk metadata
-            self.sync.save_chunk(chunk_with_path, chapter.chapter_number)
+            # Save chunk to database and filesystem
+            ChunkRepository.create_or_update(chunk_with_path, chapter.chapter_number)
+            save_chunk_metadata(chunk_with_path)
     
     def chunk_chapter(
         self,
@@ -163,20 +159,18 @@ class ChunkingController:
             ValueError: If book or chapter not found
             FileNotFoundError: If chapter text file not found
         """
-        # Load chapter
-        chapter = self.sync.load_chapter(book_id, chapter_number)
+        # Load chapter from database
+        chapter = ChapterRepository.get_by_book_and_number(book_id, chapter_number)
         if chapter is None:
             raise ValueError(f"Chapter {chapter_number} not found for book {book_id}")
         
         if not chapter.has_text:
             raise FileNotFoundError(f"Chapter text file not found: {chapter.text_path}")
         
-        # Read text
-        text_file = chapter.text_path
-        if text_file is None:
-            raise FileNotFoundError("Chapter text path is None")
-        
-        raw_text = text_file.read_text(encoding='utf-8')
+        # Read text from filesystem
+        raw_text = get_chapter_text(chapter)
+        if raw_text is None:
+            raise FileNotFoundError(f"Chapter text file not found: {chapter.text_path}")
         
         # Normalize text first (needed for both creating chunks and saving)
         config = ProcessingConfig(
@@ -207,8 +201,8 @@ class ChunkingController:
         # Save chunks to disk (using normalized text for position extraction)
         self.save_chunks(chunks, chapter, normalized_text)
         
-        # Reload chunks with paths
-        saved_chunks = self.sync.load_chunks(book_id, chapter_number)
+        # Reload chunks with paths from database
+        saved_chunks = ChunkRepository.get_by_chapter(book_id, chapter_number)
         
         logger.info(f"✅ Created and saved {len(saved_chunks)} chunks for chapter {chapter_number}")
         
@@ -239,8 +233,8 @@ class ChunkingController:
         Raises:
             ValueError: If chapter not found
         """
-        # Load chapter
-        chapter = self.sync.load_chapter(book_id, chapter_number)
+        # Load chapter from database
+        chapter = ChapterRepository.get_by_book_and_number(book_id, chapter_number)
         if chapter is None:
             raise ValueError(f"Chapter {chapter_number} not found for book {book_id}")
         
@@ -253,7 +247,11 @@ class ChunkingController:
             logger.info(f"Chunks directory does not exist: {chunks_dir}, nothing to clear")
             return
         
-        # Delete all chunk directories
+        # Delete all chunks from database first (bulk delete)
+        chunks_deleted_from_db = ChunkRepository.delete_by_chapter(book_id, chapter_number)
+        logger.info(f"Deleted {chunks_deleted_from_db} chunks from database")
+        
+        # Delete all chunk directories from filesystem
         chunk_dirs_removed = 0
         audio_files_removed = 0
         
@@ -273,7 +271,8 @@ class ChunkingController:
                     logger.error(f"Failed to remove chunk directory {chunk_dir}: {e}")
         
         logger.info(
-            f"✅ Cleared {chunk_dirs_removed} chunks and {audio_files_removed} audio files "
+            f"✅ Cleared {chunks_deleted_from_db} chunks from database, "
+            f"{chunk_dirs_removed} chunk directories, and {audio_files_removed} audio files "
             f"for chapter {chapter_number}"
         )
     
@@ -297,8 +296,8 @@ class ChunkingController:
         Raises:
             ValueError: If chapter not found
         """
-        # Load chapter
-        chapter = self.sync.load_chapter(book_id, chapter_number)
+        # Load chapter from database
+        chapter = ChapterRepository.get_by_book_and_number(book_id, chapter_number)
         if chapter is None:
             raise ValueError(f"Chapter {chapter_number} not found for book {book_id}")
         
@@ -342,7 +341,7 @@ class ChunkingController:
         Raises:
             ValueError: If chapter not found
         """
-        chunks = self.sync.load_chunks(book_id, chapter_number)
+        chunks = ChunkRepository.get_by_chapter(book_id, chapter_number)
         deleted_count = 0
         
         for chunk in chunks:

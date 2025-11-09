@@ -3,10 +3,11 @@
 import logging
 from typing import Optional
 
-from src.data.data_synchronizer import DataSynchronizer
+from src.data.db_repository import ChunkRepository
 from src.models.chunk import Chunk
 from src.models.enums import ChunkStatus
 from src.utils.config import get_settings
+from src.utils.file_operations import get_chunk_text
 
 logger = logging.getLogger(__name__)
 
@@ -14,15 +15,9 @@ logger = logging.getLogger(__name__)
 class ChunkController:
     """Controller for chunk-level business logic operations."""
     
-    def __init__(self, synchronizer: Optional[DataSynchronizer] = None):
-        """
-        Initialize chunk controller.
-        
-        Args:
-            synchronizer: Optional DataSynchronizer instance (creates new one if not provided)
-        """
+    def __init__(self):
+        """Initialize chunk controller."""
         self.settings = get_settings()
-        self.sync = synchronizer or DataSynchronizer(books_dir=self.settings.books_dir)
     
     def get_chunk(self, book_id: str, chapter_number: int, chunk_index: int) -> Optional[Chunk]:
         """
@@ -36,11 +31,11 @@ class ChunkController:
         Returns:
             Chunk instance or None if not found
         """
-        return self.sync.load_chunk(book_id, chapter_number, chunk_index)
+        return ChunkRepository.get_by_book_chapter_index(book_id, chapter_number, chunk_index)
     
     def get_chunk_text(self, book_id: str, chapter_number: int, chunk_index: int) -> Optional[str]:
         """
-        Get chunk text content.
+        Get chunk text content from filesystem.
         
         Args:
             book_id: Book identifier
@@ -51,18 +46,9 @@ class ChunkController:
             Chunk text content or None if not found
         """
         chunk = self.get_chunk(book_id, chapter_number, chunk_index)
-        if chunk is None or not chunk.has_text:
+        if chunk is None:
             return None
-        
-        text_file = chunk.text_path
-        if text_file is None:
-            return None
-        
-        try:
-            return text_file.read_text(encoding='utf-8')
-        except Exception as e:
-            logger.error(f"Failed to read chunk text: {e}")
-            return None
+        return get_chunk_text(chunk)
     
     def update_status(
         self,
@@ -72,7 +58,7 @@ class ChunkController:
         status: ChunkStatus
     ) -> Optional[Chunk]:
         """
-        Update chunk status.
+        Update chunk status in database.
         
         Args:
             book_id: Book identifier
@@ -83,7 +69,18 @@ class ChunkController:
         Returns:
             Updated Chunk instance or None if not found
         """
-        return self.sync.update_chunk_status(book_id, chapter_number, chunk_index, status)
+        # Update status in database
+        success = ChunkRepository.update_status(book_id, chapter_number, chunk_index, status)
+        if not success:
+            return None
+        
+        # Reload chunk to return updated instance
+        chunk = self.get_chunk(book_id, chapter_number, chunk_index)
+        if chunk:
+            # Update metadata file on filesystem for backward compatibility
+            from src.utils.file_operations import save_chunk_metadata
+            save_chunk_metadata(chunk)
+        return chunk
     
     def save_chunk(self, chunk: Chunk, chapter_number: Optional[int] = None) -> None:
         """
@@ -93,5 +90,19 @@ class ChunkController:
             chunk: Chunk instance to save
             chapter_number: Chapter number (extracted from chunk.chapter_id if not provided)
         """
-        self.sync.save_chunk(chunk, chapter_number)
+        # Extract chapter_number from chunk.chapter_id if not provided
+        if chapter_number is None and chunk.chapter_id:
+            parts = chunk.chapter_id.split('_')
+            if len(parts) >= 2:
+                try:
+                    chapter_number = int(parts[-1])
+                except ValueError:
+                    pass
+        
+        # Save to database
+        ChunkRepository.create_or_update(chunk, chapter_number)
+        
+        # Save metadata file to filesystem for backward compatibility
+        from src.utils.file_operations import save_chunk_metadata
+        save_chunk_metadata(chunk)
 

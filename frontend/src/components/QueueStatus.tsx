@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Play, Loader, CheckCircle, Clock, XCircle } from 'lucide-react'
 import useToastStore from '../store/useToastStore'
 import useAudiobookStore from '../store/useAudiobookStore'
+import { useQueueEvents } from '../hooks/useQueueEvents'
 import styles from './QueueStatus.module.css'
 
 interface QueueStatus {
@@ -21,6 +22,7 @@ function QueueStatus({ bookId, chapterNumber }: QueueStatusProps = {}) {
   const { chunkMetadata, loadChunkMetadata } = useAudiobookStore()
   const [status, setStatus] = useState<QueueStatus | null>(null)
   const [processing, setProcessing] = useState(false)
+  const fallbackFetchedRef = useRef(false)
 
   // Load chunk metadata if we have a chapter but no metadata yet
   useEffect(() => {
@@ -29,29 +31,54 @@ function QueueStatus({ bookId, chapterNumber }: QueueStatusProps = {}) {
     }
   }, [chapterNumber, chunkMetadata, loadChunkMetadata])
 
-  const fetchStatus = async (): Promise<void> => {
-    try {
-      // Build URL with optional filters
-      const params = new URLSearchParams()
-      if (bookId) params.append('book_id', bookId)
-      if (chapterNumber !== undefined) params.append('chapter_number', chapterNumber.toString())
-      
-      const url = `/api/queue/status${params.toString() ? `?${params.toString()}` : ''}`
-      const response = await fetch(url)
-      if (!response.ok) {
-        throw new Error('Failed to fetch queue status')
-      }
-      const data = await response.json() as QueueStatus & { total: number; completed: number }
+  // Use SSE for real-time queue status updates (replaces polling)
+  const { status: sseStatus, connected: sseConnected } = useQueueEvents({
+    enabled: true, // Always enabled when component is mounted
+    onStatusUpdate: (newStatus) => {
+      // Convert SSE status format to component format
       setStatus({
-        pending: data.pending,
-        running: data.running,
-        failed: data.failed,
-        is_processing: data.is_processing,
+        pending: newStatus.pending ?? 0,
+        running: newStatus.running ?? 0,
+        failed: newStatus.failed ?? 0,
+        is_processing: newStatus.is_processing ?? false,
       })
-    } catch (error) {
-      console.error('Failed to fetch queue status:', error)
+      // Reset fallback flag when SSE provides status
+      fallbackFetchedRef.current = false
+    },
+  })
+
+  // Fallback: fetch status once on mount if SSE not connected (for initial load)
+  useEffect(() => {
+    if (!sseConnected && !status && !fallbackFetchedRef.current) {
+      fallbackFetchedRef.current = true
+      const fetchStatus = async (): Promise<void> => {
+        try {
+          // Build URL with optional filters
+          const params = new URLSearchParams()
+          if (bookId) params.append('book_id', bookId)
+          if (chapterNumber !== undefined) params.append('chapter_number', chapterNumber.toString())
+          
+          const url = `/api/queue/status${params.toString() ? `?${params.toString()}` : ''}`
+          const response = await fetch(url)
+          if (!response.ok) {
+            throw new Error('Failed to fetch queue status')
+          }
+          const data = await response.json() as QueueStatus & { total: number; completed: number }
+          setStatus({
+            pending: data.pending,
+            running: data.running,
+            failed: data.failed,
+            is_processing: data.is_processing,
+          })
+        } catch (error) {
+          console.error('Failed to fetch queue status:', error)
+          fallbackFetchedRef.current = false // Allow retry on error
+        }
+      }
+      void fetchStatus()
     }
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sseConnected]) // Only run when SSE connection state changes
 
   const startProcessing = async (): Promise<void> => {
     setProcessing(true)
@@ -63,10 +90,7 @@ function QueueStatus({ bookId, chapterNumber }: QueueStatusProps = {}) {
         throw new Error('Failed to start processing')
       }
       toast.success('Started processing queue')
-      // Refresh status after a short delay
-      setTimeout(() => {
-        void fetchStatus()
-      }, 1000)
+      // Status will update automatically via SSE
     } catch (error) {
       console.error('Failed to start processing:', error)
       toast.error(error instanceof Error ? error.message : 'Failed to start processing')
@@ -74,23 +98,6 @@ function QueueStatus({ bookId, chapterNumber }: QueueStatusProps = {}) {
       setProcessing(false)
     }
   }
-
-  // Poll for status updates
-  useEffect(() => {
-    void fetchStatus()
-    
-    // Poll less frequently to reduce backend load:
-    // - Every 5 seconds if processing (was 2 seconds)
-    // - Every 15 seconds if idle (was 5 seconds)
-    const isActive = status?.is_processing || (status?.running ?? 0) > 0
-    const interval = setInterval(() => {
-      void fetchStatus()
-    }, isActive ? 5000 : 15000)
-
-    return () => {
-      clearInterval(interval)
-    }
-  }, [status?.is_processing, status?.running, bookId, chapterNumber])
 
   // Get chunks that need processing (pending or failed)
   const chunksNeedingProcessing = chunkMetadata

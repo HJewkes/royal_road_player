@@ -18,11 +18,10 @@ interface PlayerViewProps {
 type PanelType = 'series' | null
 
 function PlayerView({ showSeriesPanel = false, onCloseSeriesPanel }: PlayerViewProps) {
-  const { currentBook, currentChapter, chapters, chunkChapter, loadChunkMetadata, setCurrentChapter, queueAllPendingChunksForBook } = useAudiobookStore()
+  const { currentBook, currentChapter, chapters, chunkChapter, loadChunkMetadata, setCurrentChapter } = useAudiobookStore()
   const toast = useToastStore()
   const [activePanel, setActivePanel] = useState<PanelType>(null)
   const [chunking, setChunking] = useState(false)
-  const [queueingAll, setQueueingAll] = useState(false)
   
   // Sync external series panel state
   useEffect(() => {
@@ -95,40 +94,6 @@ function PlayerView({ showSeriesPanel = false, onCloseSeriesPanel }: PlayerViewP
     }
   }
 
-  const handleQueueAllPendingChunks = async (): Promise<void> => {
-    if (!currentBook) return
-    
-    // Count chunked chapters
-    const chunkedChapters = chapters.filter((c) => c.is_chunked)
-    
-    if (chunkedChapters.length === 0) {
-      toast.warning('No chunked chapters found. Chunk chapters first before queueing.')
-      return
-    }
-    
-    const confirmMessage = `Queue all unqueued chunks from ${chunkedChapters.length} chapter${chunkedChapters.length === 1 ? '' : 's'} in "${currentBook.title}"?`
-    
-    const confirmed = await confirm(confirmMessage)
-    if (!confirmed) {
-      return
-    }
-    
-    setQueueingAll(true)
-    try {
-      const result = await queueAllPendingChunksForBook()
-      if (result.totalQueued > 0) {
-        toast.success(`Queued ${result.totalQueued} chunks from ${result.chaptersProcessed} chapter${result.chaptersProcessed === 1 ? '' : 's'}. Click "Start Processing" in the queue to begin.`)
-      } else {
-        toast.info('No pending chunks found to queue. All chunks may already be completed or queued.')
-      }
-    } catch (error) {
-      console.error('Failed to queue chunks:', error)
-      toast.error(error instanceof Error ? error.message : 'Failed to queue chunks')
-    } finally {
-      setQueueingAll(false)
-    }
-  }
-
   const handleBookSelect = async (bookId: string): Promise<void> => {
     closePanel()
     try {
@@ -178,26 +143,6 @@ function PlayerView({ showSeriesPanel = false, onCloseSeriesPanel }: PlayerViewP
                   <>
                     <Scissors size={14} />
                     {currentChapter.is_chunked ? 'Re-chunk Chapter' : 'Chunk Chapter'}
-                  </>
-                )}
-              </button>
-            )}
-            {currentBook && chapters.some((c) => c.is_chunked) && (
-              <button
-                className={styles.btnQueueAll}
-                onClick={() => { void handleQueueAllPendingChunks() }}
-                disabled={queueingAll}
-                title="Queue all unqueued chunks from all chapters in this book"
-              >
-                {queueingAll ? (
-                  <>
-                    <Loader size={14} className={styles.spinner} />
-                    Queueing...
-                  </>
-                ) : (
-                  <>
-                    <Music size={14} />
-                    Queue All Pending Chunks
                   </>
                 )}
               </button>

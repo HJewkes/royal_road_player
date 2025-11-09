@@ -1,19 +1,14 @@
 import { useState, useEffect, useRef } from 'react'
-import { Music, Loader } from 'lucide-react'
 import useAudiobookStore from '../store/useAudiobookStore'
-import useToastStore from '../store/useToastStore'
-import { confirm } from '../store/useConfirmModalStore'
+import { useQueueEvents } from '../hooks/useQueueEvents'
 import type { ChunkMetadata } from '../types'
 import styles from './ChunkTimeline.module.css'
 
 // Component to handle chunk row with text display
-function ChunkRow({ chunk, duration, statusColor, isGenerating, canGenerate, onGenerate, onSeekToChunk, bookId, chapterNumber }: {
+function ChunkRow({ chunk, duration, statusColor, onSeekToChunk, bookId, chapterNumber }: {
   chunk: ChunkMetadata
   duration: number
   statusColor: string
-  isGenerating: boolean
-  canGenerate: boolean
-  onGenerate: (index: number) => void
   onSeekToChunk?: (chunkIndex: number) => void
   bookId?: string
   chapterNumber?: number
@@ -107,26 +102,6 @@ function ChunkRow({ chunk, duration, statusColor, isGenerating, canGenerate, onG
           >
             {loadingText ? 'Loading...' : (showText ? 'Hide Text' : 'View Text')}
           </button>
-          {canGenerate && (
-            <button
-              className={styles.btnGenerateChunk}
-              onClick={() => { onGenerate(chunk.index) }}
-              disabled={isGenerating}
-              title={`Generate chunk ${chunk.index}`}
-            >
-              {isGenerating ? (
-                <>
-                  <Loader size={12} className={styles.spinner} />
-                  Generating...
-                </>
-              ) : (
-                <>
-                  <Music size={12} />
-                  Generate
-                </>
-              )}
-            </button>
-          )}
         </td>
       </tr>
       {showText && chunkText && (
@@ -164,11 +139,8 @@ interface Gap {
 }
 
 function ChunkTimeline({ currentTime, totalDuration, currentChunkIndex, onSeekToChunk }: ChunkTimelineProps) {
-  const { chunkMetadata, chapterTextLength, generateSingleChunk, generateChunks, currentChapter, loadChunkMetadata, currentBook } = useAudiobookStore()
-  const toast = useToastStore()
+  const { chunkMetadata, chapterTextLength, currentChapter, loadChunkMetadata, currentBook } = useAudiobookStore()
   const [chunkDurations, setChunkDurations] = useState<Record<number, number>>({})
-  const [generatingChunks, setGeneratingChunks] = useState<Set<number>>(new Set())
-  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null)
 
   // Don't load durations here - it creates too many Audio objects and hits Chrome's WebMediaPlayer limit
   // Durations will be shown from the AudioPlayer component as chunks are played
@@ -178,69 +150,22 @@ function ChunkTimeline({ currentTime, totalDuration, currentChunkIndex, onSeekTo
     setChunkDurations({})
   }, [chunkMetadata])
 
-  // Poll for queue status and refresh chunk metadata when processing
-  useEffect(() => {
-    if (!currentChapter) return
-
-    let isProcessing = false
-
-    const checkQueueAndRefresh = async (): Promise<void> => {
-      try {
-        const response = await fetch('/api/queue/status')
-        if (response.ok) {
-          const queueStatus = await response.json() as { 
-            is_processing: boolean
-            running: number
-            current_job: { chapter_number: number } | null 
-          }
-          
-          const wasProcessing = isProcessing
-          isProcessing = queueStatus.is_processing || queueStatus.running > 0
-          
-          // If processing and current chapter matches, refresh chunk metadata
-          if (isProcessing && queueStatus.current_job?.chapter_number === currentChapter.chapter_number) {
-            await loadChunkMetadata(currentChapter.chapter_number)
-          }
-          
-          // Start/stop polling based on processing state
-          if (isProcessing && !wasProcessing) {
-            // Started processing - start polling
-            if (pollingIntervalRef.current) {
-              clearInterval(pollingIntervalRef.current)
-            }
-            pollingIntervalRef.current = setInterval(() => {
-              void checkQueueAndRefresh()
-            }, 5000) // Poll every 5 seconds when processing (was 2 seconds)
-          } else if (!isProcessing && wasProcessing) {
-            // Stopped processing - stop polling
-            if (pollingIntervalRef.current) {
-              clearInterval(pollingIntervalRef.current)
-              pollingIntervalRef.current = null
-            }
-          }
-        }
-      } catch (error) {
-        // Silently fail - queue might not be active
-        console.debug('Queue status check failed:', error)
+  // Use SSE to detect when jobs complete for current chapter and refresh metadata
+  useQueueEvents({
+    enabled: !!currentChapter, // Only enabled when chapter is loaded
+    onJobCompleted: (job) => {
+      // Refresh chunk metadata when a job completes for the current chapter
+      if (currentChapter && job.chapter_number === currentChapter.chapter_number) {
+        void loadChunkMetadata(currentChapter.chapter_number)
       }
-    }
-
-    // Check immediately
-    void checkQueueAndRefresh()
-
-    // Also check periodically (every 5 seconds) to detect when processing starts
-    const checkInterval = setInterval(() => {
-      void checkQueueAndRefresh()
-    }, 5000)
-
-    return () => {
-      if (pollingIntervalRef.current) {
-        clearInterval(pollingIntervalRef.current)
-        pollingIntervalRef.current = null
+    },
+    onStatusUpdate: (status) => {
+      // Refresh metadata when processing starts for current chapter
+      if (currentChapter && status.is_processing && status.current_job?.chapter_number === currentChapter.chapter_number) {
+        void loadChunkMetadata(currentChapter.chapter_number)
       }
-      clearInterval(checkInterval)
-    }
-  }, [currentChapter, loadChunkMetadata])
+    },
+  })
 
   if (!chunkMetadata || chunkMetadata.length === 0 || chapterTextLength === 0) {
     return null
@@ -298,48 +223,6 @@ function ChunkTimeline({ currentTime, totalDuration, currentChunkIndex, onSeekTo
     positionPercent = (estimatedTextPos / totalChars) * 100
   }
 
-  const handleGenerateChunk = async (chunkIndex: number): Promise<void> => {
-    if (!currentChapter) return
-    
-    setGeneratingChunks((prev) => new Set(prev).add(chunkIndex))
-    try {
-      await generateSingleChunk(currentChapter.chapter_number, chunkIndex)
-      toast.success(`Chunk ${chunkIndex} generated successfully!`)
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Failed to generate chunk')
-    } finally {
-      setGeneratingChunks((prev) => {
-        const next = new Set(prev)
-        next.delete(chunkIndex)
-        return next
-      })
-    }
-  }
-
-  const handleGeneratePending = async (): Promise<void> => {
-    if (!currentChapter) return
-    
-    const confirmed = await confirm(`Queue all pending chunks in "${currentChapter.title}" for processing?`)
-    if (!confirmed) {
-      return
-    }
-    
-    try {
-      const result = await generateChunks(currentChapter.chapter_number, null)
-      const totalChunks = result.generated + result.skipped + result.failed
-      if (totalChunks > 0) {
-        toast.success(`Queued ${result.generated} chunks. Click "Start Processing" in the queue to begin.`)
-        // Reload chunk metadata to refresh status
-        await loadChunkMetadata(currentChapter.chapter_number)
-      } else {
-        toast.warning('No chunks to queue. All chunks may already be completed or queued.')
-      }
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Failed to queue chunks')
-    }
-  }
-
-  const pendingChunks = sortedChunks.filter((c) => c.status === 'pending' || c.status === 'failed')
 
   return (
     <div className={styles.chunkTimelineContainer}>
@@ -348,16 +231,6 @@ function ChunkTimeline({ currentTime, totalDuration, currentChunkIndex, onSeekTo
         <span className={styles.chunkTimelineStats}>
           {completed} completed, {pending} pending • {coveragePercent}% coverage
         </span>
-        {pendingChunks.length > 0 && (
-          <button
-            className={styles.btnGeneratePending}
-            onClick={() => { void handleGeneratePending() }}
-            title="Generate all pending chunks"
-          >
-            <Music size={14} />
-            Generate Pending ({pendingChunks.length})
-          </button>
-        )}
       </div>
       <div className={styles.chunkTimelineBar}>
         {sortedChunks.map((chunk) => {
@@ -430,8 +303,6 @@ function ChunkTimeline({ currentTime, totalDuration, currentChunkIndex, onSeekTo
             {sortedChunks.map((chunk) => {
               const duration = chunkDurations[chunk.index] || 0
               const statusColor = getStatusColor(chunk.status)
-              const isGenerating = generatingChunks.has(chunk.index)
-              const canGenerate = chunk.status !== 'completed'
               
               return (
                 <ChunkRow
@@ -439,9 +310,6 @@ function ChunkTimeline({ currentTime, totalDuration, currentChunkIndex, onSeekTo
                   chunk={chunk}
                   duration={duration}
                   statusColor={statusColor}
-                  isGenerating={isGenerating}
-                  canGenerate={canGenerate}
-                  onGenerate={handleGenerateChunk}
                   onSeekToChunk={onSeekToChunk}
                   bookId={currentBook?.id}
                   chapterNumber={currentChapter?.chapter_number}

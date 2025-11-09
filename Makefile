@@ -1,4 +1,4 @@
-.PHONY: help setup teardown rebuild check-system install dev dev-all test test-coverage lint format format-check run clean
+.PHONY: help setup teardown rebuild check-system install dev dev-all test test-coverage lint lint-flake8 lint-mypy lint-pylint format format-check run clean
 
 help: ## Show available commands
 	@echo "Available commands:"
@@ -138,11 +138,19 @@ test-coverage: ## Run tests with coverage
 	@echo "📊 Running tests with coverage..."
 	@. venv/bin/activate && cd backend && pytest tests/ --cov=src --cov-report=html --cov-report=term
 
-lint: ## Run all linters
-	@echo "🔍 Running linters..."
+lint: lint-flake8 lint-mypy lint-pylint ## Run all linters
+
+lint-flake8: ## Run flake8 (PEP8) linter
+	@echo "🔍 Running flake8 (PEP8)..."
 	@. venv/bin/activate && cd backend && flake8 src tests
-	@. venv/bin/activate && cd backend && pylint src
+
+lint-mypy: ## Run mypy type checker
+	@echo "🔍 Running mypy type checker..."
 	@. venv/bin/activate && cd backend && mypy src
+
+lint-pylint: ## Run pylint
+	@echo "🔍 Running pylint..."
+	@. venv/bin/activate && cd backend && pylint src
 
 format: ## Format code
 	@echo "✨ Formatting code..."

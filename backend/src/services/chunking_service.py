@@ -1,7 +1,6 @@
 """Service for chunking chapter text into segments."""
 
 import logging
-import wave
 from pathlib import Path
 from typing import List, Optional
 
@@ -184,10 +183,8 @@ class ChunkingService:
                     stats['chunks_missing_audio'] += 1
                     continue
                 
-                with wave.open(str(audio_path), 'rb') as wav_file:
-                    n_frames = wav_file.getnframes()
-                    framerate = wav_file.getframerate()
-                    duration = n_frames / framerate if framerate > 0 else None
+                from src.utils.file_operations import get_audio_duration
+                duration = get_audio_duration(audio_path)
                 
                 if duration and duration > 0:
                     # Update chunk with duration

@@ -14,6 +14,34 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: var(--spacing-md);
+}
+
+.btnBack {
+  background: rgba(107, 125, 142, 0.3);
+  backdrop-filter: blur(10px);
+  color: white;
+  border: 1px solid rgba(107, 125, 142, 0.5);
+  padding: 8px 16px;
+  border-radius: 12px;
+  cursor: pointer;
+  font-size: 0.9em;
+  transition: all 0.3s ease;
+  box-shadow: 
+    0 4px 12px rgba(0, 0, 0, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.btnBack:hover {
+  background: rgba(107, 125, 142, 0.5);
+  box-shadow: 
+    0 6px 16px rgba(107, 125, 142, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  transform: translateY(-2px);
 }
 
 .title {

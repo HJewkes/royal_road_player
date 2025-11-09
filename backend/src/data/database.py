@@ -1,6 +1,7 @@
 """Database connection and session management."""
 
 import logging
+from contextlib import contextmanager
 from pathlib import Path
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker, Session, declarative_base
@@ -53,13 +54,38 @@ def get_engine():
 
 
 def get_session() -> Session:
-    """Get a database session."""
+    """Get a database session.
+    
+    Note: For most use cases, prefer using db_session() context manager instead.
+    This function is kept for backward compatibility and direct session management.
+    """
     global _SessionLocal
     if _SessionLocal is None:
         engine = get_engine()
         _SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     
     return _SessionLocal()
+
+
+@contextmanager
+def db_session():
+    """Context manager for database sessions with automatic commit/rollback.
+    
+    Usage:
+        with db_session() as session:
+            book = BookRepository.get_by_id("book_123", session=session)
+            # Changes are automatically committed on success
+            # Automatically rolled back on exception
+    """
+    session = get_session()
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
 
 
 def init_db():

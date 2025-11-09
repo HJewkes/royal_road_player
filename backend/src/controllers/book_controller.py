@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from src.data.data_synchronizer import DataSynchronizer
+from src.data.db_repository import BookRepository, ChapterRepository
 from src.models.book import Book
 from src.models.chapter import Chapter
 from src.models.responses import BookStats
@@ -17,15 +17,9 @@ logger = logging.getLogger(__name__)
 class BookController:
     """Controller for book-level business logic operations."""
     
-    def __init__(self, synchronizer: Optional[DataSynchronizer] = None):
-        """
-        Initialize book controller.
-        
-        Args:
-            synchronizer: Optional DataSynchronizer instance (creates new one if not provided)
-        """
+    def __init__(self):
+        """Initialize book controller."""
         self.settings = get_settings()
-        self.sync = synchronizer or DataSynchronizer(books_dir=self.settings.books_dir)
         # Simple cache for book stats (key: book_id, value: (stats, timestamp))
         self._stats_cache: Dict[str, tuple] = {}
         self._cache_ttl: float = 10.0  # Cache for 10 seconds
@@ -40,7 +34,7 @@ class BookController:
         Returns:
             Book instance or None if not found
         """
-        return self.sync.load_book(book_id)
+        return BookRepository.get_by_id(book_id)
     
     def list_books(self) -> List[Book]:
         """
@@ -49,7 +43,7 @@ class BookController:
         Returns:
             List of Book instances
         """
-        return self.sync.load_books()
+        return BookRepository.get_all()
     
     def get_chapters(self, book_id: str) -> List[Chapter]:
         """
@@ -61,7 +55,7 @@ class BookController:
         Returns:
             List of Chapter instances
         """
-        return self.sync.load_chapters(book_id)
+        return ChapterRepository.get_by_book(book_id)
     
     def get_book_stats(self, book_id: str, lightweight: bool = False) -> Optional[BookStats]:
         """
@@ -192,10 +186,15 @@ class BookController:
     
     def save_book(self, book: Book) -> None:
         """
-        Save book to filesystem.
+        Save book to database and filesystem.
         
         Args:
             book: Book instance to save
         """
-        self.sync.save_book(book)
+        # Save to database
+        BookRepository.create_or_update(book)
+        
+        # Save metadata file to filesystem for backward compatibility
+        from src.utils.file_operations import save_book_metadata
+        save_book_metadata(book)
 

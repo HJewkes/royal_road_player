@@ -26,3 +26,6 @@ pydantic>=2.5.0
 pydantic-settings>=2.1.0
 attrs>=23.2.0
 
+# Text Chunking
+chunkipy>=0.1.0
+

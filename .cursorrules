@@ -756,6 +756,15 @@ clean:         # Remove build artifacts
 - Reset to clean slate
 - Use `|| true` to not fail on missing files
 
+**Development Server Management:**
+- **Always use Makefile targets** for starting/stopping servers
+- **Stop servers**: `make kill-dev` (kills all backend and frontend dev servers)
+- **Start servers**: `make dev-all` (starts both backend and frontend concurrently)
+- **Backend only**: `make dev` (FastAPI with auto-reload)
+- **Frontend only**: `make dev-frontend` (Vite dev server)
+- Never manually kill processes - use `make kill-dev` to ensure clean shutdown
+- Servers run in background when started via `make dev-all` - use `make kill-dev` to stop them
+
 ### Linting Configuration
 
 **Python:**
@@ -1444,6 +1453,7 @@ async def get_book(book_id: str):
 
 ## Version History
 
+- **v1.4** (2025-11-09): Added development server management best practices (always use Makefile for restarting servers).
 - **v1.3** (2025-01-27): Added hover-based popup control patterns, key parsing with multiple underscores, and secondary button styling patterns from AudioPlayer UI improvements.
 - **v1.2** (2025-01-27): Added file organization standards (one class per file, imports at top) from codebase restructuring.
 - **v1.1** (2025-01-27): Added UI/UX patterns, background job management, API design patterns, and TTS-specific constraints from Audiobook project.
@@ -1470,6 +1480,25 @@ async def get_book(book_id: str):
 - [ ] Background job queue management (separate queues for resource types)
 - [ ] One class per file organization pattern
 - [ ] All imports at the top of files (no inline imports)
+
+### Common Development Commands
+
+**Server Management:**
+- `make kill-dev` - Stop all dev servers (backend + frontend)
+- `make dev-all` - Start both backend and frontend dev servers
+- `make dev` - Start backend only (FastAPI)
+- `make dev-frontend` - Start frontend only (Vite)
+
+**Testing & Quality:**
+- `make test` - Run all tests
+- `make test-coverage` - Run tests with coverage report
+- `make lint` - Run all linters
+- `make format` - Format code (black + isort)
+
+**Setup & Maintenance:**
+- `make setup` - Complete one-command setup
+- `make teardown` - Complete cleanup
+- `make rebuild` - Teardown + setup (recovery)
 
 ### Red Flags
 

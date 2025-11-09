@@ -8,6 +8,7 @@ This module provides unified text processing for all text transformations:
 - Chunk metadata for voice/pacing hints
 """
 
+from src.text_processing.chunk_metadata import ChunkMetadata
 from src.text_processing.config import TextProcessingConfig
 from src.text_processing.models import Segment, SegmentMetadata, Event, generate_segment_id
 from src.text_processing.enums import EventKind, Pacing
@@ -30,6 +31,7 @@ __all__ = [
     'TextChunker',
     'UnifiedTextProcessor',
     # Models
+    'ChunkMetadata',
     'Segment',
     'SegmentMetadata',
     'Event',

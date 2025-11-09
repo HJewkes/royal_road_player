@@ -1,7 +1,7 @@
 # Architecture
 
 > **Status:** Current  
-> **Last Updated:** 2025-01-27
+> **Last Updated:** 2025-11-09
 
 ## System Overview
 
@@ -109,6 +109,117 @@ Controllers provide single-responsibility business logic operations:
 4. User selects chapter → loads chunked audio
 5. HTML5 Audio API plays chunks sequentially
 6. Progress tracked in URL params + localStorage
+
+### Job Queue & Real-Time Updates (`backend/src/services/`)
+
+The system uses a background job queue with Server-Sent Events (SSE) for real-time status updates.
+
+**Components:**
+
+- **job_queue.py**: Background processor that polls database for pending chunks and generates audio
+- **queue_events.py**: Event manager that broadcasts status updates via SSE
+- **SSE Endpoint** (`/api/queue/events`): Streams real-time events to connected clients
+
+**Architecture:**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Background Processor (Async Task)                           │
+│                                                             │
+│  while True:                                               │
+│    ┌─────────────────────────────────────┐                 │
+│    │ Poll Database (every 1 second)     │                 │
+│    │ ChunkRepository.get_pending_...()   │                 │
+│    └──────────────┬──────────────────────┘                 │
+│                   │                                          │
+│                   ▼                                          │
+│    ┌─────────────────────────────────────┐                 │
+│    │ process_next()                      │                 │
+│    │ 1. Query DB → Get pending chunk    │                 │
+│    │ 2. Update DB → Mark as RUNNING      │                 │
+│    │ 3. ⚡ IMMEDIATE: broadcast_started()│                 │
+│    │ 4. Generate audio (slow, 5-30s)    │                 │
+│    │ 5. Update DB → Mark COMPLETED       │                 │
+│    │ 6. ⚡ IMMEDIATE: broadcast_completed()│                │
+│    └──────────────┬──────────────────────┘                 │
+│                   │                                          │
+└───────────────────┼──────────────────────────────────────────┘
+                    │
+                    │ await event_manager.broadcast_*()
+                    │
+                    ▼
+┌─────────────────────────────────────────────────────────────┐
+│ Event Manager (In-Memory)                                   │
+│                                                             │
+│  _connections = {                                           │
+│    Queue1 (Client 1),                                      │
+│    Queue2 (Client 2),                                      │
+│    ...                                                      │
+│  }                                                          │
+│                                                             │
+│  broadcast(event, data):                                   │
+│    for queue in _connections:                              │
+│      queue.put_nowait(message)  ⚡ INSTANT                 │
+└───────────────────┬─────────────────────────────────────────┘
+                    │
+                    │ Messages pushed to queues
+                    │
+        ┌───────────┴───────────┐
+        │                      │
+        ▼                      ▼
+┌──────────────┐      ┌──────────────┐
+│ SSE Client 1 │      │ SSE Client 2 │
+│              │      │              │
+│ queue.get()  │      │ queue.get()  │
+│ (blocks)     │      │ (blocks)     │
+│              │      │              │
+│ yield event  │      │ yield event  │
+└──────────────┘      └──────────────┘
+```
+
+**Key Points:**
+
+1. **Database Polling (Only for Finding Work)**
+   - Background processor polls database every 1 second
+   - Queries: `SELECT * FROM chunks WHERE status='pending' ORDER BY ...`
+   - Purpose: Find new work to process
+
+2. **Event Pushing (Immediate, No Polling)**
+   - When job completes → `await event_manager.broadcast_*()` called
+   - Pushes message to **in-memory `asyncio.Queue`** for each SSE client
+   - No database involved - pure in-memory push
+   - No polling - SSE endpoint blocks on `queue.get()` until event arrives
+
+3. **SSE Endpoint (Blocking Read, Not Polling)**
+   - Each SSE client has its own `asyncio.Queue`
+   - Endpoint does `await queue.get()` - **blocks** until event arrives
+   - When event arrives → immediately yields to client
+   - No polling - event-driven blocking read
+
+**Event Types:**
+- `job_started`: Job begins processing
+- `job_completed`: Job finished successfully
+- `job_failed`: Job failed with error
+- `status`: Full queue status update (includes ETA)
+
+**Frontend Integration:**
+
+- **React Hook** (`frontend/src/hooks/useQueueEvents.ts`): Manages SSE connection lifecycle
+- **Automatic Reconnection**: Exponential backoff (1s → 2s → 4s → 8s → max 30s)
+- **Components**: `QueueStatusFlyout` uses SSE (others can migrate similarly)
+
+**Benefits:**
+
+✅ **Real-time updates** - Status changes pushed immediately when jobs start/complete/fail  
+✅ **Reduced server load** - No constant polling requests (was 5-15s intervals)  
+✅ **Better UX** - Instant feedback when jobs complete  
+✅ **Automatic reconnection** - Handles network issues gracefully  
+✅ **Efficient** - In-memory queues, no database overhead for events  
+
+**Performance:**
+
+- **Before (Polling)**: 5-15 second intervals, ~240-720 requests/hour per component
+- **After (SSE)**: Single persistent connection, updates only when status changes, ~0 requests/hour (just keepalive)
 
 ## Data Flow
 

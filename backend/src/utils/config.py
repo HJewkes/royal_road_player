@@ -59,6 +59,9 @@ class Settings(BaseSettings):
 
     # Logging
     log_level: str = "INFO"
+    
+    # Job Queue
+    enable_background_processor: bool = True  # Enable/disable background job processing
 
     class Config:
         """Pydantic config."""

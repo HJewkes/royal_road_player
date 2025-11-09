@@ -6,6 +6,7 @@ from typing import Optional
 
 import attr
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 
 from src.controllers.chapter_controller import ChapterController
 
@@ -16,6 +17,8 @@ from src.services.chapter_service import ChapterService
 from src.services.chunking_service import ChunkingService
 from src.services.tts_service import TTSChunkService
 from src.services.job_queue import ChunkJobQueue, get_queue
+from src.services.job_status import JobStatus
+from src.services.queue_events import get_event_manager
 from src.services.audio_concatenator import AudioConcatenator
 from src.models.responses import (
     ChunkInfo,
@@ -158,9 +161,6 @@ async def get_chunk_info(book_id: str, chapter_number: int, include_text: bool =
     chunks_info = []
     settings = get_settings()
     
-    # Import wave for reading durations (only if needed)
-    import wave
-    
     for chunk in chunks:
         # Get audio URL if exists
         audio_url = None
@@ -181,15 +181,9 @@ async def get_chunk_info(book_id: str, chapter_number: int, include_text: bool =
         audio_duration = chunk.audio_duration_seconds
         # Only read from WAV file if duration is missing AND chunk has audio
         # This is expensive, so we skip it if metadata has duration
-        if (not audio_duration or audio_duration <= 0) and chunk.has_audio and chunk.audio_path and chunk.audio_path.exists():
-            try:
-                with wave.open(str(chunk.audio_path), 'rb') as wav_file:
-                    n_frames = wav_file.getnframes()
-                    framerate = wav_file.getframerate()
-                    audio_duration = n_frames / framerate if framerate > 0 else None
-            except Exception as e:
-                logger.debug(f"Failed to read audio duration from file for chunk {chunk.index}: {e}")
-                audio_duration = None
+        if (not audio_duration or audio_duration <= 0) and chunk.has_audio and chunk.audio_path:
+            from src.utils.file_operations import get_audio_duration
+            audio_duration = get_audio_duration(chunk.audio_path)
         
         # Calculate audio start/end times (only for chunks with audio and valid duration)
         audio_start_time = None
@@ -307,8 +301,11 @@ async def download_book(request: DownloadBookRequest):
             status="success",
             result=attr.asdict(result) if hasattr(result, '__attrs_attrs__') else result,
         ))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        return attr.asdict(OperationResult(status="error", error=str(e)))
+        logger.error(f"Error downloading book: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to download book: {str(e)}")
 
 
 @router.post("/api/chapters/download")
@@ -325,8 +322,11 @@ async def download_chapter(request: DownloadChapterRequest):
             status="success",
             result=attr.asdict(result) if hasattr(result, '__attrs_attrs__') else result,
         ))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        return attr.asdict(OperationResult(status="error", error=str(e)))
+        logger.error(f"Error downloading chapter: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to download chapter: {str(e)}")
 
 
 @router.post("/api/chapters/chunk")
@@ -350,8 +350,11 @@ async def chunk_chapter(request: ChunkChapterRequest):
             status="success",
             result=result_dict,
         ))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        return attr.asdict(OperationResult(status="error", error=str(e)))
+        logger.error(f"Error chunking chapter: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to chunk chapter: {str(e)}")
 
 
 @router.post("/api/chapters/rechunk")
@@ -375,8 +378,11 @@ async def rechunk_chapter(request: ChunkChapterRequest):
             status="success",
             result=result_dict,
         ))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        return attr.asdict(OperationResult(status="error", error=str(e)))
+        logger.error(f"Error rechunking chapter: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to rechunk chapter: {str(e)}")
 
 
 @router.delete("/api/books/{book_id}/chapters/{chapter_number}/chunks")
@@ -389,8 +395,11 @@ async def clear_chunks(book_id: str, chapter_number: int):
             status="success",
             result={"message": f"Cleared chunks and audio for chapter {chapter_number}"},
         ))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        return attr.asdict(OperationResult(status="error", error=str(e)))
+        logger.error(f"Error clearing chunks: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to clear chunks: {str(e)}")
 
 
 @router.post("/api/books/{book_id}/chapters/{chapter_number}/chunks/cleanup")
@@ -414,8 +423,11 @@ async def cleanup_small_failed_chunks(
                 "deleted_count": deleted_count,
             },
         ))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        return attr.asdict(OperationResult(status="error", error=str(e)))
+        logger.error(f"Error cleaning up chunks: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to cleanup chunks: {str(e)}")
 
 
 @router.post("/api/books/{book_id}/chapters/{chapter_number}/chunks/backfill-durations")
@@ -444,8 +456,11 @@ async def backfill_chunk_durations(
                 **stats,
             },
         ))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        return attr.asdict(OperationResult(status="error", error=str(e)))
+        logger.error(f"Error backfilling chunk durations: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to backfill durations: {str(e)}")
 
 
 # Note: Specific route must come before generic route
@@ -471,8 +486,11 @@ async def generate_single_chunk(
             status="success",
             result=attr.asdict(result) if hasattr(result, '__attrs_attrs__') else result,
         ))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        return attr.asdict(OperationResult(status="error", error=str(e)))
+        logger.error(f"Error generating chunk audio: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to generate chunk audio: {str(e)}")
 
 
 @router.post("/api/chunks/generate")
@@ -491,8 +509,11 @@ async def generate_chunks(request: GenerateChunksRequest):
             status="success",
             result=attr.asdict(result) if hasattr(result, '__attrs_attrs__') else result,
         ))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        return attr.asdict(OperationResult(status="error", error=str(e)))
+        logger.error(f"Error generating chunks: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to generate chunks: {str(e)}")
 
 
 @router.get("/api/search")
@@ -524,8 +545,11 @@ async def queue_chunks(request: QueueChunksRequest):
             status="success",
             result={"jobs_added": added, "queue_status": queue.get_queue_status()},
         ))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        return attr.asdict(OperationResult(status="error", error=str(e)))
+        logger.error(f"Error queueing chunks: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to queue chunks: {str(e)}")
 
 
 @router.get("/api/queue/status")
@@ -546,11 +570,93 @@ async def get_queue_status(
     return queue.get_queue_status(book_id=book_id, chapter_number=chapter_number, include_eta=include_eta)
 
 
+@router.get("/api/queue/events")
+async def stream_queue_events():
+    """
+    Server-Sent Events (SSE) stream for real-time queue status updates.
+    
+    Clients receive events when:
+    - Queue status changes (jobs start/complete/fail)
+    - Processing state changes (started/stopped)
+    
+    Event types:
+    - 'status': Queue status update (same format as /api/queue/status)
+    - 'job_started': A job started processing
+    - 'job_completed': A job completed successfully
+    - 'job_failed': A job failed
+    
+    Example client usage:
+        const eventSource = new EventSource('/api/queue/events');
+        eventSource.addEventListener('status', (e) => {
+            const status = JSON.parse(e.data);
+            console.log('Queue status:', status);
+        });
+    """
+    import asyncio
+    import json
+    
+    event_manager = get_event_manager()
+    queue = await event_manager.subscribe()
+    
+    async def event_generator():
+        """Generate SSE events from the queue."""
+        try:
+            # Send initial status immediately
+            queue_instance = get_queue()
+            initial_status = queue_instance.get_queue_status(include_eta=True)
+            yield f"event: status\n"
+            yield f"data: {json.dumps(initial_status)}\n\n"
+            
+            # Then stream events as they arrive
+            while True:
+                try:
+                    # Wait for event with timeout to send keepalive
+                    message = await asyncio.wait_for(queue.get(), timeout=30.0)
+                    
+                    # Format as SSE message
+                    yield f"event: {message['event']}\n"
+                    yield f"data: {json.dumps(message['data'])}\n\n"
+                except asyncio.TimeoutError:
+                    # Send keepalive comment to prevent connection timeout
+                    yield ": keepalive\n\n"
+                except Exception as e:
+                    logger.error(f"Error in SSE event stream: {e}", exc_info=True)
+                    break
+        except asyncio.CancelledError:
+            logger.debug("SSE connection cancelled")
+        finally:
+            await event_manager.unsubscribe(queue)
+    
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+        },
+    )
+
+
 @router.get("/api/queue/progress")
 async def get_queue_progress():
     """Get detailed progress information including recent jobs."""
     queue = get_queue()
     return queue.get_progress_details()
+
+
+@router.post("/api/queue/recover")
+async def recover_stuck_jobs():
+    """
+    Manually trigger recovery of stuck jobs (chunks in RUNNING state).
+    Useful for recovering from server crashes or stuck processes.
+    """
+    queue = get_queue()
+    recovered = queue.recover_stuck_jobs()
+    return {
+        "recovered": recovered,
+        "message": f"Recovered {recovered} stuck job(s)"
+    }
 
 
 @router.get("/api/queue/jobs")
@@ -573,7 +679,6 @@ async def get_queue_jobs(
         max_per_chapter: Optional limit on jobs per chapter (for pending jobs)
     """
     queue = get_queue()
-    from src.services.job_queue import JobStatus
     
     status_filter = None
     if status:
@@ -609,46 +714,18 @@ async def get_queue_jobs(
 @router.post("/api/queue/process")
 async def process_queue():
     """Process all pending jobs in the queue sequentially."""
-    import logging
-    logger = logging.getLogger(__name__)
     queue = get_queue()
     try:
-        # Reset any failed jobs to PENDING so they can be retried
-        # Note: Background processor is already running (started on app startup)
-        from src.services.job_queue import JobStatus
-        reset_count = 0
-        total_jobs = len(queue._queue)
-        failed_before = sum(1 for j in queue._queue if j.status == JobStatus.FAILED)
-        logger.info(f"Queue has {total_jobs} total jobs, {failed_before} failed before reset")
-        
-        for job in queue._queue:
-            if job.status == JobStatus.FAILED:
-                logger.info(f"Resetting job {job.chunk_index} (book={job.book_id}, chapter={job.chapter_number}) from FAILED to PENDING")
-                job.status = JobStatus.PENDING
-                reset_count += 1
-        
-        if reset_count > 0:
-            logger.info(f"✅ Reset {reset_count} failed jobs to PENDING")
-            queue._save_queue()
-            # Verify save worked
-            failed_after = sum(1 for j in queue._queue if j.status == JobStatus.FAILED)
-            logger.info(f"After reset: {failed_after} failed jobs remaining (should be 0)")
-        else:
-            logger.info(f"No failed jobs to reset (found {failed_before} failed jobs but none matched)")
-        
         # Background processor is already running (started on app startup)
         # Trigger immediate processing (processor will pick up jobs automatically)
         stats = await queue.process_all()
         return attr.asdict(OperationResult(
             status="success",
-            result={
-                **stats,
-                "reset_failed_jobs": reset_count,
-            },
+            result=stats,
         ))
     except Exception as e:
         logger.error(f"Error processing queue: {e}", exc_info=True)
-        return attr.asdict(OperationResult(status="error", error=str(e)))
+        raise HTTPException(status_code=500, detail=f"Failed to process queue: {str(e)}")
 
 
 @router.post("/api/queue/process/next")
@@ -667,7 +744,8 @@ async def process_next_job():
             result={"job": job.to_dict()},
         ))
     except Exception as e:
-        return attr.asdict(OperationResult(status="error", error=str(e)))
+        logger.error(f"Error processing next job: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to process next job: {str(e)}")
 
 
 @router.delete("/api/queue")
@@ -681,5 +759,6 @@ async def clear_queue():
             result={"message": "Queue cleared"},
         ))
     except Exception as e:
-        return attr.asdict(OperationResult(status="error", error=str(e)))
+        logger.error(f"Error clearing queue: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to clear queue: {str(e)}")
 

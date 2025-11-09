@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { Loader, CheckCircle, Clock, XCircle, ListTodo } from 'lucide-react'
 import styles from './QueueStatusFlyout.module.css'
+import { useQueueEvents } from '../hooks/useQueueEvents'
 
 interface QueueStatus {
   pending: number
@@ -36,15 +37,19 @@ interface ChapterInfo {
 function QueueStatusFlyout() {
   const [isOpen, setIsOpen] = useState(false)
   const [status, setStatus] = useState<QueueStatus | null>(null)
-  const [jobs, setJobs] = useState<QueueJob[]>([])
+  const [runningJobs, setRunningJobs] = useState<QueueJob[]>([])
+  const [pendingJobs, setPendingJobs] = useState<QueueJob[]>([])
+  const [failedJobs, setFailedJobs] = useState<QueueJob[]>([])
   const [bookInfo, setBookInfo] = useState<Record<string, BookInfo>>({})
   const [chapterInfo, setChapterInfo] = useState<Record<string, ChapterInfo>>({})
-  const [jobsTotal, setJobsTotal] = useState(0)
-  const [jobsOffset, setJobsOffset] = useState(0)
+  const [pendingOffset, setPendingOffset] = useState(0)
+  const [failedOffset, setFailedOffset] = useState(0)
   const [loadingJobs, setLoadingJobs] = useState(false)
-  const [hasMoreJobs, setHasMoreJobs] = useState(false)
+  const [hasMorePending, setHasMorePending] = useState(false)
+  const [hasMoreFailed, setHasMoreFailed] = useState(false)
   const flyoutRef = useRef<HTMLDivElement>(null)
   const jobsContainerRef = useRef<HTMLDivElement>(null)
+  const fallbackFetchedRef = useRef(false)
 
   const fetchStatus = async (includeEta = false): Promise<void> => {
     try {
@@ -62,60 +67,91 @@ function QueueStatusFlyout() {
     }
   }
 
-  const fetchJobs = async (offset = 0, limit = 50): Promise<{ jobs: QueueJob[]; total: number }> => {
+  const fetchJobs = async (pendingOffset = 0, failedOffset = 0, limit = 50): Promise<{ 
+    running: QueueJob[]
+    pending: QueueJob[]
+    failed: QueueJob[]
+    totals: { running: number; pending: number; failed: number }
+  }> => {
     try {
-      // Use DB-based endpoint with proper pagination - same query as queue processor uses
-      // Fetch pending jobs (in same order processor will process them) and failed jobs separately
-      const [pendingRes, failedRes] = await Promise.all([
-        fetch(`/api/queue/jobs?status=pending&limit=${limit}&offset=${offset}&use_db=true`),
-        fetch(`/api/queue/jobs?status=failed&limit=${limit}&offset=${offset}&use_db=true`),
+      // Fetch running, pending, and failed jobs separately
+      const [runningRes, pendingRes, failedRes] = await Promise.all([
+        fetch(`/api/queue/jobs?status=running&limit=10&offset=0&use_db=true`),
+        fetch(`/api/queue/jobs?status=pending&limit=${limit}&offset=${pendingOffset}&use_db=true`),
+        fetch(`/api/queue/jobs?status=failed&limit=${limit}&offset=${failedOffset}&use_db=true`),
       ])
       
-      if (!pendingRes.ok || !failedRes.ok) {
+      if (!runningRes.ok || !pendingRes.ok || !failedRes.ok) {
+        const runningText = await runningRes.text().catch(() => '')
         const pendingText = await pendingRes.text().catch(() => '')
         const failedText = await failedRes.text().catch(() => '')
         console.error('Failed to fetch queue jobs:', {
+          running: { status: runningRes.status, text: runningText },
           pending: { status: pendingRes.status, text: pendingText },
           failed: { status: failedRes.status, text: failedText }
         })
         throw new Error('Failed to fetch queue jobs')
       }
       
+      const runningData = await runningRes.json() as { jobs: QueueJob[]; total: number }
       const pendingData = await pendingRes.json() as { jobs: QueueJob[]; total: number }
       const failedData = await failedRes.json() as { jobs: QueueJob[]; total: number }
       
-      // Combine jobs (pending first, then failed), already sorted by DB query
-      const combinedJobs = [
-        ...pendingData.jobs.map(j => ({ ...j, _sort: 0 })), // pending gets sort priority
-        ...failedData.jobs.map(j => ({ ...j, _sort: 1 }))   // failed comes after
-      ].sort((a, b) => {
-        // Sort by status priority (pending first), then by book/chapter/index
-        if (a._sort !== b._sort) return a._sort - b._sort
-        if (a.book_id !== b.book_id) return a.book_id.localeCompare(b.book_id)
-        if (a.chapter_number !== b.chapter_number) return a.chapter_number - b.chapter_number
-        return a.chunk_index - b.chunk_index
-      }).map(({ _sort, ...job }) => job) as QueueJob[] // Remove temporary sort field
+      // Deduplicate jobs by ID (in case a job appears in multiple statuses)
+      const seenIds = new Set<string>()
+      const dedupeJobs = (jobs: QueueJob[]): QueueJob[] => {
+        return jobs.filter(job => {
+          const id = `${job.book_id}_${job.chapter_number}_${job.chunk_index}`
+          if (seenIds.has(id)) return false
+          seenIds.add(id)
+          return true
+        })
+      }
       
-      return { jobs: combinedJobs, total: pendingData.total + failedData.total }
+      // Process in order: running first (highest priority), then pending, then failed
+      const running = dedupeJobs(runningData.jobs)
+      const pending = dedupeJobs(pendingData.jobs)
+      const failed = dedupeJobs(failedData.jobs)
+      
+      return {
+        running,
+        pending,
+        failed,
+        totals: {
+          running: runningData.total,
+          pending: pendingData.total,
+          failed: failedData.total,
+        }
+      }
     } catch (error) {
       console.error('Failed to fetch queue jobs:', error)
-      return { jobs: [], total: 0 }
+      return { running: [], pending: [], failed: [], totals: { running: 0, pending: 0, failed: 0 } }
     }
   }
 
   // Load jobs quickly (without metadata) - for infinite scroll
-  const loadJobs = async (offset = 0, limit = 50): Promise<{ jobs: QueueJob[]; total: number }> => {
-    const result = await fetchJobs(offset, limit)
-    setJobsTotal(result.total)
+  const loadJobs = async (pendingOffset = 0, failedOffset = 0, limit = 50): Promise<void> => {
+    const result = await fetchJobs(pendingOffset, failedOffset, limit)
+    
+    // Always update running jobs (replace, don't append)
+    setRunningJobs(result.running)
     
     // For infinite scroll, append new jobs to existing ones (avoid duplicates)
-    setJobs(prev => {
+    setPendingJobs(prev => {
       const existingIds = new Set(prev.map(j => `${j.book_id}_${j.chapter_number}_${j.chunk_index}`))
-      const newJobs = result.jobs.filter(j => !existingIds.has(`${j.book_id}_${j.chapter_number}_${j.chunk_index}`))
+      const newJobs = result.pending.filter(j => !existingIds.has(`${j.book_id}_${j.chapter_number}_${j.chunk_index}`))
       return [...prev, ...newJobs]
     })
     
-    return result
+    setFailedJobs(prev => {
+      const existingIds = new Set(prev.map(j => `${j.book_id}_${j.chapter_number}_${j.chunk_index}`))
+      const newJobs = result.failed.filter(j => !existingIds.has(`${j.book_id}_${j.chapter_number}_${j.chunk_index}`))
+      return [...prev, ...newJobs]
+    })
+    
+    // Update pagination state
+    setHasMorePending(result.pending.length === limit && pendingOffset + result.pending.length < result.totals.pending)
+    setHasMoreFailed(result.failed.length === limit && failedOffset + result.failed.length < result.totals.failed)
   }
   
   // Load metadata in background (non-blocking)
@@ -265,44 +301,90 @@ function QueueStatusFlyout() {
   }
 
 
-  // Initial status fetch and polling (with ETA now that it's fast)
-  useEffect(() => {
-    // Fetch immediately on mount
-    void fetchStatus(true) // Include ETA (now fast with SQL)
-    
-    // Poll less frequently to reduce backend load:
-    // - Every 5 seconds if processing
-    // - Every 15 seconds if idle (was 5 seconds)
-    const isActive = status?.is_processing || (status?.running ?? 0) > 0
-    const interval = setInterval(() => {
-      void fetchStatus(true) // Include ETA (now fast with SQL)
-    }, isActive ? 5000 : 15000)
+  // Use SSE for real-time queue status updates (replaces polling)
+  const { connected: sseConnected } = useQueueEvents({
+    enabled: true, // Always enabled when component is mounted
+    onStatusUpdate: (newStatus) => {
+      // Convert SSE status format to component format
+      setStatus({
+        pending: newStatus.pending,
+        running: newStatus.running,
+        failed: newStatus.failed ?? 0,
+        completed: newStatus.completed,
+        total: (newStatus.pending ?? 0) + (newStatus.running ?? 0) + (newStatus.completed ?? 0) + (newStatus.failed ?? 0),
+        is_processing: newStatus.is_processing,
+        estimated_seconds_remaining: newStatus.estimated_seconds_remaining,
+      })
+      // Reset fallback flag when SSE provides status
+      fallbackFetchedRef.current = false
+    },
+    onJobCompleted: () => {
+      // Refresh jobs list when a job completes (if flyout is open)
+      // Reload from beginning to ensure we have the latest state
+      if (isOpen) {
+        // Clear existing jobs first
+        setRunningJobs([])
+        setPendingJobs([])
+        setFailedJobs([])
+        setPendingOffset(0)
+        setFailedOffset(0)
+        void fetchJobs(0, 0, 100).then((result) => {
+          // Update state
+          setRunningJobs(result.running)
+          setPendingJobs(result.pending)
+          setFailedJobs(result.failed)
+          setPendingOffset(100)
+          setFailedOffset(100)
+          setHasMorePending(result.pending.length === 100 && result.pending.length < result.totals.pending)
+          setHasMoreFailed(result.failed.length === 100 && result.failed.length < result.totals.failed)
+          
+          // Load metadata for refreshed jobs
+          const allJobs = [...result.running, ...result.pending, ...result.failed]
+          setBookInfo(prevBookInfo => {
+            setChapterInfo(prevChapterInfo => {
+              void loadMetadata(allJobs, prevBookInfo, prevChapterInfo)
+              return prevChapterInfo
+            })
+            return prevBookInfo
+          })
+        })
+      }
+    },
+  })
 
-    return () => {
-      clearInterval(interval)
-    }
-  }, []) // Run once on mount, then use status for interval timing
-  
-  // Update polling interval when status changes
+  // Fallback: fetch status once on mount if SSE not connected (for initial load)
   useEffect(() => {
-    const isActive = status?.is_processing || (status?.running ?? 0) > 0
-    // This effect just ensures we're using the right interval timing
-    // The actual polling is handled by the main effect above
-  }, [status?.is_processing, status?.running])
+    if (!sseConnected && !status && !fallbackFetchedRef.current) {
+      fallbackFetchedRef.current = true
+      void fetchStatus(true).catch(() => {
+        // Allow retry on error
+        fallbackFetchedRef.current = false
+      })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sseConnected]) // Only run when SSE connection state changes
 
   // Lazy load jobs only when flyout opens
   useEffect(() => {
-    if (isOpen && jobs.length === 0) {
+    if (isOpen && pendingJobs.length === 0 && failedJobs.length === 0) {
       setLoadingJobs(true)
       // Load more initial jobs to ensure scrollability with dense grid
-      void loadJobs(0, 100).then(({ jobs: jobsData, total }) => {
-        setJobsOffset(100)
-        setHasMoreJobs(jobsData.length === 100 && 100 < total)
+      void fetchJobs(0, 0, 100).then((result) => {
+        // Update state
+        setRunningJobs(result.running)
+        setPendingJobs(result.pending)
+        setFailedJobs(result.failed)
+        setPendingOffset(100)
+        setFailedOffset(100)
+        setHasMorePending(result.pending.length === 100 && result.pending.length < result.totals.pending)
+        setHasMoreFailed(result.failed.length === 100 && result.failed.length < result.totals.failed)
         setLoadingJobs(false)
-        // Load metadata in background (non-blocking) - use current state
+        
+        // Load metadata in background (non-blocking)
+        const allJobs = [...result.running, ...result.pending, ...result.failed]
         setBookInfo(prevBookInfo => {
           setChapterInfo(prevChapterInfo => {
-            void loadMetadata(jobsData, prevBookInfo, prevChapterInfo)
+            void loadMetadata(allJobs, prevBookInfo, prevChapterInfo)
             return prevChapterInfo
           })
           return prevBookInfo
@@ -310,48 +392,47 @@ function QueueStatusFlyout() {
       })
     } else if (!isOpen) {
       // Clear jobs when closed to free memory
-      setJobs([])
-      setJobsOffset(0)
-      setJobsTotal(0)
-      setHasMoreJobs(false)
+      setRunningJobs([])
+      setPendingJobs([])
+      setFailedJobs([])
+      setPendingOffset(0)
+      setFailedOffset(0)
+      setHasMorePending(false)
+      setHasMoreFailed(false)
     }
   }, [isOpen])
 
   // Infinite scroll: load more jobs when scrolling near bottom
   const handleScroll = (): void => {
-    if (!jobsContainerRef.current || loadingJobs || !hasMoreJobs) return
+    if (!jobsContainerRef.current || loadingJobs) return
     
     const container = jobsContainerRef.current
     const scrollBottom = container.scrollHeight - container.scrollTop - container.clientHeight
     
     // Load more when within 200px of bottom (smaller threshold for dense grid)
     if (scrollBottom < 200) {
-      const nextOffset = jobs.length // Use current jobs length as offset
-      setLoadingJobs(true)
-      void loadJobs(nextOffset, 100).then(({ jobs: jobsData, total }) => {
-        setJobsOffset(nextOffset)
-        setJobsTotal(total)
-        // Check if we have more jobs to load
-        setHasMoreJobs(jobsData.length > 0 && jobs.length + jobsData.length < total)
-        setLoadingJobs(false)
-        // Load metadata in background for new jobs
-        setBookInfo(prevBookInfo => {
-          setChapterInfo(prevChapterInfo => {
-            void loadMetadata(jobsData, prevBookInfo, prevChapterInfo)
-            return prevChapterInfo
+      const nextPendingOffset = hasMorePending ? pendingJobs.length : pendingOffset
+      const nextFailedOffset = hasMoreFailed ? failedJobs.length : failedOffset
+      
+      if (hasMorePending || hasMoreFailed) {
+        setLoadingJobs(true)
+        void loadJobs(nextPendingOffset, nextFailedOffset, 100).then(() => {
+          setPendingOffset(nextPendingOffset)
+          setFailedOffset(nextFailedOffset)
+          setLoadingJobs(false)
+          // Load metadata in background for new jobs
+          const newJobs = [...pendingJobs, ...failedJobs]
+          setBookInfo(prevBookInfo => {
+            setChapterInfo(prevChapterInfo => {
+              void loadMetadata(newJobs, prevBookInfo, prevChapterInfo)
+              return prevChapterInfo
+            })
+            return prevBookInfo
           })
-          return prevBookInfo
         })
-      })
+      }
     }
   }
-
-  // Update hasMoreJobs when jobs change - check if we've loaded all available jobs
-  useEffect(() => {
-    if (jobsTotal > 0) {
-      setHasMoreJobs(jobs.length < jobsTotal)
-    }
-  }, [jobs.length, jobsTotal])
 
   // Close flyout when clicking outside
   useEffect(() => {
@@ -382,7 +463,6 @@ function QueueStatusFlyout() {
     return `${mins}:${secs.toString().padStart(2, '0')}`
   }
 
-  const pendingJobs = jobs.filter(j => j.status === 'pending' || j.status === 'failed')
   const isProcessing = status?.is_processing || (status?.running ?? 0) > 0
   const hasJobs = (status?.pending ?? 0) > 0 || (status?.failed ?? 0) > 0 || (status?.running ?? 0) > 0
 
@@ -465,67 +545,166 @@ function QueueStatusFlyout() {
             </>
           )}
 
-          {(pendingJobs.length > 0 || loadingJobs) && (
+          {(runningJobs.length > 0 || pendingJobs.length > 0 || failedJobs.length > 0 || loadingJobs) && (
             <div className={styles.jobsList}>
               <div 
                 className={styles.jobsGrid}
                 ref={jobsContainerRef}
                 onScroll={handleScroll}
               >
-                {pendingJobs.flatMap((job, index) => {
-                  // Only show book/chapter info when it changes from previous job
-                  const prevJob = index > 0 ? pendingJobs[index - 1] : null
-                  const showBook = !prevJob || prevJob.book_id !== job.book_id
-                  const showChapter = !prevJob || prevJob.book_id !== job.book_id || prevJob.chapter_number !== job.chapter_number
-                  
-                  const book = bookInfo[job.book_id]
-                  const chapterKey = `${job.book_id}_${job.chapter_number}`
-                  const chapter = chapterInfo[chapterKey]
-                  
-                  // Use book title from metadata, fallback to a more readable format
-                  const bookTitle = book?.book_title || (job.book_id.startsWith('book_') ? job.book_id.replace('book_', '').replace(/_/g, ' ') : job.book_id)
-                  const chapterTitle = chapter?.title || `Chapter ${job.chapter_number}`
-                  
-                  const elements = []
-                  
-                  if (showBook) {
-                    elements.push(
-                      <div className={styles.sectionLabelBook} key={`section-book-${job.book_id}-${index}`}>
-                        {bookTitle}
-                      </div>
-                    )
-                  }
-                  
-                  if (showChapter) {
-                    elements.push(
-                      <div className={styles.sectionLabelChapter} key={`section-chapter-${job.book_id}-${job.chapter_number}-${index}`}>
-                        {chapterTitle}
-                      </div>
-                    )
-                  }
-                  
-                  elements.push(
-                    <div
-                      key={`${job.book_id}_${job.chapter_number}_${job.chunk_index}`}
-                      className={`${styles.jobCard} ${
-                        job.status === 'failed' ? styles.jobCardFailed : ''
-                      } ${job.status === 'running' ? styles.jobCardRunning : ''}`}
-                      title={`${bookTitle} - ${chapterTitle} - Chunk ${job.chunk_index} (${job.status})${job.error ? `: ${job.error}` : ''}`}
-                    >
-                      <div className={styles.jobCardChunk}>
-                        {job.status === 'failed' && <XCircle size={10} className={styles.jobCardFailedIcon} />}
-                        {job.status === 'running' && <Loader size={10} className={styles.jobCardRunningIcon} />}
-                        {job.chunk_index}
-                      </div>
+                {/* Running Jobs Section */}
+                {runningJobs.length > 0 && (
+                  <>
+                    <div className={styles.sectionLabelRunning} key="section-running">
+                      Currently Running
                     </div>
-                  )
-                  
-                  return elements
-                })}
+                    {runningJobs.map((job) => {
+                      const book = bookInfo[job.book_id]
+                      const chapterKey = `${job.book_id}_${job.chapter_number}`
+                      const chapter = chapterInfo[chapterKey]
+                      const bookTitle = book?.book_title || (job.book_id.startsWith('book_') ? job.book_id.replace('book_', '').replace(/_/g, ' ') : job.book_id)
+                      const chapterTitle = chapter?.title || `Chapter ${job.chapter_number}`
+                      const jobKey = `running-${job.book_id}_${job.chapter_number}_${job.chunk_index}`
+                      
+                      return (
+                        <div
+                          key={jobKey}
+                          className={`${styles.jobCard} ${styles.jobCardRunning}`}
+                          title={`${bookTitle} - ${chapterTitle} - Chunk ${job.chunk_index} (running)${job.error ? `: ${job.error}` : ''}`}
+                        >
+                          <div className={styles.jobCardChunk}>
+                            <Loader size={10} className={styles.jobCardRunningIcon} />
+                            {job.chunk_index}
+                          </div>
+                          <div className={styles.jobCardInfo}>
+                            {bookTitle} - {chapterTitle}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </>
+                )}
+
+                {/* Pending Jobs Section */}
+                {pendingJobs.length > 0 && (
+                  <>
+                    <div className={styles.sectionLabelPending} key="section-pending">
+                      Pending ({status?.pending ?? pendingJobs.length})
+                    </div>
+                    {pendingJobs.flatMap((job, index) => {
+                      // Only show book/chapter info when it changes from previous job
+                      const prevJob = index > 0 ? pendingJobs[index - 1] : null
+                      const showBook = !prevJob || prevJob.book_id !== job.book_id
+                      const showChapter = !prevJob || prevJob.book_id !== job.book_id || prevJob.chapter_number !== job.chapter_number
+                      
+                      const book = bookInfo[job.book_id]
+                      const chapterKey = `${job.book_id}_${job.chapter_number}`
+                      const chapter = chapterInfo[chapterKey]
+                      
+                      const bookTitle = book?.book_title || (job.book_id.startsWith('book_') ? job.book_id.replace('book_', '').replace(/_/g, ' ') : job.book_id)
+                      const chapterTitle = chapter?.title || `Chapter ${job.chapter_number}`
+                      const jobKey = `pending-${job.book_id}_${job.chapter_number}_${job.chunk_index}`
+                      
+                      const elements = []
+                      
+                      if (showBook) {
+                        elements.push(
+                          <div className={styles.sectionLabelBook} key={`section-book-${job.book_id}`}>
+                            {bookTitle}
+                          </div>
+                        )
+                      }
+                      
+                      if (showChapter) {
+                        elements.push(
+                          <div className={styles.sectionLabelChapter} key={`section-chapter-${job.book_id}-${job.chapter_number}`}>
+                            {chapterTitle}
+                          </div>
+                        )
+                      }
+                      
+                      elements.push(
+                        <div
+                          key={jobKey}
+                          className={styles.jobCard}
+                          title={`${bookTitle} - ${chapterTitle} - Chunk ${job.chunk_index} (pending)`}
+                        >
+                          <div className={styles.jobCardChunk}>
+                            {job.chunk_index}
+                          </div>
+                        </div>
+                      )
+                      
+                      return elements
+                    })}
+                  </>
+                )}
+
+                {/* Failed Jobs Section */}
+                {failedJobs.length > 0 && (
+                  <>
+                    <div className={styles.sectionLabelFailed} key="section-failed">
+                      Failed ({status?.failed ?? failedJobs.length})
+                    </div>
+                    {failedJobs.flatMap((job, index) => {
+                      // Only show book/chapter info when it changes from previous job
+                      const prevJob = index > 0 ? failedJobs[index - 1] : null
+                      const showBook = !prevJob || prevJob.book_id !== job.book_id
+                      const showChapter = !prevJob || prevJob.book_id !== job.book_id || prevJob.chapter_number !== job.chapter_number
+                      
+                      const book = bookInfo[job.book_id]
+                      const chapterKey = `${job.book_id}_${job.chapter_number}`
+                      const chapter = chapterInfo[chapterKey]
+                      
+                      const bookTitle = book?.book_title || (job.book_id.startsWith('book_') ? job.book_id.replace('book_', '').replace(/_/g, ' ') : job.book_id)
+                      const chapterTitle = chapter?.title || `Chapter ${job.chapter_number}`
+                      const jobKey = `failed-${job.book_id}_${job.chapter_number}_${job.chunk_index}`
+                      
+                      const elements = []
+                      
+                      if (showBook) {
+                        elements.push(
+                          <div className={styles.sectionLabelBook} key={`section-book-failed-${job.book_id}`}>
+                            {bookTitle}
+                          </div>
+                        )
+                      }
+                      
+                      if (showChapter) {
+                        elements.push(
+                          <div className={styles.sectionLabelChapter} key={`section-chapter-failed-${job.book_id}-${job.chapter_number}`}>
+                            {chapterTitle}
+                          </div>
+                        )
+                      }
+                      
+                      elements.push(
+                        <div
+                          key={jobKey}
+                          className={`${styles.jobCard} ${styles.jobCardFailed}`}
+                          title={`${bookTitle} - ${chapterTitle} - Chunk ${job.chunk_index} (failed)${job.error ? `: ${job.error}` : ''}`}
+                        >
+                          <div className={styles.jobCardChunk}>
+                            <XCircle size={10} className={styles.jobCardFailedIcon} />
+                            {job.chunk_index}
+                          </div>
+                          {job.error && (
+                            <div className={styles.jobCardError} title={job.error}>
+                              {job.error.length > 50 ? `${job.error.substring(0, 50)}...` : job.error}
+                            </div>
+                          )}
+                        </div>
+                      )
+                      
+                      return elements
+                    })}
+                  </>
+                )}
+
                 {loadingJobs && (
                   <div className={styles.loadingMore}>Loading more jobs...</div>
                 )}
-                {!hasMoreJobs && jobs.length > 0 && (
+                {!hasMorePending && !hasMoreFailed && (pendingJobs.length > 0 || failedJobs.length > 0) && (
                   <div className={styles.loadedAll}>All jobs loaded</div>
                 )}
               </div>

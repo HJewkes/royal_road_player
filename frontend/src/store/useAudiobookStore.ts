@@ -41,8 +41,6 @@ interface AudiobookStore {
   generateChunks: (chapterNumber: number, chunkIndices?: number[] | null) => Promise<GenerateChunksResult>
   
   generateSingleChunk: (chapterNumber: number, chunkIndex: number) => Promise<GenerateChunksResult>
-  
-  queueAllPendingChunksForBook: () => Promise<{ totalQueued: number; chaptersProcessed: number }>
 }
 
 const useAudiobookStore = create<AudiobookStore>((set, get) => ({
@@ -278,7 +276,8 @@ const useAudiobookStore = create<AudiobookStore>((set, get) => ({
     const { currentBook } = get()
     if (!currentBook) throw new Error('No book selected')
     
-    const response = await fetch('/api/chapters/chunk', {
+    // Use rechunk endpoint to properly clear old chunks before creating new ones
+    const response = await fetch('/api/chapters/rechunk', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -364,55 +363,6 @@ const useAudiobookStore = create<AudiobookStore>((set, get) => ({
     
     await get().refreshBook()
     return data.result as GenerateChunksResult
-  },
-  
-  queueAllPendingChunksForBook: async () => {
-    const { currentBook, chapters } = get()
-    if (!currentBook) throw new Error('No book selected')
-    
-    // Filter to chapters that are chunked
-    const chunkedChapters = chapters.filter((c) => c.is_chunked)
-    
-    if (chunkedChapters.length === 0) {
-      return { totalQueued: 0, chaptersProcessed: 0 }
-    }
-    
-    let totalQueued = 0
-    let chaptersProcessed = 0
-    
-    // Queue chunks for each chunked chapter
-    for (const chapter of chunkedChapters) {
-      try {
-        const response = await fetch('/api/queue/chunks', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            book_id: currentBook.id,
-            chapter_number: chapter.chapter_number,
-            chunk_indices: undefined, // Queue all pending chunks
-          }),
-        })
-        
-        if (response.ok) {
-          const data = await response.json() as { status: string; result?: { jobs_added?: number }; error?: string }
-          if (data.status === 'success') {
-            const jobsAdded = data.result?.jobs_added || 0
-            totalQueued += jobsAdded
-            if (jobsAdded > 0) {
-              chaptersProcessed++
-            }
-          }
-        }
-      } catch (error) {
-        console.error(`Failed to queue chunks for chapter ${chapter.chapter_number}:`, error)
-        // Continue with other chapters even if one fails
-      }
-    }
-    
-    // Refresh book data after queuing
-    await get().refreshBook()
-    
-    return { totalQueued, chaptersProcessed }
   },
 }))
 
