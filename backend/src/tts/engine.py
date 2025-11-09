@@ -3,6 +3,8 @@
 import logging
 import os
 import time
+import wave
+import array
 from pathlib import Path
 from typing import Optional
 
@@ -211,6 +213,9 @@ class TTSEngine:
             elapsed = time.time() - start_time
             logger.info(f"Generation completed in {elapsed/60:.2f} minutes ({len(text)/elapsed:.1f} chars/sec)")
 
+            # Add trailing silence to fix "s" sound cutoff issue (XTTS v2 limitation)
+            self._add_trailing_silence(output_path)
+            
             logger.info(f"✅ Audio generated: {output_path}")
             return output_path
 
@@ -218,6 +223,57 @@ class TTSEngine:
             logger.error(f"Failed to synthesize audio: {e}")
             raise
 
+    def _add_trailing_silence(self, audio_path: Path, silence_duration_ms: int = 100) -> None:
+        """
+        Add trailing silence to audio file to fix XTTS v2 "s" sound cutoff issue.
+        
+        XTTS v2 has a known issue where fricative sounds (like "s") at the end
+        of sentences can be cut off prematurely. Adding a small amount of trailing
+        silence gives the audio more "room" and helps prevent cutoff artifacts.
+        
+        Args:
+            audio_path: Path to WAV audio file
+            silence_duration_ms: Duration of silence to add in milliseconds (default: 100ms)
+        """
+        try:
+            with wave.open(str(audio_path), 'rb') as wav_file:
+                params = wav_file.getparams()
+                n_channels, sampwidth, framerate, n_frames, comptype, compname = params
+                
+                # Read all frames
+                frames = wav_file.readframes(n_frames)
+                
+                # Calculate number of silence frames to add
+                silence_frames = int(framerate * silence_duration_ms / 1000)
+                
+                # Create silence (zeros) with same sample width and channels
+                if sampwidth == 1:
+                    silence = array.array('B', [128] * silence_frames * n_channels)  # 128 = silence for 8-bit
+                elif sampwidth == 2:
+                    silence = array.array('h', [0] * silence_frames * n_channels)  # 0 = silence for 16-bit
+                elif sampwidth == 4:
+                    silence = array.array('i', [0] * silence_frames * n_channels)  # 0 = silence for 32-bit
+                else:
+                    logger.warning(f"Unsupported sample width: {sampwidth}, skipping trailing silence")
+                    return
+                
+                # Append silence to frames
+                if sampwidth == 1:
+                    extended_frames = frames + silence.tobytes()
+                else:
+                    extended_frames = frames + silence.tobytes()
+            
+            # Write extended audio back to file
+            with wave.open(str(audio_path), 'wb') as out_wav:
+                out_wav.setparams(params)
+                out_wav.writeframes(extended_frames)
+            
+            logger.debug(f"Added {silence_duration_ms}ms trailing silence to {audio_path.name}")
+            
+        except Exception as e:
+            # Don't fail synthesis if trailing silence addition fails
+            logger.warning(f"Failed to add trailing silence to {audio_path}: {e}")
+    
     def is_loaded(self) -> bool:
         """Check if model is loaded."""
         return self._loaded

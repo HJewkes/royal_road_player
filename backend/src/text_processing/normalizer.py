@@ -38,6 +38,7 @@ class TextNormalizer:
         text = self.normalize_acronyms(text)
         text = self.normalize_numbers(text)
         text = self.normalize_dates(text)
+        text = self.normalize_s_sound_cutoff(text)  # Workaround for XTTS v2 "s" sound cutoff
         text = self.normalize_whitespace(text)
         
         # Split into paragraphs
@@ -219,6 +220,51 @@ class TextNormalizer:
                 return match.group(0)
         
         text = re.sub(r'(\d{1,2})/(\d{1,2})/(\d{4})', date_replacer2, text)
+        
+        return text
+    
+    def normalize_s_sound_cutoff(self, text: str) -> str:
+        """
+        Workaround for XTTS v2 cutting off "s" sounds at sentence endings.
+        
+        XTTS v2 has a known issue where fricative sounds (like "s") at the end
+        of sentences can be cut off prematurely. This adds a small padding
+        after sentences ending in words with "s" sounds to give the model
+        more "room" to complete the sound.
+        
+        The padding is minimal (just an extra space) to avoid affecting
+        the natural flow of speech while giving XTTS time to complete the sound.
+        
+        Args:
+            text: Input text
+            
+        Returns:
+            Text with minimal padding added after sentences ending in "s" sounds
+        """
+        # Only apply if enabled (default: True)
+        if not self.rules.get('fix_s_sound_cutoff', True):
+            return text
+        
+        # Pattern: Sentence ending with word ending in "s" followed by punctuation
+        # We add a small amount of whitespace padding to give XTTS more time
+        # to complete the "s" sound without affecting the spoken output
+        
+        def add_padding(match):
+            """Add minimal padding after sentence ending in 's' sound."""
+            # Get the matched text (word ending in s + optional space + punctuation + whitespace)
+            matched = match.group(0)
+            # Add an extra space to give XTTS room to complete the "s" sound
+            # This is minimal and won't affect the spoken output noticeably
+            return matched + ' '
+        
+        # Match sentences ending with words ending in "s"
+        # Pattern breakdown:
+        # - \b\w+[sS] : Word ending in 's' or 'S' (whole word boundary)
+        # - \s* : Optional whitespace (handles "words ." case)
+        # - [.!?] : Sentence-ending punctuation
+        # - \s* : Optional trailing whitespace
+        # This handles both "words." and "words ." cases
+        text = re.sub(r'\b\w+[sS]\s*[.!?]\s*', add_padding, text)
         
         return text
     
