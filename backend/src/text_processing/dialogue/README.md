@@ -1,0 +1,213 @@
+# Dialogue Extraction Module
+
+This module provides a two-pass LLM approach for extracting dialogue and identifying speakers in narrative text.
+
+## Overview
+
+The dialogue extraction system uses two LLM passes:
+
+1. **Character Identification Pass**: Identifies all characters in a chapter and extracts their traits (both innate and temporary)
+2. **Dialogue Extraction Pass**: Extracts all quoted dialogue segments, identifies speakers, and extracts emotion/speed cues
+
+## Architecture
+
+```
+dialogue/
+├── models.py          # Data models (Character, DialogueSegment, etc.)
+├── prompts.py         # LLM prompt templates
+├── llm_service.py     # LLM service implementations
+├── service.py         # Main DialogueService orchestrator
+└── __init__.py        # Module exports
+```
+
+## Usage
+
+### Basic Usage
+
+```python
+from src.text_processing.dialogue import DialogueService
+
+# Initialize service (creates OllamaClient internally)
+service = DialogueService()
+
+# Process a single chapter
+chapter_text = '''
+John walked into the room. "Hello," he said.
+Mary looked up. "Hi there," she replied excitedly.
+'''
+
+char_analysis, dialogue_analysis = service.process_chapter(
+    chapter_text=chapter_text,
+    chapter_id="chapter_1",
+    context_hint="Fantasy novel",
+)
+
+# Access results
+print(f"Found {len(char_analysis.characters)} characters")
+print(f"Extracted {len(dialogue_analysis.segments)} dialogue segments")
+
+for segment in dialogue_analysis.segments:
+    print(f"Speaker: {segment.speaker}")
+    print(f"Text: {segment.text}")
+    if segment.emotion:
+        print(f"Emotion: {segment.emotion.emotion}")
+    if segment.speed:
+        print(f"Speed: {segment.speed.speed}")
+```
+
+### Processing Multiple Chapters
+
+```python
+# Process multiple chapters (maintains character registry)
+chapters = [
+    ("ch1", "Chapter 1 text..."),
+    ("ch2", "Chapter 2 text..."),
+    ("ch3", "Chapter 3 text..."),
+]
+
+results = service.process_multiple_chapters(
+    chapters=chapters,
+    context_hint="Fantasy novel",
+)
+
+# Access character registry
+registry = service.get_character_registry()
+all_characters = registry.get_all_characters()
+```
+
+### Accessing Character Information
+
+```python
+# Get character by name
+john = registry.get_character("John Smith")
+
+# Get characters for a specific chapter
+chapter_chars = registry.get_characters_for_chapter("ch1")
+
+# Access character traits
+for char in all_characters:
+    print(f"{char.name}:")
+    print(f"  Innate traits: {[t.name for t in char.get_innate_traits()]}")
+    print(f"  Temporary traits: {[t.name for t in char.get_temporary_traits()]}")
+    print(f"  Aliases: {char.aliases}")
+```
+
+## Models
+
+### Character
+
+Represents a character with traits and aliases:
+
+```python
+Character(
+    name="John Smith",
+    aliases=["John", "Mr. Smith"],
+    traits=[
+        CharacterTrait(name="old", category=TraitCategory.INNATE),
+        CharacterTrait(name="excited", category=TraitCategory.TEMPORARY),
+    ],
+)
+```
+
+### DialogueSegment
+
+Represents a single dialogue segment:
+
+```python
+DialogueSegment(
+    text="Hello, how are you?",
+    speaker="John Smith",
+    start_pos=100,
+    end_pos=120,
+    emotion=EmotionCue(emotion="excited", intensity=0.8),
+    speed=SpeedCue(speed="fast", multiplier=1.2),
+    confidence=0.9,
+)
+```
+
+## Two-Pass Approach
+
+### Pass 1: Character Identification
+
+The first pass analyzes the chapter text to:
+- Identify all characters mentioned
+- Extract innate traits (age, nationality, accent, etc.)
+- Extract temporary traits (emotional state, physical condition, etc.)
+- Track character aliases and nicknames
+- Merge with characters from previous chapters
+
+**Prompt Strategy:**
+- Provides context from previous chapters (for character continuity)
+- Asks LLM to differentiate between innate and temporary traits
+- Requests confidence scores for uncertain identifications
+
+### Pass 2: Dialogue Extraction
+
+The second pass extracts dialogue segments:
+- Identifies all quoted text
+- Determines speaker for each segment
+- Extracts emotion/mood cues
+- Extracts speed/pacing cues
+- Uses character information from first pass
+
+**Prompt Strategy:**
+- Provides character list from first pass
+- Includes context from adjacent chapters (for continuity)
+- Asks for emotion and speed cues based on context
+- Requests accurate character positions
+
+## Integration with Existing Code
+
+The dialogue module can be integrated with the existing chunking system:
+
+```python
+from src.text_processing.dialogue import DialogueService
+from src.text_processing.chunker import TextChunker
+
+# Extract dialogue first
+dialogue_service = DialogueService()
+char_analysis, dialogue_analysis = dialogue_service.process_chapter(
+    chapter_text=text,
+    chapter_id=chapter_id,
+)
+
+# Then chunk with dialogue awareness
+chunker = TextChunker()
+chunks = chunker.chunk_by_paragraphs(
+    text=text,
+    # Can use dialogue_analysis.segments to inform chunking
+)
+```
+
+## Configuration
+
+The service uses the existing Ollama client configuration:
+
+- `OLLAMA_BASE_URL`: Base URL for Ollama API (default: `http://localhost:11434`)
+- `OLLAMA_MODEL`: Model name to use (default: from settings)
+
+Temperature can be adjusted per call (default: 0.3 for more consistent results):
+
+```python
+service.process_chapter(
+    chapter_text=text,
+    chapter_id=chapter_id,
+    temperature=0.5,  # Higher = more creative, lower = more consistent
+)
+```
+
+## Error Handling
+
+The service handles errors gracefully:
+- If LLM call fails, returns empty analysis
+- Logs errors for debugging
+- Continues processing even if individual chapters fail
+
+## Future Enhancements
+
+Potential improvements:
+- Caching LLM responses for repeated processing
+- Batch processing for efficiency
+- Fine-tuning prompts based on book genre
+- Integration with voice mapping system
+- Persistence of character registry across sessions
