@@ -78,14 +78,16 @@ class TestDialogueService:
         
         # Process chapter
         chapter_text = 'John walked in. "Hello, how are you?" he said.'
-        char_analysis, dialogue_analysis = service.process_chapter(
+        char_analysis, dialogue_analysis, warnings = service.process_chapter(
             chapter_text=chapter_text,
             chapter_id="test_ch1",
+            validate=False,  # Skip validation for mock test
         )
         
         # Verify results
         assert isinstance(char_analysis, ChapterCharacterAnalysis)
         assert isinstance(dialogue_analysis, ChapterDialogueAnalysis)
+        assert isinstance(warnings, list)
         assert len(char_analysis.characters) == 1
         assert len(dialogue_analysis.segments) == 1
         assert dialogue_analysis.segments[0].speaker == "John Smith"
@@ -113,10 +115,10 @@ class TestDialogueService:
             )
             
             # Process first chapter
-            service.process_chapter("Text 1", "ch1")
+            service.process_chapter("Text 1", "ch1", validate=False)
             
             # Process second chapter
-            service.process_chapter("Text 2", "ch2")
+            service.process_chapter("Text 2", "ch2", validate=False)
             
             # Check registry
             registry = service.get_character_registry()
@@ -146,8 +148,10 @@ class TestDialogueService:
                 ("ch2", "Chapter 2 text"),
             ]
             
-            results = service.process_multiple_chapters(chapters)
+            results = service.process_multiple_chapters(chapters, validate=False)
             
             assert len(results) == 2
             assert "ch1" in results
             assert "ch2" in results
+            # Results should be tuples of (char_analysis, dialogue_analysis, warnings)
+            assert len(results["ch1"]) == 3

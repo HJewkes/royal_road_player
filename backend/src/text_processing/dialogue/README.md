@@ -36,15 +36,21 @@ John walked into the room. "Hello," he said.
 Mary looked up. "Hi there," she replied excitedly.
 '''
 
-char_analysis, dialogue_analysis = service.process_chapter(
+char_analysis, dialogue_analysis, warnings = service.process_chapter(
     chapter_text=chapter_text,
     chapter_id="chapter_1",
     context_hint="Fantasy novel",
+    validate=True,  # Enable validation (default)
 )
 
 # Access results
 print(f"Found {len(char_analysis.characters)} characters")
 print(f"Extracted {len(dialogue_analysis.segments)} dialogue segments")
+
+if warnings:
+    print(f"Validation warnings: {len(warnings)}")
+    for warning in warnings[:5]:  # Show first 5 warnings
+        print(f"  - {warning}")
 
 for segment in dialogue_analysis.segments:
     print(f"Speaker: {segment.speaker}")
@@ -68,7 +74,12 @@ chapters = [
 results = service.process_multiple_chapters(
     chapters=chapters,
     context_hint="Fantasy novel",
+    validate=True,  # Enable validation (default)
 )
+
+# Access results (each entry includes warnings)
+for chapter_id, (char_analysis, dialogue_analysis, warnings) in results.items():
+    print(f"Chapter {chapter_id}: {len(warnings)} validation warnings")
 
 # Access character registry
 registry = service.get_character_registry()
@@ -203,6 +214,49 @@ The service handles errors gracefully:
 - Logs errors for debugging
 - Continues processing even if individual chapters fail
 
+## Validation
+
+The service includes built-in validation to prevent LLM hallucinations:
+
+### Dialogue Validation
+
+- **Text Matching**: All dialogue segments must match word-for-word with quoted text in the original
+- **Position Validation**: Segment positions are validated against the original text
+- **Quote Detection**: Only text that is actually quoted in the original is accepted
+
+### Character Validation
+
+- **Mention Detection**: All characters must be mentioned by name or alias in the chapter
+- **Speaker Validation**: Dialogue speakers must match identified characters
+- **Alias Matching**: Characters can be found by their aliases/nicknames
+
+### Validation Behavior
+
+- Invalid dialogue segments are filtered out
+- Invalid characters are filtered out
+- Invalid speakers are removed (segment kept but speaker set to None)
+- Warnings are returned for all validation issues
+- Validation can be disabled with `validate=False`
+
+### Example
+
+```python
+char_analysis, dialogue_analysis, warnings = service.process_chapter(
+    chapter_text=text,
+    chapter_id="ch1",
+    validate=True,  # Default
+)
+
+# Check for validation issues
+if warnings:
+    print("Validation warnings:")
+    for warning in warnings:
+        print(f"  - {warning}")
+
+# Only validated results are returned
+# Invalid items are filtered out automatically
+```
+
 ## Future Enhancements
 
 Potential improvements:
@@ -211,3 +265,4 @@ Potential improvements:
 - Fine-tuning prompts based on book genre
 - Integration with voice mapping system
 - Persistence of character registry across sessions
+- Configurable validation strictness levels

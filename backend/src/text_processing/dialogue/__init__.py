@@ -12,6 +12,7 @@ from src.text_processing.dialogue.models import (
     TraitCategory,
 )
 from src.text_processing.dialogue.service import DialogueService
+from src.text_processing.dialogue.validator import DialogueValidator
 
 __all__ = [
     "Character",
@@ -21,6 +22,7 @@ __all__ = [
     "ChapterDialogueAnalysis",
     "DialogueSegment",
     "DialogueService",
+    "DialogueValidator",
     "EmotionCue",
     "SpeedCue",
     "TraitCategory",
