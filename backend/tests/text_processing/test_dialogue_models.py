@@ -16,6 +16,7 @@ from src.text_processing.dialogue.models import (
 class TestCharacterTrait:
     """Tests for CharacterTrait model."""
     
+    @pytest.mark.unit
     def test_innate_trait(self):
         """Test creating an innate trait."""
         trait = CharacterTrait(
@@ -29,6 +30,7 @@ class TestCharacterTrait:
         assert trait.context == "Character is described as elderly"
         assert trait.confidence == 1.0
     
+    @pytest.mark.unit
     def test_temporary_trait(self):
         """Test creating a temporary trait."""
         trait = CharacterTrait(
@@ -44,6 +46,7 @@ class TestCharacterTrait:
 class TestCharacter:
     """Tests for Character model."""
     
+    @pytest.mark.unit
     def test_create_character(self):
         """Test creating a character."""
         char = Character(
@@ -58,6 +61,7 @@ class TestCharacter:
         assert len(char.aliases) == 2
         assert len(char.traits) == 2
     
+    @pytest.mark.unit
     def test_get_innate_traits(self):
         """Test filtering innate traits."""
         char = Character(
@@ -72,6 +76,7 @@ class TestCharacter:
         assert len(innate) == 2
         assert all(t.category == TraitCategory.INNATE for t in innate)
     
+    @pytest.mark.unit
     def test_get_temporary_traits(self):
         """Test filtering temporary traits."""
         char = Character(
@@ -86,6 +91,7 @@ class TestCharacter:
         assert len(temporary) == 2
         assert all(t.category == TraitCategory.TEMPORARY for t in temporary)
     
+    @pytest.mark.unit
     def test_merge_traits(self):
         """Test merging new traits."""
         char = Character(
@@ -101,6 +107,7 @@ class TestCharacter:
         char.merge_traits(new_traits)
         assert len(char.traits) == 3
     
+    @pytest.mark.unit
     def test_merge_traits_duplicate(self):
         """Test merging doesn't create duplicates."""
         char = Character(
@@ -120,6 +127,7 @@ class TestCharacter:
 class TestDialogueSegment:
     """Tests for DialogueSegment model."""
     
+    @pytest.mark.unit
     def test_create_dialogue_segment(self):
         """Test creating a dialogue segment."""
         segment = DialogueSegment(
@@ -135,6 +143,7 @@ class TestDialogueSegment:
         assert segment.end_pos == 120
         assert segment.confidence == 0.9
     
+    @pytest.mark.unit
     def test_dialogue_segment_with_cues(self):
         """Test dialogue segment with emotion and speed cues."""
         emotion = EmotionCue(emotion="excited", intensity=0.8, confidence=0.9)
@@ -154,6 +163,7 @@ class TestDialogueSegment:
 class TestCharacterRegistry:
     """Tests for CharacterRegistry."""
     
+    @pytest.mark.unit
     def test_add_character(self):
         """Test adding a character to registry."""
         from src.text_processing.dialogue.models import ChapterCharacterAnalysis
@@ -171,6 +181,7 @@ class TestCharacterRegistry:
         assert len(registry.characters) == 1
         assert "John Smith" in registry.characters
     
+    @pytest.mark.unit
     def test_merge_characters(self):
         """Test merging characters across chapters."""
         from src.text_processing.dialogue.models import ChapterCharacterAnalysis
@@ -207,6 +218,7 @@ class TestCharacterRegistry:
         assert len(merged_char.traits) == 2
         assert merged_char.last_mentioned_chapter == "ch2"
     
+    @pytest.mark.unit
     def test_get_character_by_alias(self):
         """Test getting character by alias."""
         from src.text_processing.dialogue.models import ChapterCharacterAnalysis

@@ -257,6 +257,75 @@ if warnings:
 # Invalid items are filtered out automatically
 ```
 
+## Testing
+
+The dialogue module is fully testable without requiring a running LLM. All unit tests use mocked LLM clients.
+
+### Running Tests
+
+```bash
+# Run all dialogue tests (uses mocks, no LLM required)
+pytest tests/text_processing/test_dialogue*.py -v
+
+# Run only unit tests
+pytest tests/text_processing/test_dialogue*.py -m unit -v
+
+# Run with coverage
+pytest tests/text_processing/test_dialogue*.py --cov=src.text_processing.dialogue --cov-report=term
+```
+
+### Using MockOllamaClient
+
+For testing, use `MockOllamaClient` instead of the real `OllamaClient`:
+
+```python
+from src.text_processing.dialogue.service import DialogueService
+from src.text_processing.dialogue.test_utils import (
+    MockOllamaClient,
+    create_mock_character_response,
+    create_mock_dialogue_response,
+)
+
+# Create mock responses
+char_response = create_mock_character_response([
+    {
+        "name": "John Smith",
+        "aliases": ["John"],
+        "traits": [{"name": "old", "category": "innate", "confidence": 1.0}],
+        "first_mentioned": True,
+    }
+])
+
+dialogue_response = create_mock_dialogue_response([
+    {
+        "text": "Hello",
+        "speaker": "John Smith",
+        "start_pos": 0,
+        "end_pos": 5,
+        "confidence": 0.9,
+    }
+])
+
+# Create service with mock client
+mock_client = MockOllamaClient(responses=[char_response, dialogue_response])
+service = DialogueService(llm_client=mock_client)
+
+# Use service normally - no real LLM calls
+char_analysis, dialogue_analysis, warnings = service.process_chapter(
+    chapter_text='John said "Hello"',
+    chapter_id="test_ch1",
+    validate=False,
+)
+```
+
+### Test Structure
+
+- **Unit Tests**: Fast, isolated tests using `MockOllamaClient` (marked with `@pytest.mark.unit`)
+- **Integration Tests**: Optional tests with real LLM (marked with `@pytest.mark.integration`)
+- **Validation Tests**: Test validation logic independently (no LLM required)
+
+See [DIALOGUE_TESTING.md](../../../docs/DIALOGUE_TESTING.md) for detailed testing documentation.
+
 ## Future Enhancements
 
 Potential improvements:

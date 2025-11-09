@@ -28,7 +28,8 @@ class DialogueService:
         Initialize dialogue service.
         
         Args:
-            llm_client: Optional Ollama client (creates new one if not provided)
+            llm_client: Optional Ollama client (creates new one if not provided).
+                       Use MockOllamaClient for testing.
         """
         self.llm_client = llm_client or OllamaClient()
         self.character_service = CharacterIdentificationService(self.llm_client)

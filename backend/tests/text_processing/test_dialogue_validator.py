@@ -16,6 +16,7 @@ from src.text_processing.dialogue.validator import DialogueValidator
 class TestDialogueValidator:
     """Tests for DialogueValidator."""
     
+    @pytest.mark.unit
     def test_normalize_text(self):
         """Test text normalization."""
         # Multiple spaces
@@ -26,6 +27,7 @@ class TestDialogueValidator:
         # Leading/trailing whitespace
         assert DialogueValidator.normalize_text("  hello  ") == "hello"
     
+    @pytest.mark.unit
     def test_find_quoted_text(self):
         """Test finding quoted text in original."""
         text = 'John said "Hello" and Mary replied "Hi there".'
@@ -35,6 +37,7 @@ class TestDialogueValidator:
         assert ("Hello", text.find("Hello"), text.find("Hello") + len("Hello")) in quoted
         assert ("Hi there", text.find("Hi there"), text.find("Hi there") + len("Hi there")) in quoted
     
+    @pytest.mark.unit
     def test_validate_dialogue_segment_valid(self):
         """Test validating a valid dialogue segment."""
         text = 'John said "Hello, how are you?"'
@@ -49,6 +52,7 @@ class TestDialogueValidator:
         assert is_valid
         assert error is None
     
+    @pytest.mark.unit
     def test_validate_dialogue_segment_not_found(self):
         """Test validating a dialogue segment that doesn't exist."""
         text = 'John said "Hello"'
@@ -64,6 +68,7 @@ class TestDialogueValidator:
         assert error is not None
         assert "not found" in error.lower()
     
+    @pytest.mark.unit
     def test_validate_dialogue_segment_wrong_position(self):
         """Test validating a dialogue segment with wrong position."""
         text = 'John said "Hello"'
@@ -79,6 +84,7 @@ class TestDialogueValidator:
         # But might warn about position mismatch
         assert is_valid or "mismatch" in error.lower()
     
+    @pytest.mark.unit
     def test_validate_all_dialogue_segments(self):
         """Test validating multiple dialogue segments."""
         text = 'John said "Hello" and Mary said "Hi".'
@@ -95,6 +101,7 @@ class TestDialogueValidator:
         assert len(invalid) == 1
         assert invalid[0][0].text == "Not here"
     
+    @pytest.mark.unit
     def test_find_character_mentions(self):
         """Test finding character mentions in text."""
         char = Character(name="John Smith", aliases=["John", "Mr. Smith"])
@@ -107,6 +114,7 @@ class TestDialogueValidator:
         assert any("John" in m[0] for m in mentions)
         assert any("Mr. Smith" in m[0] for m in mentions)
     
+    @pytest.mark.unit
     def test_validate_character_in_chapter_valid(self):
         """Test validating a character that exists in chapter."""
         char = Character(name="John")
@@ -116,6 +124,7 @@ class TestDialogueValidator:
         assert is_valid
         assert error is None
     
+    @pytest.mark.unit
     def test_validate_character_in_chapter_invalid(self):
         """Test validating a character that doesn't exist in chapter."""
         char = Character(name="John")
@@ -126,6 +135,7 @@ class TestDialogueValidator:
         assert error is not None
         assert "not mentioned" in error.lower()
     
+    @pytest.mark.unit
     def test_validate_character_by_alias(self):
         """Test validating character found by alias."""
         char = Character(name="John Smith", aliases=["John"])
@@ -134,6 +144,7 @@ class TestDialogueValidator:
         is_valid, error = DialogueValidator.validate_character_in_chapter(char, text)
         assert is_valid
     
+    @pytest.mark.unit
     def test_validate_all_characters(self):
         """Test validating multiple characters."""
         chars = [
@@ -149,6 +160,7 @@ class TestDialogueValidator:
         assert len(invalid) == 1
         assert invalid[0][0].name == "Bob"
     
+    @pytest.mark.unit
     def test_validate_speaker_for_segment_valid(self):
         """Test validating a valid speaker."""
         char = Character(name="John")
@@ -168,6 +180,7 @@ class TestDialogueValidator:
         assert is_valid
         assert error is None
     
+    @pytest.mark.unit
     def test_validate_speaker_for_segment_invalid(self):
         """Test validating an invalid speaker."""
         char = Character(name="John")
@@ -187,6 +200,7 @@ class TestDialogueValidator:
         assert not is_valid
         assert error is not None
     
+    @pytest.mark.unit
     def test_validate_speaker_no_speaker(self):
         """Test validating segment with no speaker (valid)."""
         segment = DialogueSegment(
@@ -204,6 +218,7 @@ class TestDialogueValidator:
         )
         assert is_valid  # No speaker is valid
     
+    @pytest.mark.unit
     def test_validate_analysis_full(self):
         """Test full validation of analysis."""
         from src.text_processing.dialogue.models import ChapterCharacterAnalysis, ChapterDialogueAnalysis
