@@ -1,0 +1,131 @@
+# Local Development Environment
+# Usage: docker-compose -f docker-compose.local.yml up
+
+version: '3.8'
+
+services:
+  # LocalStack (S3, SQS, CloudWatch, SNS, Secrets Manager)
+  localstack:
+    image: localstack/localstack:latest
+    container_name: audiobook-localstack-dev
+    ports:
+      - "4566:4566"
+      - "4510-4559:4510-4559"
+    environment:
+      - SERVICES=s3,sqs,logs,sns,secretsmanager
+      - DEBUG=1
+      - DATA_DIR=/tmp/localstack/data
+      - PERSISTENCE=1
+      - AWS_DEFAULT_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+    volumes:
+      - localstack_data:/var/lib/localstack
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - audiobook-network
+
+  # PostgreSQL Database (Local)
+  db:
+    image: postgres:15-alpine
+    container_name: audiobook-db-dev
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: audiobook
+      POSTGRES_PASSWORD: dev_password
+      POSTGRES_DB: audiobook
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U audiobook"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - audiobook-network
+
+  # Web Service (Development)
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        TORCH_VERSION: cpu
+    container_name: audiobook-web-dev
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app/backend
+      - ./frontend:/app/frontend
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - DATABASE_URL=postgresql://audiobook:dev_password@db:5432/audiobook
+      - TTS_GPU=false
+      - WEB_HOST=0.0.0.0
+      - WEB_PORT=8000
+      - ENABLE_BACKGROUND_PROCESSOR=false
+      - WORKER_MODE=false
+      - S3_BUCKET_NAME=audiobook-dev-data
+      - S3_ENDPOINT_URL=http://localstack:4566
+      - S3_USE_STORAGE=true
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+      - LOG_LEVEL=DEBUG
+    depends_on:
+      localstack:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    networks:
+      - audiobook-network
+    command: python -m uvicorn src.web.app:app --host 0.0.0.0 --port 8000 --reload
+
+  # Worker Service (Development)
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        TORCH_VERSION: cpu
+    container_name: audiobook-worker-dev
+    volumes:
+      - ./backend:/app/backend
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - DATABASE_URL=postgresql://audiobook:dev_password@db:5432/audiobook
+      - TTS_GPU=false
+      - WORKER_MODE=true
+      - ENABLE_BACKGROUND_PROCESSOR=true
+      - S3_BUCKET_NAME=audiobook-dev-data
+      - S3_ENDPOINT_URL=http://localstack:4566
+      - S3_USE_STORAGE=true
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+      - LOG_LEVEL=DEBUG
+    depends_on:
+      localstack:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+      web:
+        condition: service_started
+    networks:
+      - audiobook-network
+    command: python -m src.web.worker
+
+volumes:
+  postgres_data:
+  localstack_data:
+
+networks:
+  audiobook-network:
+    driver: bridge

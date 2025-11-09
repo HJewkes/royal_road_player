@@ -227,3 +227,45 @@ clean: ## Remove build artifacts
 	@rm -rf backend/data backend/logs
 	@find . -type d -name "*.egg-info" -exec rm -rf {} + || true
 
+# SRE / DevOps Commands
+local-dev: ## Start local development environment (Docker Compose + LocalStack)
+	@./scripts/deploy/local-dev.sh
+
+terraform-init-dev: ## Initialize Terraform for dev environment
+	@cd terraform/environments/dev && terraform init
+
+terraform-plan-dev: ## Plan Terraform changes for dev
+	@cd terraform/environments/dev && terraform plan
+
+terraform-apply-dev: ## Apply Terraform changes for dev
+	@cd terraform/environments/dev && terraform apply
+
+terraform-init-prod: ## Initialize Terraform for prod environment
+	@cd terraform/environments/prod && terraform init
+
+terraform-plan-prod: ## Plan Terraform changes for prod
+	@cd terraform/environments/prod && terraform plan
+
+terraform-apply-prod: ## Apply Terraform changes for prod (requires confirmation)
+	@cd terraform/environments/prod && terraform apply
+
+helm-install: ## Install Helm chart (staging)
+	@helm upgrade --install audiobook ./helm/audiobook \
+		--namespace audiobook \
+		--create-namespace
+
+helm-upgrade: ## Upgrade Helm chart
+	@helm upgrade audiobook ./helm/audiobook \
+		--namespace audiobook
+
+k8s-status: ## Check Kubernetes deployment status
+	@kubectl get pods -n audiobook
+	@kubectl get svc -n audiobook
+	@kubectl get ingress -n audiobook
+
+k8s-logs-web: ## View web service logs
+	@kubectl logs -f deployment/audiobook-web -n audiobook
+
+k8s-logs-worker: ## View worker service logs
+	@kubectl logs -f deployment/audiobook-worker -n audiobook
+
