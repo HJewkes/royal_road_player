@@ -1,0 +1,100 @@
+version: '3.8'
+
+services:
+  # CPU-only version (default)
+  audiobook-cpu:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        TORCH_VERSION: "cpu"
+    container_name: audiobook-cpu
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - TTS_GPU=false
+      - WEB_HOST=0.0.0.0
+      - WEB_PORT=8000
+    restart: unless-stopped
+    profiles:
+      - cpu
+
+  # CUDA 11.8 version (for NVIDIA GPUs with CUDA 11.8)
+  audiobook-cuda118:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        TORCH_VERSION: "cuda118"
+    container_name: audiobook-cuda118
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - TTS_GPU=true
+      - WEB_HOST=0.0.0.0
+      - WEB_PORT=8000
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    profiles:
+      - cuda118
+
+  # CUDA 12.1 version (for NVIDIA GPUs with CUDA 12.1+)
+  audiobook-cuda121:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        TORCH_VERSION: "cuda121"
+    container_name: audiobook-cuda121
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - TTS_GPU=true
+      - WEB_HOST=0.0.0.0
+      - WEB_PORT=8000
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    profiles:
+      - cuda121
+
+  # ROCm version (for AMD GPUs)
+  audiobook-rocm:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        TORCH_VERSION: "rocm"
+    container_name: audiobook-rocm
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - TTS_GPU=true
+      - WEB_HOST=0.0.0.0
+      - WEB_PORT=8000
+    restart: unless-stopped
+    profiles:
+      - rocm

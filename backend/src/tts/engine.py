@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
+from src.tts.model_registry import get_model_registry, FineTunedModel
 from src.utils.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -18,11 +19,19 @@ os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 class TTSEngine:
     """XTTS v2 TTS engine."""
 
-    def __init__(self):
-        """Initialize TTS engine."""
+    def __init__(self, model_name: Optional[str] = None):
+        """
+        Initialize TTS engine.
+        
+        Args:
+            model_name: Optional fine-tuned model name (defaults to 'default')
+        """
         self.settings = get_settings()
         self._tts = None
         self._loaded = False
+        self.model_name = model_name or "default"
+        self.model_registry = get_model_registry()
+        self.current_model: Optional[FineTunedModel] = None
         
         # Set CPU thread count if specified
         if self.settings.tts_num_threads is not None:
@@ -33,16 +42,39 @@ class TTSEngine:
             except Exception as e:
                 logger.warning(f"Failed to set thread count: {e}")
 
-    def load_model(self) -> None:
-        """Load XTTS v2 model."""
-        if self._loaded:
-            logger.info("TTS model already loaded")
+    def load_model(self, model_name: Optional[str] = None) -> None:
+        """
+        Load XTTS v2 model.
+        
+        Args:
+            model_name: Optional model name to load (overrides instance model_name)
+        """
+        # Update model name if provided
+        if model_name is not None:
+            self.model_name = model_name
+        
+        # Get model from registry
+        model = self.model_registry.get_model(self.model_name)
+        if model is None:
+            logger.warning(f"Model '{self.model_name}' not found, using default")
+            model = self.model_registry.get_model("default")
+            if model is None:
+                raise ValueError("Default model not found in registry")
+        
+        # Check if we need to reload (different model)
+        if self._loaded and self.current_model and self.current_model.name == model.name:
+            logger.info(f"TTS model '{model.name}' already loaded")
             return
+        
+        self.current_model = model
 
         try:
             from TTS.api import TTS
 
-            logger.info(f"Loading XTTS v2 model: {self.settings.tts_model}")
+            # Get model path from registry
+            model_path = self.model_registry.get_model_path(model)
+            logger.info(f"Loading TTS model: {model.name} ({model_path})")
+            logger.info(f"Description: {model.description or 'No description'}")
             logger.info("This may take a few minutes on first run as the model downloads...")
 
             # Check for GPU/MPS availability and determine device
@@ -68,10 +100,10 @@ class TTSEngine:
                 device = "cpu"
                 logger.info("Using CPU mode (set TTS_GPU=true in .env to enable GPU/MPS)")
 
-            # Initialize TTS with the specified model
+            # Initialize TTS with the model from registry
             # Note: gpu parameter is deprecated, use device parameter instead
             self._tts = TTS(
-                model_name=self.settings.tts_model,
+                model_name=model_path,
                 gpu=False,  # Set to False, we'll use .to(device) instead
                 progress_bar=True
             )
@@ -105,7 +137,7 @@ class TTSEngine:
             self._loaded = True
 
             device_info = device.upper() if device else "CPU"
-            logger.info(f"✅ XTTS v2 model loaded successfully on {device_info}")
+            logger.info(f"✅ TTS model '{model.name}' loaded successfully on {device_info}")
         except ImportError:
             raise ImportError(
                 "Coqui TTS not installed. Run: make install-tts or pip install TTS>=0.22.0"
@@ -226,15 +258,21 @@ class TTSEngine:
 # Singleton instance to prevent multiple model loads
 _tts_engine_instance: Optional[TTSEngine] = None
 
-def get_tts_engine() -> TTSEngine:
+def get_tts_engine(model_name: Optional[str] = None) -> TTSEngine:
     """
-    Get TTS engine instance (singleton).
+    Get TTS engine instance (singleton per model).
     
+    Args:
+        model_name: Optional model name (defaults to 'default')
+        
     Returns:
-        TTSEngine instance (reused across calls to prevent multiple model loads)
+        TTSEngine instance (reused across calls for same model)
     """
     global _tts_engine_instance
-    if _tts_engine_instance is None:
-        _tts_engine_instance = TTSEngine()
-        logger.info("Created new TTS engine instance (singleton)")
+    model_name = model_name or "default"
+    
+    # Create new instance if needed or if model changed
+    if _tts_engine_instance is None or _tts_engine_instance.model_name != model_name:
+        _tts_engine_instance = TTSEngine(model_name=model_name)
+        logger.info(f"Created new TTS engine instance for model: {model_name}")
     return _tts_engine_instance

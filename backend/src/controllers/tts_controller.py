@@ -24,7 +24,9 @@ class TTSController:
     def __init__(self):
         """Initialize TTS controller."""
         self.settings = get_settings()
-        self.engine = get_tts_engine()
+        # Use fine-tuned model from config if specified
+        model_name = self.settings.tts_fine_tuned_model
+        self.engine = get_tts_engine(model_name=model_name)
         self.voice_registry = load_voice_registry()
         # Get default voice from registry (narrator or first available)
         self._default_speaker = self.voice_registry.get('narrator') or (

@@ -31,11 +31,17 @@ class Settings(BaseSettings):
     ollama_model: str = "llama3.1:8b"
 
     # TTS Configuration (XTTS v2)
-    tts_model: str = "tts_models/multilingual/multi-dataset/xtts_v2"  # XTTS v2 model
+    tts_model: str = "tts_models/multilingual/multi-dataset/xtts_v2"  # XTTS v2 model (legacy, use tts_fine_tuned_model instead)
+    tts_fine_tuned_model: Optional[str] = None  # Fine-tuned model name from registry (e.g., 'david_attenborough', 'morgan_freeman')
     tts_speaker: Optional[str] = None  # Speaker reference WAV file path for voice cloning
     tts_speed: float = 1.0  # Speech speed multiplier (0.5-2.0)
     tts_gpu: bool = False  # Use GPU/MPS if available (set to True to enable)
     tts_num_threads: Optional[int] = None  # Number of CPU threads (None = auto, set to match CPU cores)
+    
+    # Audio Output Configuration
+    audio_output_format: str = "m4b"  # Output format: wav, m4b, m4a, mp3, flac, ogg
+    audio_bitrate: str = "128k"  # Audio bitrate for compressed formats (128k, 192k, 256k)
+    audio_generate_chapters: bool = True  # Generate chapter markers in output files
 
     # Web Application
     web_host: str = "127.0.0.1"
