@@ -1,0 +1,37 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: audiobook-config
+  namespace: audiobook
+data:
+  # Database
+  DATABASE_URL: "postgresql://audiobook:$(POSTGRES_PASSWORD)@audiobook-db:5432/audiobook"
+  
+  # Web Service
+  WEB_HOST: "0.0.0.0"
+  WEB_PORT: "8000"
+  ENABLE_BACKGROUND_PROCESSOR: "false"
+  WORKER_MODE: "false"
+  
+  # TTS Configuration
+  TTS_GPU: "false"
+  TORCH_VERSION: "cpu"
+  AUDIO_OUTPUT_FORMAT: "m4b"
+  AUDIO_BITRATE: "128k"
+  
+  # S3 Storage (LocalStack for dev, AWS S3 for prod)
+  S3_BUCKET_NAME: "audiobook-data"
+  S3_USE_STORAGE: "true"
+  AWS_DEFAULT_REGION: "us-east-1"
+  
+  # SQS Queue (optional)
+  SQS_USE_QUEUE: "false"
+  
+  # CloudWatch Logs (optional)
+  CLOUDWATCH_LOG_GROUP: ""
+  
+  # SNS Notifications (optional)
+  SNS_TOPIC_ARN: ""
+  
+  # Logging
+  LOG_LEVEL: "INFO"

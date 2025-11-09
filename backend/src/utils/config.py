@@ -76,6 +76,27 @@ class Settings(BaseSettings):
     s3_secret_access_key: Optional[str] = None  # AWS secret key (uses AWS_SECRET_ACCESS_KEY env var if not set)
     s3_region_name: str = "us-east-1"  # AWS region
     s3_use_storage: bool = True  # Enable S3 storage (set to False to use local filesystem)
+    
+    # SQS Queue Configuration
+    sqs_queue_name: str = "audiobook-jobs"  # SQS queue name
+    sqs_endpoint_url: Optional[str] = None  # Custom endpoint (e.g., http://localstack:4566 for LocalStack)
+    sqs_access_key_id: Optional[str] = None  # AWS access key (uses AWS_ACCESS_KEY_ID env var if not set)
+    sqs_secret_access_key: Optional[str] = None  # AWS secret key (uses AWS_SECRET_ACCESS_KEY env var if not set)
+    sqs_region_name: str = "us-east-1"  # AWS region
+    sqs_use_queue: bool = False  # Enable SQS queue (set to True to use SQS instead of database queue)
+    
+    # CloudWatch Logs Configuration
+    cloudwatch_log_group: Optional[str] = None  # CloudWatch log group name (None = disabled)
+    cloudwatch_log_stream: Optional[str] = None  # CloudWatch log stream name (None = auto)
+    cloudwatch_endpoint_url: Optional[str] = None  # Custom endpoint (e.g., http://localstack:4566 for LocalStack)
+    
+    # SNS Notifications Configuration
+    sns_topic_arn: Optional[str] = None  # SNS topic ARN for job completion notifications
+    sns_endpoint_url: Optional[str] = None  # Custom endpoint (e.g., http://localstack:4566 for LocalStack)
+    
+    # Secrets Manager Configuration
+    secrets_manager_endpoint_url: Optional[str] = None  # Custom endpoint (e.g., http://localstack:4566 for LocalStack)
+    use_secrets_manager: bool = False  # Enable Secrets Manager for credentials (set to True in production)
 
     class Config:
         """Pydantic config."""

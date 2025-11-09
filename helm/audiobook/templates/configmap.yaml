@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "audiobook.fullname" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "audiobook.labels" . | nindent 4 }}
+data:
+  DATABASE_URL: "{{ .Values.config.databaseUrl }}"
+  WEB_HOST: "{{ .Values.config.webHost }}"
+  WEB_PORT: "{{ .Values.config.webPort }}"
+  ENABLE_BACKGROUND_PROCESSOR: "{{ .Values.config.enableBackgroundProcessor }}"
+  WORKER_MODE: "{{ .Values.config.workerMode }}"
+  TTS_GPU: "{{ .Values.config.ttsGpu }}"
+  TORCH_VERSION: "{{ .Values.config.torchVersion }}"
+  AUDIO_OUTPUT_FORMAT: "{{ .Values.config.audioOutputFormat }}"
+  AUDIO_BITRATE: "{{ .Values.config.audioBitrate }}"
+  S3_BUCKET_NAME: "{{ .Values.config.s3BucketName }}"
+  S3_USE_STORAGE: "{{ .Values.config.s3UseStorage }}"
+  AWS_DEFAULT_REGION: "{{ .Values.config.awsDefaultRegion }}"
+  SQS_USE_QUEUE: "{{ .Values.config.sqsUseQueue }}"
+  CLOUDWATCH_LOG_GROUP: "{{ .Values.config.cloudwatchLogGroup }}"
+  SNS_TOPIC_ARN: "{{ .Values.config.snsTopicArn }}"
+  LOG_LEVEL: "{{ .Values.config.logLevel }}"

@@ -12,7 +12,7 @@ services:
       - "4566:4566"  # LocalStack edge port
       - "4510-4559:4510-4559"  # External services port range
     environment:
-      - SERVICES=s3
+      - SERVICES=s3,sqs,logs,sns,secretsmanager  # Enable multiple AWS services
       - DEBUG=1
       - DATA_DIR=/tmp/localstack/data
       - DOCKER_HOST=unix:///var/run/docker.sock

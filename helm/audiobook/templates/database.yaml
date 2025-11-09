@@ -1,0 +1,99 @@
+{{- if .Values.database.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "audiobook.fullname" . }}-postgres-pvc
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "audiobook.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.database.storage }}
+  {{- if .Values.database.storageClass }}
+  storageClassName: {{ .Values.database.storageClass }}
+  {{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "audiobook.fullname" . }}-db
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "audiobook.labels" . | nindent 4 }}
+    component: database
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "audiobook.selectorLabels" . | nindent 6 }}
+      component: database
+  template:
+    metadata:
+      labels:
+        {{- include "audiobook.selectorLabels" . | nindent 8 }}
+        component: database
+    spec:
+      containers:
+      - name: postgres
+        image: {{ .Values.database.image }}
+        ports:
+        - containerPort: 5432
+          name: postgres
+        env:
+        - name: POSTGRES_USER
+          value: "audiobook"
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "audiobook.fullname" . }}-secrets
+              key: POSTGRES_PASSWORD
+        - name: POSTGRES_DB
+          value: "audiobook"
+        volumeMounts:
+        - name: postgres-data
+          mountPath: /var/lib/postgresql/data
+        livenessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - audiobook
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - audiobook
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        resources:
+          {{- toYaml .Values.resources.database | nindent 10 }}
+      volumes:
+      - name: postgres-data
+        persistentVolumeClaim:
+          claimName: {{ include "audiobook.fullname" . }}-postgres-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "audiobook.fullname" . }}-db
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "audiobook.labels" . | nindent 4 }}
+    component: database
+spec:
+  type: ClusterIP
+  ports:
+  - port: 5432
+    targetPort: 5432
+    protocol: TCP
+    name: postgres
+  selector:
+    {{- include "audiobook.selectorLabels" . | nindent 4 }}
+    component: database
+{{- end }}
