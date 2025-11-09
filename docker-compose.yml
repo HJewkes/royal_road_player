@@ -4,6 +4,34 @@ version: '3.8'
 # Usage: docker-compose up -d
 
 services:
+  # LocalStack (S3-compatible storage)
+  localstack:
+    image: localstack/localstack:latest
+    container_name: audiobook-localstack
+    ports:
+      - "4566:4566"  # LocalStack edge port
+      - "4510-4559:4510-4559"  # External services port range
+    environment:
+      - SERVICES=s3
+      - DEBUG=1
+      - DATA_DIR=/tmp/localstack/data
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - PERSISTENCE=1
+      - AWS_DEFAULT_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+    volumes:
+      - localstack_data:/var/lib/localstack
+      - "/var/run/docker.sock:/var/run/docker.sock"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - audiobook-network
+
   # PostgreSQL Database
   db:
     image: postgres:15-alpine
@@ -48,7 +76,15 @@ services:
       - AUDIO_OUTPUT_FORMAT=${AUDIO_OUTPUT_FORMAT:-m4b}
       - AUDIO_BITRATE=${AUDIO_BITRATE:-128k}
       - TTS_FINE_TUNED_MODEL=${TTS_FINE_TUNED_MODEL:-}
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME:-audiobook-data}
+      - S3_ENDPOINT_URL=http://localstack:4566
+      - S3_USE_STORAGE=true
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
     depends_on:
+      localstack:
+        condition: service_healthy
       db:
         condition: service_healthy
     restart: unless-stopped
@@ -80,7 +116,15 @@ services:
       - AUDIO_OUTPUT_FORMAT=${AUDIO_OUTPUT_FORMAT:-m4b}
       - AUDIO_BITRATE=${AUDIO_BITRATE:-128k}
       - TTS_FINE_TUNED_MODEL=${TTS_FINE_TUNED_MODEL:-}
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME:-audiobook-data}
+      - S3_ENDPOINT_URL=http://localstack:4566
+      - S3_USE_STORAGE=true
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
     depends_on:
+      localstack:
+        condition: service_healthy
       db:
         condition: service_healthy
       web:
@@ -100,6 +144,8 @@ services:
 
 volumes:
   postgres_data:
+    driver: local
+  localstack_data:
     driver: local
 
 networks:

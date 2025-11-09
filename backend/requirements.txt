@@ -30,3 +30,7 @@ attrs>=23.2.0
 # Text Chunking
 chunkipy>=0.1.0
 
+# AWS S3 / LocalStack
+boto3>=1.28.0
+botocore>=1.31.0
+

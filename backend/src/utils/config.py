@@ -68,6 +68,14 @@ class Settings(BaseSettings):
     
     # Job Queue
     enable_background_processor: bool = True  # Enable/disable background job processing
+    
+    # S3 Storage Configuration
+    s3_bucket_name: str = "audiobook-data"  # S3 bucket name
+    s3_endpoint_url: Optional[str] = None  # Custom endpoint (e.g., http://localstack:4566 for LocalStack)
+    s3_access_key_id: Optional[str] = None  # AWS access key (uses AWS_ACCESS_KEY_ID env var if not set)
+    s3_secret_access_key: Optional[str] = None  # AWS secret key (uses AWS_SECRET_ACCESS_KEY env var if not set)
+    s3_region_name: str = "us-east-1"  # AWS region
+    s3_use_storage: bool = True  # Enable S3 storage (set to False to use local filesystem)
 
     class Config:
         """Pydantic config."""

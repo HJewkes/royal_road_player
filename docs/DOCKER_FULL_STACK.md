@@ -10,20 +10,21 @@ Complete Docker deployment with database, web service, and worker service.
 │  (FastAPI)  │
 └──────┬──────┘
        │
-       ├──────────────┐
-       │              │
-┌──────▼──────┐  ┌────▼──────┐
-│  PostgreSQL │  │  Worker   │
-│  Database   │  │  Service  │
-│  (Port 5432)│  │           │
-└─────────────┘  └───────────┘
+       ├──────────────┬──────────────┐
+       │              │              │
+┌──────▼──────┐  ┌────▼──────┐  ┌───▼────────┐
+│  PostgreSQL │  │  Worker   │  │ LocalStack │
+│  Database   │  │  Service  │  │  (S3)      │
+│  (Port 5432)│  │           │  │ (Port 4566)│
+└─────────────┘  └───────────┘  └────────────┘
 ```
 
 ## Services
 
-1. **db** - PostgreSQL 15 database
-2. **web** - FastAPI web service (handles API requests)
-3. **worker** - Background job processor (handles TTS generation)
+1. **localstack** - S3-compatible storage emulator (for development)
+2. **db** - PostgreSQL 15 database
+3. **web** - FastAPI web service (handles API requests)
+4. **worker** - Background job processor (handles TTS generation)
 
 ## Quick Start
 
@@ -76,9 +77,36 @@ AUDIO_BITRATE=128k
 # Worker Resources (optional)
 WORKER_CPUS=2
 WORKER_MEMORY=4G
+
+# S3 Storage (LocalStack for dev, AWS S3 for prod)
+S3_BUCKET_NAME=audiobook-data
+S3_ENDPOINT_URL=http://localstack:4566  # Leave empty for real AWS S3
+S3_USE_STORAGE=true  # Set to false to use local filesystem
+AWS_ACCESS_KEY_ID=test  # Use real AWS credentials for production
+AWS_SECRET_ACCESS_KEY=test  # Use real AWS credentials for production
+AWS_DEFAULT_REGION=us-east-1
 ```
 
 ## Service Details
+
+### LocalStack Service
+
+- **Image:** `localstack/localstack:latest`
+- **Port:** `4566` (S3 endpoint)
+- **Purpose:** S3-compatible storage emulator for development
+- **Volume:** `localstack_data` (persistent storage)
+- **Health Check:** Automatic LocalStack health check
+
+**Access LocalStack:**
+```bash
+# Health check
+curl http://localhost:4566/_localstack/health
+
+# List buckets (requires AWS CLI)
+aws --endpoint-url=http://localhost:4566 s3 ls
+```
+
+**Note:** For production, configure real AWS S3 by setting `S3_ENDPOINT_URL` to empty and providing real AWS credentials. See [LocalStack S3 Guide](LOCALSTACK_S3.md) for details.
 
 ### Database Service
 
@@ -159,7 +187,8 @@ worker:
 ### Volumes
 
 - **postgres_data** - Database data (persistent)
-- **./data** - Books, models, databases (mounted from host)
+- **localstack_data** - LocalStack S3 data (persistent)
+- **./data** - Books, models, databases (mounted from host, optional if using S3)
 - **./logs** - Application logs (mounted from host)
 
 ### Backup Database
@@ -176,9 +205,10 @@ docker-compose exec -T db psql -U audiobook audiobook < backup.sql
 
 All services are on the `audiobook-network` bridge network:
 
+- **localstack:** `localstack:4566` (internal S3 endpoint)
 - **db:** `db:5432` (internal)
 - **web:** `web:8000` (internal)
-- **worker:** Connects to `db` and `web`
+- **worker:** Connects to `localstack`, `db`, and `web`
 
 ## Health Checks
 
@@ -198,7 +228,41 @@ curl http://localhost:8000/health
 docker-compose logs worker | tail -20
 ```
 
+### LocalStack
+```bash
+curl http://localhost:4566/_localstack/health
+docker-compose logs localstack | tail -20
+```
+
 ## Troubleshooting
+
+### LocalStack S3 Issues
+
+```bash
+# Check LocalStack is running
+docker-compose ps localstack
+
+# Check LocalStack logs
+docker-compose logs localstack
+
+# Verify S3 endpoint is accessible
+curl http://localhost:4566/_localstack/health
+
+# Test S3 bucket creation (requires AWS CLI)
+aws --endpoint-url=http://localhost:4566 s3 ls
+
+# If bucket doesn't exist, create it manually
+aws --endpoint-url=http://localhost:4566 \
+    s3 mb s3://audiobook-data \
+    --region us-east-1
+```
+
+**Common Issues:**
+- **Bucket not found**: The bucket is auto-created on first use, but you can create it manually if needed
+- **Connection refused**: Ensure LocalStack service is healthy before starting web/worker services
+- **Permission denied**: LocalStack uses test credentials (`test`/`test`) by default
+
+See [LocalStack S3 Guide](LOCALSTACK_S3.md) for detailed troubleshooting.
 
 ### Database Connection Issues
 
