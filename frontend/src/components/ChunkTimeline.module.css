@@ -59,6 +59,26 @@
   box-shadow: 0 0 8px rgba(205, 133, 63, 0.6);
 }
 
+.chunkTimelineSegment.clickableChunk {
+  transition: opacity 0.2s, transform 0.2s;
+}
+
+.chunkTimelineSegment.clickableChunk:hover {
+  opacity: 1 !important;
+  transform: scaleY(1.05);
+  z-index: 8;
+  box-shadow: 0 0 4px rgba(107, 125, 142, 0.5);
+}
+
+.chunkIndexCell.clickableChunkIndex {
+  transition: background-color 0.2s, color 0.2s;
+}
+
+.chunkIndexCell.clickableChunkIndex:hover {
+  background-color: rgba(107, 125, 142, 0.2);
+  color: var(--color-text-primary);
+}
+
 .chunkTimelineGap {
   position: absolute;
   top: 0;
@@ -269,5 +289,59 @@
   color: white;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
   text-transform: capitalize;
+}
+
+.btnViewText {
+  background: rgba(107, 125, 142, 0.3);
+  backdrop-filter: blur(10px);
+  color: white;
+  border: 1px solid rgba(107, 125, 142, 0.5);
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.8em;
+  transition: all 0.3s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 4px;
+}
+
+.btnViewText:hover {
+  background: rgba(107, 125, 142, 0.5);
+  transform: translateY(-1px);
+}
+
+.chunkTextCell {
+  padding: 16px !important;
+  background: rgba(0, 0, 0, 0.2);
+  border-top: 2px solid rgba(107, 125, 142, 0.3);
+}
+
+.chunkTextContent {
+  max-width: 100%;
+}
+
+.chunkTextContent strong {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--color-text-primary);
+  font-size: 0.9em;
+}
+
+.chunkTextPre {
+  background: rgba(0, 0, 0, 0.3);
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--color-text-secondary);
+  font-family: 'Courier New', monospace;
+  font-size: 0.85em;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  max-height: 300px;
+  overflow-y: auto;
+  margin: 0;
 }
 

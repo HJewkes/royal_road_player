@@ -1,38 +1,13 @@
-"""Metrics collection and reporting infrastructure."""
+"""Metrics collector implementation."""
 
 import json
 import time
-from dataclasses import dataclass, asdict, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 from src.utils.config import get_settings
-
-
-@dataclass
-class ScraperMetrics:
-    """Metrics for web scraping operations."""
-
-    total_chapters: int = 0
-    successful_downloads: int = 0
-    failed_downloads: int = 0
-    total_bytes_downloaded: int = 0
-    total_time_seconds: float = 0.0
-    average_time_per_chapter: float = 0.0
-    text_extraction_accuracy: float = 0.0  # Percentage of clean text
-    errors: list[dict[str, Any]] = field(default_factory=list)
-
-    def to_dict(self) -> dict:
-        """Convert to dictionary."""
-        return asdict(self)
-
-    def calculate_averages(self):
-        """Calculate average metrics."""
-        if self.successful_downloads > 0:
-            self.average_time_per_chapter = (
-                self.total_time_seconds / self.successful_downloads
-            )
+from src.utils.metrics.scraper_metrics import ScraperMetrics
 
 
 class MetricsCollector:

@@ -47,7 +47,7 @@ function SeriesPanel({ book, onClose, onBookSelect }: SeriesPanelProps) {
 
   const downloadSeriesBook = async (bookUrl: string, bookNumber?: number): Promise<void> => {
     try {
-      const response = await fetch('/api/jobs/scrape', {
+      const response = await fetch('/api/books/download', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -56,15 +56,21 @@ function SeriesPanel({ book, onClose, onBookSelect }: SeriesPanelProps) {
         }),
       })
       if (!response.ok) {
-        const error = await response.json() as { detail?: string }
-        throw new Error(error.detail || 'Failed to start download')
+        const error = await response.json() as { detail?: string; error?: string }
+        throw new Error(error.detail || error.error || 'Failed to download book')
       }
-      const data = await response.json() as { job_id?: string }
+      const data = await response.json() as { status?: string; error?: string }
       
-      toast.success(`Download started! Job ID: ${data.job_id || 'unknown'}`)
+      if (data.status === 'error') {
+        throw new Error(data.error || 'Download failed')
+      }
+      
+      toast.success('Book downloaded successfully!')
+      // Reload series books to update status
+      void loadSeriesBooks()
     } catch (error) {
-      console.error('Failed to start download:', error)
-      toast.error(error instanceof Error ? error.message : 'Failed to start download')
+      console.error('Failed to download book:', error)
+      toast.error(error instanceof Error ? error.message : 'Failed to download book')
     }
   }
 

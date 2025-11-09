@@ -2,6 +2,7 @@
 
 import logging
 import time
+import wave
 from pathlib import Path
 from typing import List, Optional
 
@@ -41,9 +42,7 @@ class TTSController:
         chapter_number: int,
         chunk_index: int,
         speaker: Optional[str] = None,
-        language: Optional[str] = None,
         speed: Optional[float] = None,
-        emotion: Optional[str] = None,
     ) -> AudioGenerationResult:
         """
         Generate audio for a specific chunk.
@@ -52,10 +51,8 @@ class TTSController:
             book_id: Book identifier
             chapter_number: Chapter number
             chunk_index: Chunk index (1-based)
-            speaker: Optional speaker WAV file path
-            language: Optional language code
-            speed: Optional playback speed
-            emotion: Optional emotion parameter
+            speaker: Optional speaker WAV file path or voice name (overrides chunk metadata)
+            speed: Optional playback speed (0.5-2.0, default 1.0)
             
         Returns:
             Dictionary with generation results
@@ -102,10 +99,46 @@ class TTSController:
             logger.info("Loading TTS model...")
             self.engine.load_model()
         
-        # Use default speaker if none provided
-        if speaker is None and self._default_speaker:
-            speaker = self._default_speaker.speaker_wav
+        # Speaker: Resolve voice_name from chunk via registry, or use parameter/default
+        # Priority: chunk voice_name > speaker parameter (as voice name or path) > default
+        resolved_speaker = None
+        
+        if chunk.voice_name:
+            # Resolve voice name from registry
+            voice = self.voice_registry.get(chunk.voice_name)
+            if voice and voice.speaker_wav:
+                resolved_speaker = voice.speaker_wav
+                logger.info(f"Using voice from chunk: {chunk.voice_name}")
+            else:
+                logger.warning(f"Voice '{chunk.voice_name}' not found in registry")
+        
+        # If chunk didn't resolve, check speaker parameter
+        if resolved_speaker is None and speaker:
+            # Check if it's a voice name in the registry
+            voice = self.voice_registry.get(speaker)
+            if voice and voice.speaker_wav:
+                resolved_speaker = voice.speaker_wav
+                logger.info(f"Resolved speaker parameter as voice name: {voice.name}")
+            else:
+                # Treat as direct path (backward compatibility)
+                resolved_speaker = speaker
+        
+        # Use default if no speaker resolved yet
+        if resolved_speaker is None and self._default_speaker:
+            resolved_speaker = self._default_speaker.speaker_wav
             logger.info(f"Using default speaker: {self._default_speaker.name}")
+        
+        speaker = resolved_speaker
+        
+        # Speed: chunk > parameter > settings
+        synth_speed = speed
+        if chunk.speed is not None:
+            synth_speed = chunk.speed
+        elif synth_speed is None:
+            synth_speed = self.settings.tts_speed
+        
+        # Language is always English
+        synth_language = "en"
         
         # Get audio output path
         audio_path = chunk.audio_path
@@ -124,15 +157,26 @@ class TTSController:
                 output_path=audio_path,
                 annotations=None,
                 speaker=speaker,
-                language=language or self.settings.tts_language,
-                speed=speed or self.settings.tts_speed,
-                emotion=emotion or self.settings.tts_emotion,
+                language=synth_language,
+                speed=synth_speed,
             )
             
             generation_time = time.time() - start_time
             
+            # Calculate audio duration from the generated WAV file
+            audio_duration = None
+            if generated_path and Path(generated_path).exists():
+                try:
+                    with wave.open(str(generated_path), 'rb') as wav_file:
+                        n_frames = wav_file.getnframes()
+                        framerate = wav_file.getframerate()
+                        audio_duration = n_frames / framerate if framerate > 0 else None
+                        logger.debug(f"Chunk {chunk_index} audio duration: {audio_duration:.2f}s")
+                except Exception as e:
+                    logger.warning(f"Failed to read audio duration for chunk {chunk_index}: {e}")
+            
             # Update chunk status to completed
-            # Note: We need to update the chunk with generation_time_seconds
+            # Note: We need to update the chunk with generation_time_seconds and audio_duration_seconds
             # Since models are frozen, we need to create a new instance
             completed_chunk = Chunk(
                 index=chunk.index,
@@ -143,9 +187,15 @@ class TTSController:
                 chapter_id=chunk.chapter_id,
                 path=chunk.path,
                 generation_time_seconds=generation_time,
-                flagged=chunk.flagged,
+                audio_duration_seconds=audio_duration,
+                voice_name=chunk.voice_name,
+                speed=chunk.speed,
+                pre_pause_ms=chunk.pre_pause_ms,
+                post_pause_ms=chunk.post_pause_ms,
+                is_dialogue=chunk.is_dialogue,
+                is_scene_break=chunk.is_scene_break,
             )
-            self.sync.save_chunk(completed_chunk)
+            self.sync.save_chunk(completed_chunk, chapter_number)
             
             logger.info(f"✅ Generated audio for chunk {chunk_index}: {generated_path}")
             
@@ -173,9 +223,7 @@ class TTSController:
         chapter_number: int,
         chunk_indices: Optional[List[int]] = None,
         speaker: Optional[str] = None,
-        language: Optional[str] = None,
         speed: Optional[float] = None,
-        emotion: Optional[str] = None,
     ) -> ChapterAudioGenerationResult:
         """
         Generate audio for multiple chunks in a chapter.
@@ -184,10 +232,8 @@ class TTSController:
             book_id: Book identifier
             chapter_number: Chapter number
             chunk_indices: Optional list of chunk indices to generate (defaults to all pending chunks)
-            speaker: Optional speaker WAV file path
-            language: Optional language code
-            speed: Optional playback speed
-            emotion: Optional emotion parameter
+            speaker: Optional speaker WAV file path or voice name (overrides chunk metadata)
+            speed: Optional playback speed (0.5-2.0, default 1.0)
             
         Returns:
             Dictionary with generation results
@@ -231,9 +277,7 @@ class TTSController:
                     chapter_number=chapter_number,
                     chunk_index=chunk_index,
                     speaker=speaker,
-                    language=language,
                     speed=speed,
-                    emotion=emotion,
                 )
                 chunk_results.append(result)
                 if result.skipped:

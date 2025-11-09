@@ -52,13 +52,14 @@ class ChapterController:
         """
         return self.sync.load_chunks(book_id, chapter_number)
     
-    def get_chapter_stats(self, book_id: str, chapter_number: int) -> Optional[ChapterStats]:
+    def get_chapter_stats(self, book_id: str, chapter_number: int, lightweight: bool = False) -> Optional[ChapterStats]:
         """
         Get statistics for a chapter.
         
         Args:
             book_id: Book identifier
             chapter_number: Chapter number
+            lightweight: If True, use fast metadata-only counting (doesn't load full chunk objects)
             
         Returns:
             ChapterStats object or None if chapter not found
@@ -67,14 +68,27 @@ class ChapterController:
         if chapter is None:
             return None
         
-        chunks = self.get_chunks(book_id, chapter_number)
+        # Use database for fast stats (much faster than reading files)
+        from src.data.db_repository import ChunkRepository
+        from src.models.enums import ChunkStatus
         
-        # Compute statistics
-        total_chunks = len(chunks)
-        completed_chunks = sum(1 for ch in chunks if ch.is_completed)
-        pending_chunks = sum(1 for ch in chunks if ch.is_pending)
-        failed_chunks = sum(1 for ch in chunks if ch.is_failed)
-        flagged_chunks = sum(1 for ch in chunks if ch.is_flagged)
+        # Get chunk counts from database (fast aggregation queries)
+        total_chunks = chapter.chunk_count  # From chapter metadata
+        completed_chunks = ChunkRepository.count_by_status(
+            book_id=book_id,
+            chapter_number=chapter_number,
+            status=ChunkStatus.COMPLETED
+        )
+        pending_chunks = ChunkRepository.count_by_status(
+            book_id=book_id,
+            chapter_number=chapter_number,
+            status=ChunkStatus.PENDING
+        )
+        failed_chunks = ChunkRepository.count_by_status(
+            book_id=book_id,
+            chapter_number=chapter_number,
+            status=ChunkStatus.FAILED
+        )
         
         return ChapterStats(
             book_id=book_id,
@@ -90,7 +104,95 @@ class ChapterController:
             completed_chunks=completed_chunks,
             pending_chunks=pending_chunks,
             failed_chunks=failed_chunks,
-            flagged_chunks=flagged_chunks,
+        )
+    
+    def _get_chapter_stats_fast(self, book_id: str, chapter_number: int, chapter: Chapter) -> Optional[ChapterStats]:
+        """
+        Fast method to get chapter stats by reading metadata files only.
+        
+        Args:
+            book_id: Book identifier
+            chapter_number: Chapter number
+            chapter: Chapter object
+            
+        Returns:
+            ChapterStats object or None if unable to compute
+        """
+        import json
+        from pathlib import Path
+        
+        if chapter.path is None:
+            return None
+        
+        chunks_dir = Path(chapter.path) / "chunks"
+        if not chunks_dir.exists():
+            return ChapterStats(
+                book_id=book_id,
+                chapter_number=chapter_number,
+                title=chapter.title,
+                has_text=chapter.has_text,
+                word_count=chapter.word_count,
+                text_size=chapter.text_size,
+                is_chunked=chapter.is_chunked,
+                chunk_count=chapter.chunk_count,
+                has_audio=chapter.has_audio,
+                total_chunks=0,
+                completed_chunks=0,
+                pending_chunks=0,
+                failed_chunks=0,
+            )
+        
+        total_chunks = 0
+        completed_chunks = 0
+        pending_chunks = 0
+        failed_chunks = 0
+        
+        # Iterate through chunk directories
+        for chunk_dir in chunks_dir.iterdir():
+            if not chunk_dir.is_dir() or not chunk_dir.name.isdigit():
+                continue
+            
+            total_chunks += 1
+            metadata_path = chunk_dir / "metadata.json"
+            
+            if not metadata_path.exists():
+                pending_chunks += 1
+                continue
+            
+            try:
+                with open(metadata_path, 'r', encoding='utf-8') as f:
+                    metadata = json.load(f)
+                
+                status = metadata.get('status', 'pending')
+                audio_file = chunk_dir / "audio.wav"
+                
+                if status == 'completed' and audio_file.exists():
+                    completed_chunks += 1
+                elif status == 'pending':
+                    pending_chunks += 1
+                elif status == 'failed':
+                    failed_chunks += 1
+                else:
+                    # Unknown status, count as pending
+                    pending_chunks += 1
+            except Exception:
+                # Invalid metadata, count as pending
+                pending_chunks += 1
+        
+        return ChapterStats(
+            book_id=book_id,
+            chapter_number=chapter_number,
+            title=chapter.title,
+            has_text=chapter.has_text,
+            word_count=chapter.word_count,
+            text_size=chapter.text_size,
+            is_chunked=chapter.is_chunked,
+            chunk_count=chapter.chunk_count,
+            has_audio=chapter.has_audio,
+            total_chunks=total_chunks,
+            completed_chunks=completed_chunks,
+            pending_chunks=pending_chunks,
+            failed_chunks=failed_chunks,
         )
     
     def save_chapter(self, chapter: Chapter) -> None:

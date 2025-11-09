@@ -1,17 +1,48 @@
 """FastAPI web application."""
 
 import os
+import asyncio
+import uvicorn
+from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI, Request
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 from src.utils.config import get_settings
 from src.web.routes import router
+from src.services.job_queue import get_queue
+from src.data.database import init_db
 
-app = FastAPI(title="Audiobook System", version="0.1.0")
 settings = get_settings()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Manage application lifespan - start/stop background services."""
+    # Startup: Initialize database
+    init_db()
+    print("✅ Database initialized")
+    
+    # Startup: Start background processor
+    queue = get_queue()
+    queue.start_background_processor(interval_seconds=1.0)
+    print("✅ Background job processor started (logs: logs/queue_processor.log)")
+    
+    yield
+    
+    # Shutdown: Stop background processor
+    if queue._processor_task and not queue._processor_task.done():
+        queue._processor_task.cancel()
+        try:
+            await queue._processor_task
+        except asyncio.CancelledError:
+            pass
+        print("✅ Background job processor stopped")
+
+
+app = FastAPI(title="Audiobook System", version="0.1.0", lifespan=lifespan)
 
 # CORS middleware for development (React dev server)
 app.add_middleware(
@@ -95,8 +126,6 @@ async def health():
 
 
 if __name__ == "__main__":
-    import uvicorn
-
     uvicorn.run(
         "src.web.app:app",
         host=settings.web_host,

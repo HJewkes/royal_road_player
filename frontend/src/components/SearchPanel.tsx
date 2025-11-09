@@ -58,18 +58,22 @@ function SearchPanel({ onBookAdded }: SearchPanelProps) {
 
   const addBookToQueue = async (bookUrl: string): Promise<void> => {
     try {
-      const response = await fetch('/api/jobs/scrape', {
+      const response = await fetch('/api/books/download', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ book_url: bookUrl }),
       })
       if (!response.ok) {
-        const error = await response.json() as { detail?: string }
-        throw new Error(error.detail || 'Failed to add book to queue')
+        const error = await response.json() as { detail?: string; error?: string }
+        throw new Error(error.detail || error.error || 'Failed to download book')
       }
-      const data = await response.json() as { job_id?: string }
+      const data = await response.json() as { status?: string; error?: string }
 
-      toast.success(`Book added to scraping queue! Job ID: ${data.job_id || 'unknown'}`)
+      if (data.status === 'error') {
+        throw new Error(data.error || 'Download failed')
+      }
+
+      toast.success('Book downloaded successfully!')
 
       // Clear search results
       setShowResults(false)
@@ -79,8 +83,8 @@ function SearchPanel({ onBookAdded }: SearchPanelProps) {
       // Reload books
       onBookAdded()
     } catch (error) {
-      console.error('Failed to add book to queue:', error)
-      toast.error(error instanceof Error ? error.message : 'Failed to add book to queue')
+      console.error('Failed to download book:', error)
+      toast.error(error instanceof Error ? error.message : 'Failed to download book')
     }
   }
 

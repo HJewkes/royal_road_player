@@ -80,12 +80,6 @@
   transition: all 0.3s ease;
 }
 
-.chunkItem.flagged {
-  border-color: rgba(255, 152, 0, 0.5);
-  background: rgba(255, 152, 0, 0.1);
-  box-shadow: 0 0 20px rgba(255, 152, 0, 0.2);
-}
-
 .chunkInfo {
   flex: 1;
 }
@@ -127,44 +121,6 @@
     0 6px 16px rgba(205, 133, 63, 0.3),
     inset 0 1px 0 rgba(255, 255, 255, 0.2);
   transform: translateY(-2px);
-}
-
-.btnFlag {
-  background: rgba(255, 152, 0, 0.3);
-  backdrop-filter: blur(10px);
-  color: white;
-  border: 1px solid rgba(255, 152, 0, 0.5);
-  padding: 6px 12px;
-  border-radius: 12px;
-  cursor: pointer;
-  font-size: 0.85em;
-  transition: all 0.3s ease;
-  box-shadow: 
-    0 4px 12px rgba(0, 0, 0, 0.2),
-    inset 0 1px 0 rgba(255, 255, 255, 0.1);
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.btnFlag:hover {
-  background: rgba(255, 152, 0, 0.5);
-  box-shadow: 
-    0 6px 16px rgba(255, 152, 0, 0.3),
-    inset 0 1px 0 rgba(255, 255, 255, 0.2);
-  transform: translateY(-2px);
-}
-
-.btnFlag.flagged {
-  background: rgba(76, 175, 80, 0.3);
-  border-color: rgba(76, 175, 80, 0.5);
-}
-
-.btnFlag.flagged:hover {
-  background: rgba(76, 175, 80, 0.5);
-  box-shadow: 
-    0 6px 16px rgba(76, 175, 80, 0.3),
-    inset 0 1px 0 rgba(255, 255, 255, 0.2);
 }
 
 .btnGenerate {

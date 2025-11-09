@@ -85,51 +85,13 @@ class ChunkController:
         """
         return self.sync.update_chunk_status(book_id, chapter_number, chunk_index, status)
     
-    def flag_chunk(
-        self,
-        book_id: str,
-        chapter_number: int,
-        chunk_index: int,
-        flagged: bool = True
-    ) -> Optional[Chunk]:
+    def save_chunk(self, chunk: Chunk, chapter_number: Optional[int] = None) -> None:
         """
-        Flag or unflag a chunk for reprocessing.
-        
-        Args:
-            book_id: Book identifier
-            chapter_number: Chapter number
-            chunk_index: Chunk index (1-based)
-            flagged: Whether to flag (True) or unflag (False)
-            
-        Returns:
-            Updated Chunk instance or None if not found
-        """
-        chunk = self.get_chunk(book_id, chapter_number, chunk_index)
-        if chunk is None:
-            return None
-        
-        # Create updated chunk with flagged status (models are frozen)
-        updated_chunk = Chunk(
-            index=chunk.index,
-            book_id=chunk.book_id,
-            text_start=chunk.text_start,
-            text_end=chunk.text_end,
-            status=chunk.status,
-            chapter_id=chunk.chapter_id,
-            path=chunk.path,
-            generation_time_seconds=chunk.generation_time_seconds,
-            flagged=flagged,
-        )
-        
-        self.sync.save_chunk(updated_chunk)
-        return updated_chunk
-    
-    def save_chunk(self, chunk: Chunk) -> None:
-        """
-        Save chunk to filesystem.
+        Save chunk to database and filesystem.
         
         Args:
             chunk: Chunk instance to save
+            chapter_number: Chapter number (extracted from chunk.chapter_id if not provided)
         """
-        self.sync.save_chunk(chunk)
+        self.sync.save_chunk(chunk, chapter_number)
 

@@ -17,45 +17,53 @@ The project is organized with clear separation between Python backend and TypeSc
 audiobook/
 ├── backend/                 # Python backend
 │   ├── src/                # Python source code
-│   │   ├── scraper/        # Web scraping modules
-│   │   ├── tts/            # Text-to-speech engine
-│   │   ├── llm/            # LLM annotation modules
-│   │   ├── services/       # Business logic services
-│   │   ├── utils/          # Utility functions
-│   │   └── web/            # FastAPI backend
-│   │       ├── app.py      # FastAPI application
-│   │       ├── routes.py   # API routes
-│   │       ├── database.py # Database setup
-│   │       ├── jobs.py     # Background job management
-│   │       └── models.py   # Data models
-│   ├── tests/              # Test code (mirrors src/)
-│   ├── requirements.txt    # Python production dependencies
+│   │   ├── controllers/    # Business logic controllers
+│   │   ├── data/           # Data persistence layer
+│   │   ├── llm/           # LLM annotation modules
+│   │   ├── models/         # Data models
+│   │   ├── scraper/       # Web scraping modules
+│   │   ├── services/       # Service layer (uses controllers)
+│   │   ├── text_processing/ # Text processing pipeline
+│   │   ├── tts/           # Text-to-speech engine
+│   │   ├── utils/         # Utility functions
+│   │   └── web/           # FastAPI backend
+│   │       ├── app.py     # FastAPI application
+│   │       ├── routes.py  # API routes
+│   │       └── models/    # Request/response models
+│   ├── tests/             # Test code (mirrors src/)
+│   ├── requirements.txt   # Python production dependencies
 │   ├── requirements-dev.txt # Python dev dependencies
-│   ├── pytest.ini          # Test configuration
-│   └── README.md           # Backend documentation
+│   ├── pytest.ini         # Test configuration
+│   └── README.md          # Backend documentation
 │
-├── frontend/               # TypeScript/React frontend
+├── frontend/              # TypeScript/React frontend
 │   ├── src/
-│   │   ├── components/     # React components (.tsx)
-│   │   ├── store/          # Zustand state stores (.ts)
-│   │   ├── styles/         # CSS modules and global styles
-│   │   ├── types/          # TypeScript type definitions
-│   │   ├── App.tsx         # Main app component
-│   │   └── main.tsx        # Entry point
-│   ├── dist/               # Built frontend (generated, gitignored)
-│   ├── package.json        # Node.js dependencies
-│   ├── tsconfig.json       # TypeScript configuration
-│   ├── vite.config.ts      # Vite build configuration
-│   ├── index.html          # HTML entry point
-│   └── README.md           # Frontend documentation
+│   │   ├── components/    # React components (.tsx)
+│   │   ├── store/         # Zustand state stores (.ts)
+│   │   ├── styles/        # CSS modules and global styles
+│   │   ├── types/         # TypeScript type definitions
+│   │   ├── App.tsx        # Main app component
+│   │   └── main.tsx       # Entry point
+│   ├── dist/              # Built frontend (generated, gitignored)
+│   ├── package.json       # Node.js dependencies
+│   ├── tsconfig.json      # TypeScript configuration
+│   ├── vite.config.ts     # Vite build configuration
+│   ├── index.html         # HTML entry point
+│   └── README.md          # Frontend documentation
 │
-├── scripts/                 # Utility scripts
-├── data/                    # Runtime data (gitignored)
-├── logs/                    # Application logs (gitignored)
-├── docs/                    # Documentation
+├── scripts/               # Utility scripts
+├── data/                  # Runtime data (gitignored)
+│   ├── books/            # Book data
+│   ├── checkpoints/      # Checkpoint files
+│   ├── metrics/          # Metrics reports
+│   └── voices/           # Voice registry configs
+├── logs/                  # Application logs (gitignored)
+├── docs/                  # Documentation
 │
-├── Makefile                # Build automation
-└── .env                    # Environment variables
+├── Makefile              # Build automation
+├── SETUP.md              # Setup instructions
+├── README.md             # Main project documentation
+└── .env                  # Environment variables (gitignored)
 ```
 
 ## Language Separation
@@ -63,12 +71,15 @@ audiobook/
 ### Python Backend (`backend/`)
 
 All Python code lives in `backend/`:
-- **Source Code**: `backend/src/` - All Python modules
-  - **Scraper**: `backend/src/scraper/` - Web scraping logic
-  - **TTS**: `backend/src/tts/` - Text-to-speech engine
-  - **Services**: `backend/src/services/` - Business logic layer
-  - **Web API**: `backend/src/web/` - FastAPI application
-  - **Utils**: `backend/src/utils/` - Shared utilities
+- **Controllers**: `backend/src/controllers/` - Business logic operations
+- **Data Layer**: `backend/src/data/` - Persistence (DataSynchronizer)
+- **Models**: `backend/src/models/` - Data models with accessors
+- **Scraper**: `backend/src/scraper/` - Web scraping logic
+- **TTS**: `backend/src/tts/` - Text-to-speech engine (XTTS v2)
+- **Text Processing**: `backend/src/text_processing/` - Text normalization, chunking, segmentation
+- **Services**: `backend/src/services/` - Service layer (uses controllers)
+- **Web API**: `backend/src/web/` - FastAPI application
+- **Utils**: `backend/src/utils/` - Shared utilities
 - **Tests**: `backend/tests/` - Test code (mirrors src/)
 
 **Configuration Files:**
@@ -89,7 +100,6 @@ All TypeScript/React code lives in `frontend/`:
 - `frontend/package.json` - Node.js dependencies
 - `frontend/tsconfig.json` - TypeScript configuration
 - `frontend/vite.config.ts` - Build configuration
-- `frontend/.eslintrc.cjs` - ESLint configuration
 
 ## Build Process
 
@@ -141,14 +151,6 @@ make dev         # Start FastAPI with auto-reload
 2. **Build Output**: Frontend builds to `frontend/dist/` which FastAPI serves
 3. **Configuration**: Each language has its own config files in its directory
 4. **Makefile**: Centralized build automation that handles both languages
-
-## Migration Notes
-
-This structure was migrated from a mixed structure where TypeScript files were in `src/` alongside Python files. The migration:
-- Moved all `.tsx`, `.ts`, `.css` files to `frontend/src/`
-- Moved `package.json`, `tsconfig.json`, `vite.config.ts`, `index.html` to `frontend/`
-- Updated `vite.config.ts` to build to `dist/` (within frontend/)
-- Updated `Makefile` to run npm commands from `frontend/`
-- Updated `.gitignore` to ignore `frontend/node_modules/`
-- Updated documentation to reflect new structure
-
+5. **Controllers Pattern**: Business logic separated into single-responsibility controllers
+6. **Models with Accessors**: Models contain data + computed properties
+7. **Data Synchronizer**: Centralized persistence layer

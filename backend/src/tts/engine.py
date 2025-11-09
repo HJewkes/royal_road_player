@@ -1,6 +1,8 @@
-"""TTS engine wrapper."""
+"""XTTS v2 TTS engine implementation."""
 
 import logging
+import os
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -8,78 +10,108 @@ from src.utils.config import get_settings
 
 logger = logging.getLogger(__name__)
 
+# Enable MPS fallback to CPU for unsupported operations (prevents warnings)
+# This allows PyTorch to automatically fall back to CPU when MPS has limitations
+os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+
 
 class TTSEngine:
-    """Base class for TTS engines."""
+    """XTTS v2 TTS engine."""
 
     def __init__(self):
         """Initialize TTS engine."""
         self.settings = get_settings()
-        self._model = None
-        self._loaded = False
-
-    def load_model(self) -> None:
-        """Load TTS model."""
-        raise NotImplementedError("Subclass must implement load_model")
-
-    def synthesize(
-        self,
-        text: str,
-        output_path: Path,
-        annotations: Optional[list] = None,
-        **kwargs,
-    ) -> Path:
-        """
-        Synthesize text to speech.
-
-        Args:
-            text: Text to synthesize
-            output_path: Path to save audio file
-            annotations: Optional list of annotations for prosody control
-            **kwargs: Additional engine-specific parameters
-
-        Returns:
-            Path to generated audio file
-        """
-        raise NotImplementedError("Subclass must implement synthesize")
-
-    def is_loaded(self) -> bool:
-        """Check if model is loaded."""
-        return self._loaded
-
-
-class CoquiTTSEngine(TTSEngine):
-    """Coqui TTS engine implementation using XTTS v2."""
-
-    def __init__(self):
-        """Initialize Coqui TTS engine."""
-        super().__init__()
         self._tts = None
+        self._loaded = False
+        
+        # Set CPU thread count if specified
+        if self.settings.tts_num_threads is not None:
+            try:
+                import torch
+                torch.set_num_threads(self.settings.tts_num_threads)
+                logger.info(f"Set PyTorch thread count to {self.settings.tts_num_threads}")
+            except Exception as e:
+                logger.warning(f"Failed to set thread count: {e}")
 
     def load_model(self) -> None:
-        """Load Coqui TTS model."""
+        """Load XTTS v2 model."""
         if self._loaded:
-            logger.info("Coqui TTS model already loaded")
+            logger.info("TTS model already loaded")
             return
 
         try:
             from TTS.api import TTS
 
-            logger.info(f"Loading Coqui TTS model: {self.settings.tts_model}")
+            logger.info(f"Loading XTTS v2 model: {self.settings.tts_model}")
             logger.info("This may take a few minutes on first run as the model downloads...")
 
+            # Check for GPU/MPS availability and determine device
+            use_gpu = self.settings.tts_gpu
+            device = None
+            
+            if use_gpu:
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        device = "cuda"
+                        logger.info("✅ CUDA GPU detected - using GPU acceleration")
+                    elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+                        device = "mps"
+                        logger.info("✅ Apple Silicon MPS detected - using GPU acceleration")
+                    else:
+                        logger.warning("TTS_GPU=true but no GPU/MPS available, falling back to CPU")
+                        device = "cpu"
+                except Exception as e:
+                    logger.warning(f"Error checking GPU availability: {e}, using CPU")
+                    device = "cpu"
+            else:
+                device = "cpu"
+                logger.info("Using CPU mode (set TTS_GPU=true in .env to enable GPU/MPS)")
+
             # Initialize TTS with the specified model
-            self._tts = TTS(model_name=self.settings.tts_model, progress_bar=True)
+            # Note: gpu parameter is deprecated, use device parameter instead
+            self._tts = TTS(
+                model_name=self.settings.tts_model,
+                gpu=False,  # Set to False, we'll use .to(device) instead
+                progress_bar=True
+            )
+            
+            # Move model to appropriate device
+            if device and device != "cpu":
+                try:
+                    self._tts.to(device)
+                    logger.info(f"✅ Moved TTS model to {device.upper()} device")
+                except Exception as e:
+                    error_msg = str(e)
+                    # Check for MPS channel limit error - common on Apple Silicon
+                    if "mps" in device.lower() and ("65536" in error_msg or "channels" in error_msg.lower()):
+                        logger.warning(
+                            f"MPS device error detected: {error_msg}. "
+                            "This is a known MPS limitation. Falling back to CPU."
+                        )
+                    else:
+                        logger.warning(f"Failed to move model to {device}: {e}, using CPU")
+                    device = "cpu"
+                    # Try moving to CPU
+                    try:
+                        self._tts.to("cpu")
+                        logger.info("✅ Moved TTS model to CPU device")
+                    except Exception as cpu_error:
+                        logger.error(f"Failed to move model to CPU: {cpu_error}")
+                        raise
+            
             self._model = self._tts
+            self._device = device
             self._loaded = True
 
-            logger.info("✅ Coqui TTS model loaded successfully")
+            device_info = device.upper() if device else "CPU"
+            logger.info(f"✅ XTTS v2 model loaded successfully on {device_info}")
         except ImportError:
             raise ImportError(
                 "Coqui TTS not installed. Run: make install-tts or pip install TTS>=0.22.0"
             )
         except Exception as e:
-            logger.error(f"Failed to load Coqui TTS model: {e}")
+            logger.error(f"Failed to load TTS model: {e}")
             raise
 
     def synthesize(
@@ -88,21 +120,19 @@ class CoquiTTSEngine(TTSEngine):
         output_path: Path,
         annotations: Optional[list] = None,
         speaker: Optional[str] = None,
-        language: Optional[str] = None,
+        language: Optional[str] = None,  # Kept for API compatibility, but always "en"
         speed: Optional[float] = None,
-        emotion: Optional[str] = None,
     ) -> Path:
         """
-        Synthesize using Coqui TTS.
+        Synthesize text to speech using XTTS v2.
 
         Args:
             text: Text to synthesize
             output_path: Path to save audio file
             annotations: Optional list of annotations (not yet implemented)
-            speaker: Speaker reference for XTTS v2 (overrides config)
-            language: Language code (overrides config)
+            speaker: Speaker reference WAV file path (overrides config)
+            language: Language code (ignored, always "en")
             speed: Speech speed multiplier (overrides config)
-            emotion: Emotion for XTTS v2 (overrides config)
 
         Returns:
             Path to generated audio file
@@ -115,80 +145,71 @@ class CoquiTTSEngine(TTSEngine):
 
         # Use provided parameters or fall back to config
         speaker = speaker or self.settings.tts_speaker
-        language = language or self.settings.tts_language
         speed = speed if speed is not None else self.settings.tts_speed
-        emotion = emotion or self.settings.tts_emotion
+        # Language is always English
+        language = "en"
 
         try:
             logger.info(f"Generating audio: {output_path.name}")
             logger.info(f"Text length: {len(text)} characters")
             
             # Estimate time (rough: ~50-100 chars/sec on CPU, ~200-500 chars/sec on GPU)
-            # This is just a rough estimate for user feedback
             estimated_chars_per_sec = 100  # Conservative CPU estimate
             estimated_time = len(text) / estimated_chars_per_sec
             logger.info(f"Estimated generation time: ~{estimated_time/60:.1f} minutes (rough estimate)")
 
-            # XTTS v2 specific parameters
-            if "xtts" in self.settings.tts_model.lower():
-                # XTTS v2 requires speaker_wav for voice cloning
-                # If no speaker provided, we need to handle this
-                kwargs = {
-                    "text": text,
-                    "file_path": str(output_path),
-                    "language": language,
-                }
+            # XTTS v2 parameters
+            kwargs = {
+                "text": text,
+                "file_path": str(output_path),
+                "language": language,  # Always English
+            }
 
-                # XTTS v2 requires speaker_wav - must provide reference audio
-                if speaker:
-                    kwargs["speaker_wav"] = speaker  # Path to reference audio file
-                else:
-                    # XTTS v2 doesn't have default speakers like VCTK
-                    # We need a reference audio file for voice cloning
-                    raise ValueError(
-                        "XTTS v2 requires a speaker_wav parameter (reference audio file) for voice cloning. "
-                        "Please provide a reference audio file with the --speaker parameter, or use a different model."
-                    )
-                
-                # XTTS v2 may support speed and emotion, but API varies by version
-                # Try to add them if the model supports them
-                try:
-                    if speed != 1.0:
-                        kwargs["speed"] = speed
-                    if emotion:
-                        kwargs["emotion"] = emotion
-                except TypeError:
-                    # Model doesn't support these parameters, skip them
-                    pass
-
-                # Track progress for long texts
-                import time
-                start_time = time.time()
-                self._tts.tts_to_file(**kwargs)
-                elapsed = time.time() - start_time
-                logger.info(f"Generation completed in {elapsed/60:.2f} minutes ({len(text)/elapsed:.1f} chars/sec)")
+            # XTTS v2 requires speaker_wav - must provide reference audio
+            if speaker:
+                kwargs["speaker_wav"] = speaker  # Path to reference audio file
             else:
-                # For other Coqui models, use standard synthesis
-                # Check if model is multi-speaker
-                if hasattr(self._tts, 'speakers') and self._tts.speakers:
-                    # Multi-speaker model - use first speaker as default if none provided
-                    if not speaker:
-                        speaker = self._tts.speakers[0]
-                        logger.info(f"Using default speaker: {speaker}")
-                    
-                    # Track progress for long texts
-                    import time
-                    start_time = time.time()
-                    self._tts.tts_to_file(text=text, file_path=str(output_path), speaker=speaker)
-                    elapsed = time.time() - start_time
-                    logger.info(f"Generation completed in {elapsed/60:.2f} minutes ({len(text)/elapsed:.1f} chars/sec)")
+                raise ValueError(
+                    "XTTS v2 requires a speaker_wav parameter (reference audio file) for voice cloning. "
+                    "Please provide a reference audio file."
+                )
+            
+            # XTTS v2 supports speed parameter
+            if speed != 1.0:
+                kwargs["speed"] = speed
+
+            # Track progress for long texts
+            start_time = time.time()
+            
+            # Try synthesis - if MPS fails, retry with CPU
+            try:
+                self._tts.tts_to_file(**kwargs)
+            except Exception as synthesis_error:
+                error_msg = str(synthesis_error)
+                # Check for MPS channel limit error - retry with CPU
+                if (self._device and "mps" in self._device.lower() and 
+                    ("65536" in error_msg or "channels" in error_msg.lower() or "MPS" in error_msg)):
+                    logger.warning(
+                        f"MPS synthesis error: {error_msg}. "
+                        "Retrying with CPU (MPS has channel limitations)."
+                    )
+                    # Move to CPU and retry
+                    try:
+                        self._tts.to("cpu")
+                        self._device = "cpu"
+                        logger.info("Moved TTS model to CPU for retry")
+                        # Retry synthesis on CPU
+                        self._tts.tts_to_file(**kwargs)
+                        logger.info("✅ Synthesis succeeded on CPU after MPS failure")
+                    except Exception as cpu_error:
+                        logger.error(f"CPU retry also failed: {cpu_error}")
+                        raise synthesis_error  # Raise original error
                 else:
-                    # Single-speaker model
-                    import time
-                    start_time = time.time()
-                    self._tts.tts_to_file(text=text, file_path=str(output_path))
-                    elapsed = time.time() - start_time
-                    logger.info(f"Generation completed in {elapsed/60:.2f} minutes ({len(text)/elapsed:.1f} chars/sec)")
+                    # Not an MPS error, or CPU retry failed - raise original error
+                    raise
+            
+            elapsed = time.time() - start_time
+            logger.info(f"Generation completed in {elapsed/60:.2f} minutes ({len(text)/elapsed:.1f} chars/sec)")
 
             logger.info(f"✅ Audio generated: {output_path}")
             return output_path
@@ -197,38 +218,23 @@ class CoquiTTSEngine(TTSEngine):
             logger.error(f"Failed to synthesize audio: {e}")
             raise
 
+    def is_loaded(self) -> bool:
+        """Check if model is loaded."""
+        return self._loaded
 
-class PiperTTSEngine(TTSEngine):
-    """Piper TTS engine implementation."""
 
-    def load_model(self) -> None:
-        """Load Piper TTS model."""
-        # TODO: Implement Piper TTS model loading
-        raise NotImplementedError("Piper TTS not yet implemented")
-
-    def synthesize(
-        self,
-        text: str,
-        output_path: Path,
-        annotations: Optional[list] = None,
-        **kwargs,
-    ) -> Path:
-        """Synthesize using Piper TTS."""
-        # TODO: Implement Piper TTS synthesis
-        raise NotImplementedError("Piper TTS synthesis not yet implemented")
-
+# Singleton instance to prevent multiple model loads
+_tts_engine_instance: Optional[TTSEngine] = None
 
 def get_tts_engine() -> TTSEngine:
     """
-    Get TTS engine based on configuration.
-
+    Get TTS engine instance (singleton).
+    
     Returns:
-        Configured TTS engine instance
+        TTSEngine instance (reused across calls to prevent multiple model loads)
     """
-    settings = get_settings()
-    if settings.tts_engine.lower() == "coqui":
-        return CoquiTTSEngine()
-    elif settings.tts_engine.lower() == "piper":
-        return PiperTTSEngine()
-    else:
-        raise ValueError(f"Unknown TTS engine: {settings.tts_engine}")
+    global _tts_engine_instance
+    if _tts_engine_instance is None:
+        _tts_engine_instance = TTSEngine()
+        logger.info("Created new TTS engine instance (singleton)")
+    return _tts_engine_instance

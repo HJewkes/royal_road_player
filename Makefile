@@ -190,13 +190,26 @@ dev-all: ## Start both backend and frontend dev servers concurrently
 	@if ! command -v npm > /dev/null 2>&1; then \
 		echo "❌ npm not found. Please install Node.js." && exit 1; \
 	fi
+	@echo "🧹 Cleaning up any existing dev processes..."
+	@pkill -f "uvicorn src.web.app:app" 2>/dev/null || true
+	@pkill -f "vite" 2>/dev/null || true
+	@pkill -f "npm run dev" 2>/dev/null || true
+	@sleep 1
 	@echo "📡 Backend will be available at http://localhost:8000"
 	@echo "🌐 Frontend will be available at http://localhost:3000"
 	@echo "🛑 Press Ctrl+C to stop both servers"
-	@trap 'pkill -P $$' EXIT INT TERM; \
+	@trap 'pkill -f "uvicorn src.web.app:app" 2>/dev/null; pkill -f "vite" 2>/dev/null; pkill -f "npm run dev" 2>/dev/null; exit' EXIT INT TERM; \
 	(. venv/bin/activate && cd backend && PYTHONPATH=. python -m uvicorn src.web.app:app --host 127.0.0.1 --port 8000 --reload) & \
 	(cd frontend && npm run dev) & \
 	wait
+
+kill-dev: ## Kill all running dev servers (backend and frontend)
+	@echo "🛑 Stopping all dev servers..."
+	@pkill -f "uvicorn src.web.app:app" 2>/dev/null && echo "✅ Stopped backend server" || echo "⚠️  No backend server running"
+	@pkill -f "vite" 2>/dev/null && echo "✅ Stopped frontend dev server(s)" || echo "⚠️  No frontend dev server running"
+	@pkill -f "npm run dev" 2>/dev/null && echo "✅ Stopped npm dev processes" || echo "⚠️  No npm dev processes running"
+	@sleep 1
+	@echo "✅ Cleanup complete"
 
 clean: ## Remove build artifacts
 	@echo "🧹 Cleaning build artifacts..."

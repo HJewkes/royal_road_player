@@ -12,20 +12,31 @@ function LibraryView({ onBookSelect }: LibraryViewProps) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    // Don't load books if there's a book_id in the URL (we shouldn't be here)
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('book')) {
+      // Book ID in URL means we should be in player view, not library
+      return
+    }
     void loadBooks()
   }, [])
 
   const loadBooks = async (): Promise<void> => {
     try {
       setLoading(true)
-      const response = await fetch('/api/books')
+      const response = await fetch('/api/books?lightweight=true')
       if (!response.ok) {
+        const errorText = await response.text()
+        console.error('Failed to fetch books:', response.status, errorText)
         throw new Error(`Failed to fetch books: ${response.statusText}`)
       }
       const data = await response.json() as { books?: Book[] }
+      console.log('Loaded books:', data.books?.length || 0)
       setBooks(data.books || [])
     } catch (error) {
       console.error('Failed to load books:', error)
+      // Set empty array on error so UI doesn't stay stuck
+      setBooks([])
     } finally {
       setLoading(false)
     }
@@ -38,7 +49,12 @@ function LibraryView({ onBookSelect }: LibraryViewProps) {
   }
 
   if (loading) {
-    return <p className="loading">Loading books...</p>
+    return (
+      <section className={styles.view}>
+        <h2 className={styles.title}>Your Library</h2>
+        <p className="loading">Loading books...</p>
+      </section>
+    )
   }
 
   return (

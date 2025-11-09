@@ -30,20 +30,21 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.1:8b"
 
-    # TTS Configuration
-    tts_engine: str = "coqui"  # Options: coqui, piper
-    tts_model: str = "tts_models/multilingual/multi-dataset/xtts_v2"  # Best quality - voice cloning
-    # Alternative: "tts_models/en/vctk/vits" (multi-speaker, no license)
-    tts_speaker: Optional[str] = None  # Speaker reference for XTTS v2 (optional)
-    tts_language: str = "en"  # Language code
+    # TTS Configuration (XTTS v2)
+    tts_model: str = "tts_models/multilingual/multi-dataset/xtts_v2"  # XTTS v2 model
+    tts_speaker: Optional[str] = None  # Speaker reference WAV file path for voice cloning
     tts_speed: float = 1.0  # Speech speed multiplier (0.5-2.0)
-    tts_emotion: Optional[str] = None  # Emotion for XTTS v2 (neutral, happy, sad, angry, etc.)
+    tts_gpu: bool = False  # Use GPU/MPS if available (set to True to enable)
+    tts_num_threads: Optional[int] = None  # Number of CPU threads (None = auto, set to match CPU cores)
 
     # Web Application
     web_host: str = "127.0.0.1"
     web_port: int = 8000
     debug: bool = False
 
+    # Database
+    database_path: Optional[str] = None  # SQLite database path
+    
     # Data Paths - will be computed relative to project root in __init__
     # These are placeholders for Pydantic validation
     data_dir: Optional[Path] = None
@@ -75,6 +76,13 @@ class Settings(BaseSettings):
         self.books_dir = project_root / "data" / "books"
         self.audio_dir = project_root / "data" / "books"
         self.log_dir = project_root / "logs"
+        
+        # Set database path if not provided
+        if self.database_path is None:
+            databases_dir = project_root / "data" / "databases"
+            databases_dir.mkdir(parents=True, exist_ok=True)
+            self.database_path = str(databases_dir / "audiobook.db")
+        
         # Ensure directories exist
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.books_dir.mkdir(parents=True, exist_ok=True)

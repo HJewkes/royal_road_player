@@ -1,8 +1,9 @@
 """Controller for book-level operations."""
 
 import logging
+import time
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from src.data.data_synchronizer import DataSynchronizer
 from src.models.book import Book
@@ -25,6 +26,9 @@ class BookController:
         """
         self.settings = get_settings()
         self.sync = synchronizer or DataSynchronizer(books_dir=self.settings.books_dir)
+        # Simple cache for book stats (key: book_id, value: (stats, timestamp))
+        self._stats_cache: Dict[str, tuple] = {}
+        self._cache_ttl: float = 10.0  # Cache for 10 seconds
     
     def get_book(self, book_id: str) -> Optional[Book]:
         """
@@ -59,16 +63,27 @@ class BookController:
         """
         return self.sync.load_chapters(book_id)
     
-    def get_book_stats(self, book_id: str) -> Optional[BookStats]:
+    def get_book_stats(self, book_id: str, lightweight: bool = False) -> Optional[BookStats]:
         """
         Get statistics for a book.
         
         Args:
             book_id: Book identifier
+            lightweight: If True, use fast metadata-only counting (doesn't load full chunk objects)
             
         Returns:
             BookStats object or None if book not found
         """
+        # Check cache first (only for lightweight mode)
+        if lightweight:
+            cache_key = f"{book_id}_lightweight"
+            if cache_key in self._stats_cache:
+                stats, timestamp = self._stats_cache[cache_key]
+                if time.time() - timestamp < self._cache_ttl:
+                    return stats
+                # Cache expired, remove it
+                del self._stats_cache[cache_key]
+        
         book = self.get_book(book_id)
         if book is None:
             return None
@@ -82,14 +97,25 @@ class BookController:
         chapters_chunked = sum(1 for ch in chapters if ch.is_chunked)
         
         total_chunks = sum(ch.chunk_count for ch in chapters)
-        completed_chunks = 0
-        for chapter in chapters:
-            if chapter.chapter_number is None:
-                continue
-            chunks = self.sync.load_chunks(book_id, chapter.chapter_number)
-            completed_chunks += sum(1 for ch in chunks if ch.is_completed)
         
-        return BookStats(
+        # Use database for fast stats (much faster than reading files)
+        from src.data.db_repository import ChunkRepository
+        from src.models.enums import ChunkStatus
+        
+        if lightweight:
+            # Fast path: use database aggregation query
+            completed_chunks = ChunkRepository.count_by_status(
+                book_id=book_id,
+                status=ChunkStatus.COMPLETED
+            )
+        else:
+            # Still use DB for speed, but could load full objects if needed
+            completed_chunks = ChunkRepository.count_by_status(
+                book_id=book_id,
+                status=ChunkStatus.COMPLETED
+            )
+        
+        stats = BookStats(
             book_id=book.id,
             title=book.title,
             total_chapters=total_chapters,
@@ -100,6 +126,69 @@ class BookController:
             completed_chunks=completed_chunks,
             pending_chunks=total_chunks - completed_chunks,
         )
+        
+        # Cache the result (only for lightweight mode)
+        if lightweight:
+            cache_key = f"{book_id}_lightweight"
+            self._stats_cache[cache_key] = (stats, time.time())
+            # Limit cache size to prevent memory issues
+            if len(self._stats_cache) > 100:
+                # Remove oldest entries
+                oldest_key = min(self._stats_cache.keys(), key=lambda k: self._stats_cache[k][1])
+                del self._stats_cache[oldest_key]
+        
+        return stats
+    
+    def _count_completed_chunks_fast(self, book_id: str, chapters: List[Chapter]) -> int:
+        """
+        Fast method to count completed chunks by checking file existence only.
+        Avoids reading metadata files when possible.
+        
+        Args:
+            book_id: Book identifier
+            chapters: List of chapters
+            
+        Returns:
+            Count of completed chunks
+        """
+        from pathlib import Path
+        
+        completed_count = 0
+        
+        for chapter in chapters:
+            if chapter.chapter_number is None or chapter.path is None:
+                continue
+            
+            chunks_dir = Path(chapter.path) / "chunks"
+            if not chunks_dir.exists():
+                continue
+            
+            # Iterate through chunk directories
+            for chunk_dir in chunks_dir.iterdir():
+                if not chunk_dir.is_dir() or not chunk_dir.name.isdigit():
+                    continue
+                
+                # Fast path: Check if audio file exists first (most common case)
+                audio_file = chunk_dir / "audio.wav"
+                if audio_file.exists():
+                    # Audio exists, check metadata only if we need to verify status
+                    metadata_path = chunk_dir / "metadata.json"
+                    if metadata_path.exists():
+                        try:
+                            import json
+                            with open(metadata_path, 'r', encoding='utf-8') as f:
+                                metadata = json.load(f)
+                            # Only count if status is 'completed' (audio might exist but status might be different)
+                            if metadata.get('status', 'pending') == 'completed':
+                                completed_count += 1
+                        except Exception:
+                            # If metadata read fails but audio exists, assume completed
+                            completed_count += 1
+                    else:
+                        # No metadata but audio exists - assume completed
+                        completed_count += 1
+        
+        return completed_count
     
     def save_book(self, book: Book) -> None:
         """

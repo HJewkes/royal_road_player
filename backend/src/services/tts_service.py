@@ -22,9 +22,7 @@ class TTSChunkService:
         chapter_number: int,
         chunk_index: int,
         speaker: Optional[str] = None,
-        language: Optional[str] = None,
         speed: Optional[float] = None,
-        emotion: Optional[str] = None,
     ) -> AudioGenerationResult:
         """
         Generate audio for a specific chunk.
@@ -34,9 +32,7 @@ class TTSChunkService:
             chapter_number: Chapter number
             chunk_index: Chunk index (1-based)
             speaker: Optional speaker WAV file path
-            language: Optional language code
-            speed: Optional playback speed
-            emotion: Optional emotion parameter
+            speed: Optional playback speed (0.5-2.0, default 1.0)
             
         Returns:
             Dictionary with generation results
@@ -49,9 +45,7 @@ class TTSChunkService:
             chapter_number=chapter_number,
             chunk_index=chunk_index,
             speaker=speaker,
-            language=language,
             speed=speed,
-            emotion=emotion,
         )
         
         return result
@@ -62,9 +56,7 @@ class TTSChunkService:
         chapter_number: int,
         chunk_indices: Optional[List[int]] = None,
         speaker: Optional[str] = None,
-        language: Optional[str] = None,
         speed: Optional[float] = None,
-        emotion: Optional[str] = None,
     ) -> ChapterAudioGenerationResult:
         """
         Generate audio for multiple chunks in a chapter.
@@ -74,9 +66,7 @@ class TTSChunkService:
             chapter_number: Chapter number
             chunk_indices: Optional list of chunk indices to generate (defaults to all pending chunks)
             speaker: Optional speaker WAV file path
-            language: Optional language code
-            speed: Optional playback speed
-            emotion: Optional emotion parameter
+            speed: Optional playback speed (0.5-2.0, default 1.0)
             
         Returns:
             Dictionary with generation results
@@ -89,9 +79,7 @@ class TTSChunkService:
             chapter_number=chapter_number,
             chunk_indices=chunk_indices,
             speaker=speaker,
-            language=language,
             speed=speed,
-            emotion=emotion,
         )
         
         return result

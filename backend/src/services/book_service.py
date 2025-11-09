@@ -59,12 +59,14 @@ class BookService:
         
         return result
     
-    def get_book_info(self, book_id: str) -> Optional[BookInfo]:
+    def get_book_info(self, book_id: str, lightweight: bool = True, include_stats: bool = True) -> Optional[BookInfo]:
         """
         Get book information and metadata.
         
         Args:
             book_id: Book identifier
+            lightweight: If True, use fast metadata-only stats computation
+            include_stats: If False, skip expensive stats calculation (for faster initial load)
             
         Returns:
             BookInfo object or None if not found
@@ -73,12 +75,14 @@ class BookService:
         if book is None:
             return None
         
-        # Get book statistics
-        stats = self.book_ctrl.get_book_stats(book_id)
-        if stats is None:
-            return None
+        # Get book statistics (can be skipped for faster initial load)
+        stats = None
+        if include_stats:
+            stats = self.book_ctrl.get_book_stats(book_id, lightweight=lightweight)
+            if stats is None:
+                return None
         
-        # Get chapters
+        # Get chapters (lightweight - just metadata, no chunk loading)
         chapters = self.book_ctrl.get_chapters(book_id)
         
         return BookInfo(
@@ -99,10 +103,13 @@ class BookService:
             ],
         )
     
-    def discover_books(self) -> List[BookSummary]:
+    def discover_books(self, lightweight: bool = True) -> List[BookSummary]:
         """
         Discover all books from the filesystem.
         
+        Args:
+            lightweight: If True, use fast metadata-only stats computation
+            
         Returns:
             List of BookSummary objects with metadata
         """
@@ -110,8 +117,8 @@ class BookService:
         
         result = []
         for book in books:
-            # Get book statistics
-            stats = self.book_ctrl.get_book_stats(book.id)
+            # Get book statistics (use lightweight mode by default for performance)
+            stats = self.book_ctrl.get_book_stats(book.id, lightweight=lightweight)
             if stats is None:
                 continue  # Skip books without stats
             

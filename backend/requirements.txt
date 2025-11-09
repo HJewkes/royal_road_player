@@ -17,6 +17,9 @@ torch>=2.1.0
 # LLM Client
 httpx>=0.25.0
 
+# Database
+sqlalchemy>=2.0.0
+
 # Utilities
 python-dotenv>=1.0.0
 pydantic>=2.5.0

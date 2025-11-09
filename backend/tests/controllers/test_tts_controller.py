@@ -34,9 +34,7 @@ class TestTTSController:
             mock_engine.return_value.is_loaded.return_value = True
             mock_voice_reg.return_value = {}
             mock_settings.return_value.books_dir = Path("/tmp/books")
-            mock_settings.return_value.tts_language = "en"
             mock_settings.return_value.tts_speed = 1.0
-            mock_settings.return_value.tts_emotion = None
             
             controller = TTSController()
             controller.sync = mock_sync.return_value

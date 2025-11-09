@@ -50,13 +50,40 @@ class TestChunkingController:
         )
         controller.sync.load_chapter.return_value = mock_chapter
         
-        # Mock chunk_text_by_paragraphs
-        with patch('src.controllers.chunking_controller.chunk_text_by_paragraphs') as mock_chunker:
-            mock_chunker.return_value = [
-                ("This is paragraph one.", 0, 20),
-                ("This is paragraph two.", 21, 42),
-                ("This is paragraph three.", 43, 65),
-            ]
+        # Mock TextChunker
+        mock_chunks = [
+            Chunk(
+                index=1,
+                book_id="book_123",
+                text_start=0,
+                text_end=20,
+                status=ChunkStatus.PENDING,
+                chapter_id="book_123_01",
+            ),
+            Chunk(
+                index=2,
+                book_id="book_123",
+                text_start=21,
+                text_end=42,
+                status=ChunkStatus.PENDING,
+                chapter_id="book_123_01",
+            ),
+            Chunk(
+                index=3,
+                book_id="book_123",
+                text_start=43,
+                text_end=65,
+                status=ChunkStatus.PENDING,
+                chapter_id="book_123_01",
+            ),
+        ]
+        
+        with patch('src.controllers.chunking_controller.TextChunker') as mock_chunker_class:
+            mock_chunker = mock_chunker_class.return_value
+            mock_chunker.chunk_by_paragraphs.return_value = mock_chunks
+            
+            # Mock load_chunks to return the saved chunks
+            controller.sync.load_chunks.return_value = mock_chunks
             
             result = controller.chunk_chapter(
                 book_id="book_123",
@@ -112,8 +139,18 @@ class TestChunkingController:
         )
         controller.sync.load_chapter.return_value = mock_chapter
         
-        with patch('src.controllers.chunking_controller.chunk_text_by_paragraphs') as mock_chunker:
-            mock_chunker.return_value = [("Short text.", 0, 11)]
+        with patch('src.controllers.chunking_controller.TextChunker') as mock_chunker_class:
+            mock_chunker = mock_chunker_class.return_value
+            mock_chunker.chunk_by_paragraphs.return_value = [
+                Chunk(
+                    index=1,
+                    book_id="book_123",
+                    text_start=0,
+                    text_end=11,
+                    status=ChunkStatus.PENDING,
+                    chapter_id="book_123_01",
+                ),
+            ]
             
             result = controller.chunk_chapter(
                 book_id="book_123",
@@ -123,8 +160,8 @@ class TestChunkingController:
                 max_chars=250
             )
             
-            mock_chunker.assert_called_once()
-            call_kwargs = mock_chunker.call_args[1]
+            mock_chunker.chunk_by_paragraphs.assert_called_once()
+            call_kwargs = mock_chunker.chunk_by_paragraphs.call_args[1]
             assert call_kwargs['target_chars_per_minute'] == 500
             assert call_kwargs['min_chars'] == 100
             assert call_kwargs['max_chars'] == 250

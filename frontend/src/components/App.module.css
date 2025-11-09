@@ -11,6 +11,9 @@
   margin-bottom: 30px;
   color: var(--color-text-primary);
   position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .title {
@@ -27,6 +30,7 @@
   align-items: center;
   justify-content: center;
   gap: 8px;
+  flex: 1;
 }
 
 .title svg {

@@ -1,19 +1,19 @@
 """Service for managing individual chapter downloads."""
 
 import logging
-from typing import Optional, List
+from typing import List, Optional
 
 import attr
 
-from src.scraper.royal_road_controller import RoyalRoadController
 from src.controllers.book_controller import BookController
 from src.controllers.chapter_controller import ChapterController
 from src.models.chapter import Chapter
 from src.models.responses import (
-    DownloadChapterResult,
     ChapterInfo,
     ChapterStats,
+    DownloadChapterResult,
 )
+from src.scraper.royal_road_controller import RoyalRoadController
 from src.utils.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -61,7 +61,6 @@ class ChapterService:
             chapter_number = 1  # Default to 1 if not provided
         
         # Create chapter directory structure
-        from src.utils.config import get_settings
         settings = get_settings()
         book_dir = settings.books_dir / book.path if book.path else None
         if book_dir is None:
@@ -147,12 +146,14 @@ class ChapterService:
             stats=stats,
         )
     
-    def discover_chapters(self, book_id: str) -> List[dict]:
+    def discover_chapters(self, book_id: str, lightweight: bool = True, include_audio_urls: bool = False) -> List[dict]:
         """
         Discover chapters for a book.
         
         Args:
             book_id: Book identifier
+            lightweight: If True, use fast metadata-only stats computation
+            include_audio_urls: If True, include audio URLs (slower, scans filesystem)
             
         Returns:
             List of chapter dictionaries
@@ -161,11 +162,17 @@ class ChapterService:
         
         result = []
         for chapter in chapters:
-            # Get chapter statistics
-            stats = self.chapter_ctrl.get_chapter_stats(book_id, chapter.chapter_number or 0)
+            # Get chapter statistics (use lightweight mode by default for performance)
+            stats = self.chapter_ctrl.get_chapter_stats(
+                book_id, 
+                chapter.chapter_number or 0,
+                lightweight=lightweight
+            )
             
-            # Get audio URLs
-            audio_urls = self.get_chapter_audio_urls(book_id, chapter.chapter_number or 0)
+            # Only get audio URLs if requested (this scans filesystem, so it's optional)
+            audio_urls = []
+            if include_audio_urls:
+                audio_urls = self.get_chapter_audio_urls(book_id, chapter.chapter_number or 0)
             
             result.append({
                 'id': chapter.id,
@@ -174,7 +181,7 @@ class ChapterService:
                 'number': chapter.number,  # Royal Road number
                 'url': chapter.url,
                 'text_path': str(chapter.text_path) if chapter.text_path else None,
-                'audio_urls': sorted(audio_urls),
+                'audio_urls': sorted(audio_urls) if audio_urls else [],
                 'is_chunked': chapter.is_chunked,
                 'chunk_count': chapter.chunk_count,
                 'has_audio': chapter.has_audio,
@@ -194,13 +201,13 @@ class ChapterService:
             chapter_number: Chapter number
             
         Returns:
-            List of audio file URLs (relative to /audio mount)
+            List of audio file URLs (relative to /audio mount), sorted by chunk index
         """
         chapter = self.chapter_ctrl.get_chapter(book_id, chapter_number)
         if chapter is None or not chapter.has_audio:
             return []
         
-        audio_urls = []
+        audio_urls_with_index = []
         if chapter.chunks_dir and chapter.chunks_dir.exists():
             # Find audio files in chunk directories
             settings = get_settings()
@@ -210,7 +217,12 @@ class ChapterService:
                     if audio_file.exists():
                         # Convert to URL relative to /audio mount
                         rel_path = audio_file.relative_to(settings.books_dir)
-                        audio_urls.append(f"/audio/{rel_path.as_posix()}")
+                        audio_url = f"/audio/{rel_path.as_posix()}"
+                        # Extract chunk index for sorting
+                        chunk_index = int(chunk_dir.name)
+                        audio_urls_with_index.append((chunk_index, audio_url))
         
-        return sorted(audio_urls)
+        # Sort by chunk index (numerically, not alphabetically)
+        audio_urls_with_index.sort(key=lambda x: x[0])
+        return [url for _, url in audio_urls_with_index]
 

@@ -2,7 +2,10 @@ import { useState, useEffect } from 'react'
 import { BookOpen } from 'lucide-react'
 import LibraryView from './components/LibraryView'
 import PlayerView from './components/PlayerView'
+import AudioPlayer from './components/AudioPlayer'
 import ToastContainer from './components/ToastContainer'
+import ConfirmModal from './components/ConfirmModal'
+import QueueStatusFlyout from './components/QueueStatusFlyout'
 import useAudiobookStore from './store/useAudiobookStore'
 import useToastStore from './store/useToastStore'
 import type { Book, BookStats } from './types'
@@ -17,7 +20,8 @@ interface SavedState {
 
 function App() {
   const [currentView, setCurrentView] = useState<'library' | 'player'>('library')
-  const { setCurrentBook, setCurrentChapter } = useAudiobookStore()
+  const [showSeriesPanel, setShowSeriesPanel] = useState(false)
+  const { setCurrentBook, setCurrentChapter, currentBook } = useAudiobookStore()
   const toast = useToastStore()
 
   const getLocalStorageState = (): SavedState | null => {
@@ -58,21 +62,36 @@ function App() {
 
   const loadBook = async (bookId: string, chapterNumber: number | null, position: number | null): Promise<void> => {
     try {
-      const response = await fetch(`/api/books/${bookId}`)
+      // First load: skip stats for faster initial load, just get book metadata and chapters
+      const response = await fetch(`/api/books/${bookId}?include_stats=false`)
       if (!response.ok) {
         throw new Error(`Failed to fetch book: ${response.statusText}`)
       }
-      const bookInfo = await response.json() as { book_id: string; book_title: string; book_url: string | null; author: string | null; filter_book_number: number | null; stats: BookStats; chapters: Array<{ chapter_number: number | null; title: string; number: number | null; url: string | null }> }
+      const bookInfo = await response.json() as { book_id: string; book_title: string; book_url: string | null; author: string | null; filter_book_number: number | null; stats: BookStats | null; chapters: Array<{ chapter_number: number | null; title: string; number: number | null; url: string | null }> }
       
       // Transform BookInfo to Book format
+      // If stats weren't included, we'll fetch them separately after initial load
       const book: Book = {
         id: bookInfo.book_id,
         title: bookInfo.book_title,
         author: bookInfo.author,
         url: bookInfo.book_url || '',
-        chapter_count: bookInfo.stats.total_chapters,
+        chapter_count: bookInfo.chapters?.length || 0,
         path: '', // Not in BookInfo, will be set from other sources if needed
-        stats: bookInfo.stats,
+        stats: bookInfo.stats || undefined, // Stats might be null if include_stats=false
+      }
+      
+      // If stats weren't included, fetch them in the background
+      if (!bookInfo.stats) {
+        void fetch(`/api/books/${bookId}?include_stats=true&lightweight=true`)
+          .then(res => res.json())
+          .then((data: { stats?: BookStats }) => {
+            if (data.stats) {
+              // Update the book with stats
+              setCurrentBook({ ...book, stats: data.stats })
+            }
+          })
+          .catch(err => console.error('Failed to fetch book stats:', err))
       }
       
       await setCurrentBook(book)
@@ -97,8 +116,10 @@ function App() {
         updateURL(bookId, targetChapter, targetPosition ?? 0)
         setLocalStorageState(bookId, targetChapter, targetPosition ?? 0)
         
-        // Set current chapter via store
+        // Set current chapter and playing chapter via store
         await setCurrentChapter(targetChapter, targetPosition ?? 0)
+        // Also set as playing chapter so audio player starts
+        await useAudiobookStore.getState().setPlayingChapter(targetChapter, targetPosition ?? 0)
       }
     } catch (error) {
       console.error('Failed to load book:', error)
@@ -114,6 +135,8 @@ function App() {
     const position = urlParams.get('position')
 
     if (bookId) {
+      // Skip library view, go straight to player
+      setCurrentView('player')
       // Load book from URL
       void loadBook(
         bookId,
@@ -124,11 +147,14 @@ function App() {
       // Check localStorage
       const savedState = getLocalStorageState()
       if (savedState?.bookId) {
+        setCurrentView('player')
         void loadBook(
           savedState.bookId,
           savedState.chapter ?? null,
           savedState.position ?? null
         )
+      } else {
+        setCurrentView('library')
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -145,19 +171,33 @@ function App() {
   return (
     <div className={styles.container}>
       <ToastContainer />
+      <ConfirmModal />
       <header className={styles.header}>
         <h1 className={styles.title}>
           <BookOpen size={32} style={{ display: 'inline-block', verticalAlign: 'middle', marginRight: '8px' }} />
           Audiobook Player
         </h1>
+        <QueueStatusFlyout />
       </header>
 
       <main className={styles.main}>
-        {currentView === 'library' && (
+        {currentView === 'library' && !currentBook && (
           <LibraryView onBookSelect={(bookId, chapterNumber, position) => { return loadBook(bookId, chapterNumber ?? null, position ?? null) }} />
         )}
         {currentView === 'player' && (
-          <PlayerView onBack={showLibraryView} />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            {/* Audio player at book level - independent of chapter views */}
+            {currentBook && (
+              <div style={{ backgroundColor: 'var(--color-bg-primary)', padding: '20px', borderRadius: '20px', border: '1px solid rgba(255, 255, 255, 0.1)' }}>
+                <AudioPlayer 
+                  book={currentBook} 
+                  onBack={showLibraryView}
+                  onShowSeries={() => { setShowSeriesPanel(true) }}
+                />
+              </div>
+            )}
+            <PlayerView onBack={showLibraryView} showSeriesPanel={showSeriesPanel} onCloseSeriesPanel={() => { setShowSeriesPanel(false) }} />
+          </div>
         )}
       </main>
     </div>

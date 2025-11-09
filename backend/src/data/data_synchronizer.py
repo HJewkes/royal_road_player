@@ -29,11 +29,22 @@ class DataSynchronizer:
     
     def load_books(self) -> List[Book]:
         """
-        Load all books from the filesystem.
+        Load all books from the database (fallback to filesystem if DB empty).
         
         Returns:
             List of Book instances
         """
+        # Try database first
+        try:
+            from src.data.db_repository import BookRepository
+            books = BookRepository.get_all()
+            if books:
+                logger.debug(f"Loaded {len(books)} books from database")
+                return books
+        except Exception as e:
+            logger.warning(f"Failed to load books from database, falling back to filesystem: {e}")
+        
+        # Fallback to filesystem
         books = []
         
         if not self.books_dir.exists():
@@ -62,23 +73,38 @@ class DataSynchronizer:
         """
         Load a single book by ID or directory name.
         
+        Tries database first, falls back to filesystem.
+        
         Args:
             book_id_or_dir: Book ID or directory name
             
         Returns:
             Book instance or None if not found
         """
-        # Find book directory (could be by book_id or by directory name)
+        # Try database first
+        try:
+            from src.data.db_repository import BookRepository
+            book = BookRepository.get_by_id(book_id_or_dir)
+            if book:
+                logger.debug(f"Loaded book {book_id_or_dir} from database")
+                return book
+        except Exception as e:
+            logger.debug(f"Book {book_id_or_dir} not in database, trying filesystem: {e}")
+        
+        # Fallback to filesystem
         book_dir = None
         
-        # Try exact match first
+        # Try exact match first (fast path)
         potential_dir = self.books_dir / book_id_or_dir
         if potential_dir.exists() and potential_dir.is_dir():
             book_dir = potential_dir
         else:
-            # Search for directory containing the book_id
+            # Try common pattern: directory name contains book_id
+            book_id_lower = book_id_or_dir.lower()
             for dir_path in self.books_dir.iterdir():
-                if dir_path.is_dir():
+                if not dir_path.is_dir():
+                    continue
+                if book_id_lower in dir_path.name.lower():
                     metadata_path = dir_path / "metadata.json"
                     if metadata_path.exists():
                         try:
@@ -101,7 +127,7 @@ class DataSynchronizer:
             with open(metadata_path, 'r', encoding='utf-8') as f:
                 metadata = json.load(f)
             
-            return Book(
+            book = Book(
                 id=metadata.get('book_id', ''),
                 title=metadata.get('book_title', ''),
                 author=metadata.get('author'),
@@ -109,6 +135,15 @@ class DataSynchronizer:
                 filter_book_number=metadata.get('filter_book_number'),
                 path=str(book_dir),
             )
+            
+            # Save to database for next time
+            try:
+                from src.data.db_repository import BookRepository
+                BookRepository.create_or_update(book)
+            except Exception as e:
+                logger.debug(f"Failed to save book to database: {e}")
+            
+            return book
         except Exception as e:
             logger.error(f"Failed to load book from {metadata_path}: {e}")
             return None
@@ -117,12 +152,25 @@ class DataSynchronizer:
         """
         Load all chapters for a book.
         
+        Tries database first, falls back to filesystem.
+        
         Args:
             book_id: Book ID
             
         Returns:
             List of Chapter instances
         """
+        # Try database first
+        try:
+            from src.data.db_repository import ChapterRepository
+            chapters = ChapterRepository.get_by_book(book_id)
+            if chapters:
+                logger.debug(f"Loaded {len(chapters)} chapters for book {book_id} from database")
+                return chapters
+        except Exception as e:
+            logger.debug(f"Chapters for book {book_id} not in database, trying filesystem: {e}")
+        
+        # Fallback to filesystem
         book = self.load_book(book_id)
         if book is None or book.path is None:
             return []
@@ -134,7 +182,7 @@ class DataSynchronizer:
             return chapters
         
         # Load chapters from numbered directories
-        for chapter_dir in sorted(chapters_dir.iterdir()):
+        for chapter_dir in sorted(chapters_dir.iterdir(), key=lambda x: int(x.name) if x.name.isdigit() else 999):
             if not chapter_dir.is_dir():
                 continue
             
@@ -143,33 +191,63 @@ class DataSynchronizer:
                 continue
             
             try:
-                chapter = self.load_chapter(book_id, int(chapter_dir.name))
+                chapter = self.load_chapter(book_id, int(chapter_dir.name), book_path=book.path)
                 if chapter:
                     chapters.append(chapter)
+                    # Save to database for next time
+                    try:
+                        from src.data.db_repository import ChapterRepository
+                        ChapterRepository.create_or_update(chapter)
+                    except Exception as e:
+                        logger.debug(f"Failed to save chapter to database: {e}")
             except Exception as e:
                 logger.error(f"Failed to load chapter {chapter_dir.name} for book {book_id}: {e}")
         
         return chapters
     
-    def load_chapter(self, book_id: str, chapter_number: int) -> Optional[Chapter]:
+    def load_chapter(self, book_id: str, chapter_number: int, book_path: Optional[str] = None) -> Optional[Chapter]:
         """
         Load a single chapter by book ID and chapter number.
         
         Args:
             book_id: Book ID
             chapter_number: Chapter number
+            book_path: Optional book path to avoid reloading book metadata
             
         Returns:
             Chapter instance or None if not found
         """
-        book = self.load_book(book_id)
-        if book is None or book.path is None:
-            return None
+        if book_path is None:
+            book = self.load_book(book_id)
+            if book is None or book.path is None:
+                return None
+            book_path = book.path
+        else:
+            # Verify path exists
+            if not Path(book_path).exists():
+                return None
         
-        chapter_dir = Path(book.path) / "chapters" / f"{chapter_number:02d}"
+        chapter_dir = Path(book_path) / "chapters" / f"{chapter_number:02d}"
         metadata_path = chapter_dir / "metadata.json"
         
+        # If metadata.json doesn't exist, try to create chapter from directory structure
         if not metadata_path.exists():
+            # Chapter directory exists but no metadata - create basic chapter
+            if chapter_dir.exists():
+                logger.debug(f"Chapter {chapter_number} directory exists but no metadata.json, creating basic chapter")
+                # Create a basic chapter with minimal metadata
+                chapter = Chapter(
+                    id=f"{book_id}_{chapter_number:02d}",
+                    book_id=book_id,
+                    chapter_number=chapter_number,
+                    number=None,
+                    title=f"Chapter {chapter_number}",
+                    url=None,
+                    path=str(chapter_dir),
+                )
+                # Save it so it exists next time
+                self.save_chapter(chapter)
+                return chapter
             return None
         
         try:
@@ -193,6 +271,8 @@ class DataSynchronizer:
         """
         Load all chunks for a chapter.
         
+        Tries database first, falls back to filesystem.
+        
         Args:
             book_id: Book ID
             chapter_number: Chapter number
@@ -200,6 +280,17 @@ class DataSynchronizer:
         Returns:
             List of Chunk instances
         """
+        # Try database first
+        try:
+            from src.data.db_repository import ChunkRepository
+            chunks = ChunkRepository.get_by_chapter(book_id, chapter_number)
+            if chunks:
+                logger.debug(f"Loaded {len(chunks)} chunks for chapter {chapter_number} from database")
+                return chunks
+        except Exception as e:
+            logger.debug(f"Chunks for chapter {chapter_number} not in database, trying filesystem: {e}")
+        
+        # Fallback to filesystem
         chapter = self.load_chapter(book_id, chapter_number)
         if chapter is None or chapter.path is None:
             return []
@@ -222,6 +313,12 @@ class DataSynchronizer:
                 chunk = self.load_chunk(book_id, chapter_number, int(chunk_dir.name))
                 if chunk:
                     chunks.append(chunk)
+                    # Save to database for next time
+                    try:
+                        from src.data.db_repository import ChunkRepository
+                        ChunkRepository.create_or_update(chunk, chapter_number)
+                    except Exception as e:
+                        logger.debug(f"Failed to save chunk to database: {e}")
             except Exception as e:
                 logger.error(f"Failed to load chunk {chunk_dir.name} for chapter {chapter_number}: {e}")
         
@@ -266,6 +363,9 @@ class DataSynchronizer:
             if chapter.id:
                 chapter_id = chapter.id
             
+            # Load synthesis metadata fields (backward compatible with old 'synthesis' dict)
+            synthesis_data = metadata.get('synthesis', {}) if isinstance(metadata.get('synthesis'), dict) else {}
+            
             return Chunk(
                 index=metadata.get('index', chunk_index),
                 book_id=metadata.get('book_id', book_id),
@@ -274,8 +374,15 @@ class DataSynchronizer:
                 status=status,
                 chapter_id=metadata.get('chapter_id') or chapter_id,
                 path=str(chunk_dir),
+                audio_duration_seconds=metadata.get('audio_duration_seconds'),
                 generation_time_seconds=metadata.get('generation_time_seconds'),
-                flagged=metadata.get('flagged'),
+                # Synthesis parameters (from 'synthesis' dict or top-level fields)
+                voice_name=metadata.get('voice_name') or synthesis_data.get('voice_name'),
+                speed=metadata.get('speed') if 'speed' in metadata else synthesis_data.get('speed'),
+                pre_pause_ms=metadata.get('pre_pause_ms', synthesis_data.get('pre_pause_ms', 0)),
+                post_pause_ms=metadata.get('post_pause_ms', synthesis_data.get('post_pause_ms', 0)),
+                is_dialogue=metadata.get('is_dialogue', synthesis_data.get('is_dialogue', False)),
+                is_scene_break=metadata.get('is_scene_break', synthesis_data.get('is_scene_break', False)),
             )
         except Exception as e:
             logger.error(f"Failed to load chunk from {metadata_path}: {e}")
@@ -283,11 +390,20 @@ class DataSynchronizer:
     
     def save_book(self, book: Book) -> None:
         """
-        Save book metadata to filesystem.
+        Save book metadata to database and filesystem.
         
         Args:
             book: Book instance to save
         """
+        # Save to database first
+        try:
+            from src.data.db_repository import BookRepository
+            BookRepository.create_or_update(book)
+            logger.debug(f"Saved book to database: {book.id}")
+        except Exception as e:
+            logger.warning(f"Failed to save book to database: {e}")
+        
+        # Also save to filesystem for backward compatibility
         if book.path is None:
             raise ValueError("Book path is required")
         
@@ -310,11 +426,20 @@ class DataSynchronizer:
     
     def save_chapter(self, chapter: Chapter) -> None:
         """
-        Save chapter metadata to filesystem.
+        Save chapter metadata to database and filesystem.
         
         Args:
             chapter: Chapter instance to save
         """
+        # Save to database first
+        try:
+            from src.data.db_repository import ChapterRepository
+            ChapterRepository.create_or_update(chapter)
+            logger.debug(f"Saved chapter to database: {chapter.id}")
+        except Exception as e:
+            logger.warning(f"Failed to save chapter to database: {e}")
+        
+        # Also save to filesystem for backward compatibility
         if chapter.path is None:
             raise ValueError("Chapter path is required")
         
@@ -337,13 +462,32 @@ class DataSynchronizer:
         
         logger.info(f"Saved chapter metadata: {chapter.book_id}/{chapter.chapter_number}")
     
-    def save_chunk(self, chunk: Chunk) -> None:
+    def save_chunk(self, chunk: Chunk, chapter_number: Optional[int] = None) -> None:
         """
-        Save chunk metadata to filesystem.
+        Save chunk metadata to database and filesystem.
         
         Args:
             chunk: Chunk instance to save
+            chapter_number: Chapter number (extracted from chunk.chapter_id if not provided)
         """
+        # Extract chapter_number from chunk.chapter_id if not provided
+        if chapter_number is None and chunk.chapter_id:
+            parts = chunk.chapter_id.split('_')
+            if len(parts) >= 2:
+                try:
+                    chapter_number = int(parts[-1])
+                except ValueError:
+                    pass
+        
+        # Save to database first
+        try:
+            from src.data.db_repository import ChunkRepository
+            ChunkRepository.create_or_update(chunk, chapter_number)
+            logger.debug(f"Saved chunk to database: {chunk.book_id}/{chunk.index}")
+        except Exception as e:
+            logger.warning(f"Failed to save chunk to database: {e}")
+        
+        # Also save to filesystem for backward compatibility
         if chunk.path is None:
             raise ValueError("Chunk path is required")
         
@@ -359,13 +503,26 @@ class DataSynchronizer:
             'text_end': chunk.text_end,
             'status': chunk.status.value,  # Convert enum to string
             'generation_time_seconds': chunk.generation_time_seconds,
-            'flagged': chunk.flagged,
+            'audio_duration_seconds': chunk.audio_duration_seconds,
+            # Synthesis parameters
+            'voice_name': chunk.voice_name,
+            'speed': chunk.speed,
+            'pre_pause_ms': chunk.pre_pause_ms,
+            'post_pause_ms': chunk.post_pause_ms,
+            'is_dialogue': chunk.is_dialogue,
+            'is_scene_break': chunk.is_scene_break,
         }
         
-        with open(metadata_path, 'w', encoding='utf-8') as f:
-            json.dump(metadata, f, indent=2, ensure_ascii=False)
-        
-        logger.info(f"Saved chunk metadata: {chunk.book_id}/{chunk.index}")
+        try:
+            with open(metadata_path, 'w', encoding='utf-8') as f:
+                json.dump(metadata, f, indent=2, ensure_ascii=False)
+                f.flush()  # Ensure data is written to disk
+                import os
+                os.fsync(f.fileno())  # Force write to disk
+            logger.info(f"Saved chunk metadata: {chunk.book_id}/{chunk.index} (status={chunk.status.value})")
+        except Exception as e:
+            logger.error(f"Failed to save chunk metadata to {metadata_path}: {e}", exc_info=True)
+            raise
     
     def update_chunk_status(self, book_id: str, chapter_number: int, chunk_index: int, status: ChunkStatus) -> Optional[Chunk]:
         """
@@ -394,9 +551,14 @@ class DataSynchronizer:
             chapter_id=chunk.chapter_id,
             path=chunk.path,
             generation_time_seconds=chunk.generation_time_seconds,
-            flagged=chunk.flagged,
+            voice_name=chunk.voice_name,
+            speed=chunk.speed,
+            pre_pause_ms=chunk.pre_pause_ms,
+            post_pause_ms=chunk.post_pause_ms,
+            is_dialogue=chunk.is_dialogue,
+            is_scene_break=chunk.is_scene_break,
         )
         
-        self.save_chunk(updated_chunk)
+        self.save_chunk(updated_chunk, chapter_number)
         return updated_chunk
 

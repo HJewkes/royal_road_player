@@ -37,7 +37,6 @@ export interface ChapterStats {
   completed_chunks: number
   pending_chunks: number
   failed_chunks: number
-  flagged_chunks: number
 }
 
 export interface Chapter {
@@ -68,8 +67,11 @@ export interface ChunkMetadata {
   path?: string
   url?: string
   filename?: string
+  text?: string  // Actual text content of the chunk
   generation_time_seconds?: number
-  flagged?: boolean
+  audio_duration_seconds?: number  // Duration of the audio file in seconds
+  audio_start_time?: number | null  // Start time in seconds (cumulative, from backend)
+  audio_end_time?: number | null  // End time in seconds (cumulative, from backend)
 }
 
 export interface ChunksData {
@@ -77,17 +79,6 @@ export interface ChunksData {
   chapter_number: number
   chapter_title: string  // Keep for display purposes
   text_length: number
-}
-
-export interface Job {
-  id: string
-  type: string
-  status: 'pending' | 'running' | 'completed' | 'failed'
-  book_id?: string
-  chapter_number?: number  // Changed from chapter_title
-  message?: string
-  created_at?: string
-  updated_at?: string
 }
 
 export interface GenerateChunksResult {

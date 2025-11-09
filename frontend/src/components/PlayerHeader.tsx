@@ -1,14 +1,13 @@
-import { ArrowLeft, BookOpen, Settings } from 'lucide-react'
+import { ArrowLeft, BookOpen } from 'lucide-react'
 import useAudiobookStore from '../store/useAudiobookStore'
 import styles from './PlayerHeader.module.css'
 
 interface PlayerHeaderProps {
   onBack: () => void
   onShowSeries: () => void
-  onShowJobs: () => void
 }
 
-function PlayerHeader({ onBack, onShowSeries, onShowJobs }: PlayerHeaderProps) {
+function PlayerHeader({ onBack, onShowSeries }: PlayerHeaderProps) {
   const { currentBook, currentChapter } = useAudiobookStore()
 
   return (
@@ -23,10 +22,6 @@ function PlayerHeader({ onBack, onShowSeries, onShowJobs }: PlayerHeaderProps) {
         <button className={styles.btnAction} onClick={onShowSeries}>
           <BookOpen size={16} style={{ display: 'inline-block', verticalAlign: 'middle', marginRight: '4px' }} />
           Series
-        </button>
-        <button className={styles.btnAction} onClick={onShowJobs}>
-          <Settings size={16} style={{ display: 'inline-block', verticalAlign: 'middle', marginRight: '4px' }} />
-          Jobs
         </button>
       </div>
     </div>
