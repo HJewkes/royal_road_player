@@ -7,6 +7,89 @@
 
 This guide covers tunable settings and optimization strategies for XTTS v2 to maximize performance, especially for long-term batch processing of audiobook chapters.
 
+## Quick Start - Enable GPU/MPS Acceleration
+
+If you have Apple Silicon (MPS available) or NVIDIA GPU, you can get **2-3x speedup** immediately:
+
+### Step 1: Enable GPU/MPS Acceleration
+
+Add to your `.env` file:
+
+```bash
+TTS_GPU=true
+```
+
+### Step 2: Optimize CPU Threads (if staying on CPU)
+
+If you prefer CPU mode or want to optimize it:
+
+```bash
+# Check your CPU cores
+sysctl -n hw.ncpu  # macOS
+nproc  # Linux
+
+# Set threads (leave 1-2 cores free for system)
+TTS_NUM_THREADS=6  # For 8-core CPU
+```
+
+### Step 3: Restart Server
+
+```bash
+# Kill existing server
+pkill -f uvicorn
+
+# Restart
+make dev-all
+```
+
+### Expected Performance Improvements
+
+**With MPS Enabled (Apple Silicon):**
+- **Before:** ~50-100 chars/sec (CPU)
+- **After:** ~150-300 chars/sec (MPS)
+- **Speedup:** 2-3x faster
+- **Example:** 8s/chunk → 3-4s/chunk
+
+**With Optimized CPU Threads:**
+- **Before:** Default thread count
+- **After:** Optimized for your CPU
+- **Speedup:** 10-20% improvement
+- **Example:** 8s/chunk → 7s/chunk
+
+### Current Settings Check
+
+Check what's currently configured:
+
+```bash
+# Check .env file
+grep TTS .env
+
+# Check if MPS is available (macOS)
+python3 -c "import torch; print('MPS:', hasattr(torch.backends, 'mps') and torch.backends.mps.is_available())"
+
+# Check if CUDA is available (NVIDIA)
+python3 -c "import torch; print('CUDA:', torch.cuda.is_available())"
+```
+
+### Troubleshooting Quick Fixes
+
+**MPS Not Working:**
+- Check PyTorch version: `python3 -c "import torch; print(torch.__version__)"`
+- Should be >= 1.12 for MPS support
+- Restart server after changing `.env`
+
+**No Performance Improvement:**
+- Verify GPU is actually being used (check logs for "MPS detected" or "CUDA detected")
+- Check system load (other processes using GPU?)
+- Monitor with Activity Monitor (macOS) or `htop`
+
+**Out of Memory:**
+- MPS uses unified memory (system RAM) - close other applications
+- CUDA uses VRAM - reduce batch size or close GPU-intensive apps
+- Reduce `TTS_NUM_THREADS` if set too high
+
+---
+
 ## Hardware Acceleration
 
 ### GPU Support (NVIDIA CUDA)

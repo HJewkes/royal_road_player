@@ -89,10 +89,30 @@ The web app provides:
 
 ## Documentation
 
-- [Setup Guide](SETUP.md)
-- [Architecture](docs/ARCHITECTURE.md)
-- [API Reference](docs/API.md)
-- [Project Plan](.archive/plans/PHASE_0_PROJECT_PLAN.md)
+The `docs/` directory focuses on setup and architecture:
+
+- **[SETUP.md](SETUP.md)** - Complete setup guide
+- **[docs/TTS_SETUP.md](docs/TTS_SETUP.md)** - Text-to-speech setup instructions and model configuration
+- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** - System architecture, component overview, project structure, and data flow
+
+### Additional Documentation
+
+Additional guides and reference documentation are archived in [`.archive/docs/`](.archive/docs/):
+
+**Reference:**
+- **API.md** - REST API reference with all endpoints and request/response formats
+- **TTS_OPTIMIZATION_GUIDE.md** - Performance optimization guide for TTS processing
+- **XTTS_V2_TEXT_PREPARATION.md** - Text preparation guide for XTTS v2 model
+- **DATA_SYNCHRONIZER_USAGE.md** - Guide for using the data synchronizer
+
+**Analysis & Audits:**
+- **CODEBASE_AUDIT.md** - Codebase audit findings
+- **CODE_REVIEW_HIGH_VALUE_IMPROVEMENTS.md** - Code review improvements
+- **TTS_PERFORMANCE_AUDIT.md** - TTS performance analysis
+- **PLAYER_AESTHETIC_IMPROVEMENTS_SUMMARY.md** - Player UI improvements summary
+- **PLAYER_DESIGN_IMPROVEMENTS.md** - Player design improvements
+- **CHATTERBOX_ANALYSIS.md** - Analysis of external project features
+- **TTS_QUICK_OPTIMIZATION.md** - Quick optimization guide (consolidated into TTS_OPTIMIZATION_GUIDE.md)
 
 ## Development
 
