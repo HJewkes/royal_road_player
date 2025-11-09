@@ -541,7 +541,8 @@ project-root/
 **Files:**
 - `snake_case.py` for Python
 - `kebab-case.ts` for TypeScript
-- One class per file (preferred)
+- **One class per file (REQUIRED)** - Each class must be in its own file
+- File name matches class name (e.g., `book_stats.py` for `BookStats` class)
 - Test files: `test_module.py`
 
 ### Code Organization
@@ -565,6 +566,44 @@ project-root/
 - Minimal dependencies
 - Clear public API
 - Hide implementation details
+
+**File Organization:**
+- **One class per file** - Each class should have its own file
+- File name matches class name (snake_case for Python)
+- Related classes can be grouped in subdirectories with `__init__.py` for exports
+- All imports at the top of the file - no inline imports
+- Use `__init__.py` files to maintain backward compatibility when restructuring
+
+**Example Structure:**
+```
+# Before (multiple classes in one file)
+models/responses.py:
+  - BookPreview
+  - BookStats
+  - ChapterStats
+  - ... (20+ classes)
+
+# After (one class per file)
+models/responses/
+  - __init__.py          # Exports all classes
+  - book_preview.py      # BookPreview class
+  - book_stats.py        # BookStats class
+  - chapter_stats.py     # ChapterStats class
+  - ...
+```
+
+**Import Organization:**
+- All imports MUST be at the top of the file
+- Group imports: standard library, third-party, local
+- Never use inline imports (e.g., `from module import X` inside functions)
+- Exception: Only when absolutely necessary to avoid circular imports (document why)
+
+**When Restructuring:**
+- Create new file structure with one class per file
+- Update `__init__.py` to export all classes from new locations
+- Maintain backward compatibility by keeping old import paths working
+- Update all internal imports to use new structure
+- Delete old files only after all imports are updated
 
 ### Error Handling
 
@@ -1188,6 +1227,75 @@ if (this.jobPollInterval) {
 - Use semantic HTML elements
 - Include ARIA labels where appropriate
 
+### Hover-Based Popup Controls
+
+**Volume/Speed Slider Patterns:**
+- When showing popup controls on hover (e.g., volume slider), ensure hover areas overlap or use proper event handling
+- Check `relatedTarget` in `onMouseLeave` to detect if mouse is moving to child element before hiding
+- Use `lastIndexOf('_')` to split keys with multiple underscores (e.g., `book_58187_4` → `book_58187` + `4`)
+- Add padding to parent container to extend hover area and prevent gaps
+- Keep popup visible while interacting with slider by checking if mouse is moving within container hierarchy
+
+**Example Pattern:**
+```typescript
+<div 
+  className={styles.controlContainer}
+  onMouseEnter={() => setShowSlider(true)}
+  onMouseLeave={(e) => {
+    const relatedTarget = e.relatedTarget as HTMLElement
+    if (relatedTarget) {
+      const sliderContainer = relatedTarget.closest(`.${styles.sliderContainer}`)
+      const controlContainer = relatedTarget.closest(`.${styles.controlContainer}`)
+      if (sliderContainer || controlContainer) {
+        return // Don't hide if moving to slider or staying within container
+      }
+    }
+    setShowSlider(false)
+  }}
+>
+  <button>...</button>
+  {showSlider && (
+    <div className={styles.sliderContainer}
+      onMouseEnter={() => setShowSlider(true)}
+      onMouseLeave={(e) => {
+        const relatedTarget = e.relatedTarget as HTMLElement
+        if (relatedTarget?.closest(`.${styles.controlContainer}`)) {
+          return // Don't hide if moving back to button
+        }
+        setShowSlider(false)
+      }}
+    >
+      <input type="range" />
+    </div>
+  )}
+</div>
+```
+
+**Key Parsing with Multiple Underscores:**
+- When parsing composite keys like `book_58187_4`, use `lastIndexOf('_')` instead of `split('_')`
+- Prevents incorrect parsing: `split('_')[0]` = "book" vs `substring(0, lastIndexOf('_'))` = "book_58187"
+- Always validate parsed components exist before use
+
+**Example:**
+```typescript
+// ❌ WRONG - splits incorrectly for keys with multiple underscores
+const parts = key.split('_')
+const bookId = parts[0]  // "book" instead of "book_58187"
+const chapterNum = parts[1]  // "58187" instead of "4"
+
+// ✅ CORRECT - handles multiple underscores properly
+const lastUnderscore = key.lastIndexOf('_')
+if (lastUnderscore === -1) return null
+const bookId = key.substring(0, lastUnderscore)  // "book_58187"
+const chapterNum = key.substring(lastUnderscore + 1)  // "4"
+```
+
+**Secondary Button Styling:**
+- Use icon-only buttons with transparent backgrounds for secondary controls
+- Remove borders and background frames to de-emphasize from primary controls
+- Use subtle hover effects (color change, slight transform)
+- Keep consistent sizing and spacing with primary controls
+
 ---
 
 ## Background Job Management
@@ -1336,6 +1444,8 @@ async def get_book(book_id: str):
 
 ## Version History
 
+- **v1.3** (2025-01-27): Added hover-based popup control patterns, key parsing with multiple underscores, and secondary button styling patterns from AudioPlayer UI improvements.
+- **v1.2** (2025-01-27): Added file organization standards (one class per file, imports at top) from codebase restructuring.
 - **v1.1** (2025-01-27): Added UI/UX patterns, background job management, API design patterns, and TTS-specific constraints from Audiobook project.
 - **v1.0** (2025-10-18): Initial comprehensive version incorporating metrics-driven development, testing best practices, and project structure standards from Reddit Tier List Scraper project.
 
@@ -1358,6 +1468,8 @@ async def get_book(book_id: str):
 - [ ] Proper cleanup of intervals/polling in frontend
 - [ ] URL state management for navigation persistence
 - [ ] Background job queue management (separate queues for resource types)
+- [ ] One class per file organization pattern
+- [ ] All imports at the top of files (no inline imports)
 
 ### Red Flags
 
@@ -1375,6 +1487,11 @@ async def get_book(book_id: str):
 - ❌ Hard-coded character limits without constants
 - ❌ Missing metadata refresh after background jobs complete
 - ❌ Modals/panels accumulating in DOM without cleanup
+- ❌ Multiple classes in a single file
+- ❌ Inline imports (imports inside functions/methods)
+- ❌ Files that don't follow one-class-per-file pattern
+- ❌ Using `split('_')` for keys with multiple underscores (use `lastIndexOf` instead)
+- ❌ Popup controls that hide before user can interact (check `relatedTarget` in hover handlers)
 
 ---
 
