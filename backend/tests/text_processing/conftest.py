@@ -1,6 +1,7 @@
 """Pytest fixtures for dialogue tests."""
 
 import json
+import os
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -15,6 +16,7 @@ from src.text_processing.dialogue.models import (
     SpeedCue,
     TraitCategory,
 )
+from src.text_processing.dialogue.test_utils import is_ollama_available
 
 
 @pytest.fixture
@@ -178,4 +180,20 @@ def dialogue_service_mocked(mock_llm_responses):
     from src.text_processing.dialogue.service import DialogueService
     
     service = DialogueService()
+    return service
+
+
+@pytest.fixture
+def dialogue_service_real_llm():
+    """
+    Create DialogueService with real LLM (if available).
+    
+    Skips test if OLLAMA_AVAILABLE is not set or Ollama is not running.
+    """
+    if not is_ollama_available():
+        pytest.skip("Ollama not available. Set OLLAMA_AVAILABLE=true and ensure Ollama is running.")
+    
+    from src.text_processing.dialogue.service import DialogueService
+    
+    service = DialogueService()  # Uses real OllamaClient
     return service

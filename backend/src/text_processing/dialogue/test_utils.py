@@ -1,6 +1,7 @@
 """Test utilities for dialogue module."""
 
 import json
+import os
 from typing import Optional
 
 from src.llm.ollama_client import OllamaClient
@@ -46,6 +47,7 @@ class MockOllamaClient:
         """
         self.last_prompt = prompt
         self.last_system = system
+        self.last_temperature = temperature
         
         if self.call_count < len(self.responses):
             response = self.responses[self.call_count]
@@ -132,3 +134,35 @@ def get_default_dialogue_response() -> str:
             "confidence": 0.9,
         },
     ])
+
+
+def is_ollama_available() -> bool:
+    """
+    Check if Ollama is available for integration testing.
+    
+    Returns:
+        True if Ollama is accessible, False otherwise
+    """
+    try:
+        client = OllamaClient()
+        return client.check_connection()
+    except Exception:
+        return False
+
+
+def get_test_llm_client():
+    """
+    Get LLM client for testing.
+    
+    If OLLAMA_AVAILABLE environment variable is set to "true" and Ollama is available,
+    returns real OllamaClient. Otherwise returns MockOllamaClient.
+    
+    Returns:
+        OllamaClient or MockOllamaClient instance
+    """
+    use_real_llm = os.getenv("OLLAMA_AVAILABLE", "").lower() == "true"
+    
+    if use_real_llm and is_ollama_available():
+        return OllamaClient()
+    else:
+        return MockOllamaClient()

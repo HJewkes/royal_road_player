@@ -151,6 +151,124 @@ pytest -m unit
 pytest -m "not slow"
 ```
 
+## Integration Tests (Real LLM)
+
+Integration tests use a real Ollama instance. They are marked with `@pytest.mark.integration` and `@pytest.mark.slow`.
+
+### Prerequisites
+
+1. **Ollama must be running**:
+   ```bash
+   # Check if Ollama is running
+   curl http://localhost:11434/api/tags
+   
+   # Or start Ollama if not running
+   ollama serve
+   ```
+
+2. **Set environment variable**:
+   ```bash
+   export OLLAMA_AVAILABLE=true
+   ```
+
+3. **Ensure model is available**:
+   ```bash
+   # Pull the model if needed (default: llama3.1:8b)
+   ollama pull llama3.1:8b
+   ```
+
+### Running Integration Tests
+
+```bash
+# Run all integration tests (requires Ollama)
+OLLAMA_AVAILABLE=true pytest tests/text_processing/test_dialogue_integration.py -v
+
+# Run integration tests with markers
+pytest tests/text_processing/test_dialogue*.py -m integration -v
+
+# Run all tests (unit + integration) if Ollama available
+OLLAMA_AVAILABLE=true pytest tests/text_processing/test_dialogue*.py -v
+```
+
+### Writing Integration Tests
+
+```python
+import pytest
+from src.text_processing.dialogue.service import DialogueService
+from src.text_processing.dialogue.test_utils import is_ollama_available
+
+# Skip if Ollama not available
+pytestmark = pytest.mark.skipif(
+    not is_ollama_available(),
+    reason="Ollama not available",
+)
+
+class TestMyIntegration:
+    @pytest.mark.integration
+    @pytest.mark.slow
+    def test_with_real_llm(self):
+        """Test with real LLM."""
+        service = DialogueService()  # Uses real OllamaClient
+        
+        result = service.process_chapter(
+            chapter_text="John said 'Hello'",
+            chapter_id="test",
+        )
+        
+        assert len(result[0].characters) > 0
+```
+
+### Using Fixtures
+
+```python
+def test_with_fixture(dialogue_service_real_llm):
+    """Test using real LLM fixture."""
+    service = dialogue_service_real_llm  # Automatically skips if Ollama unavailable
+    
+    result = service.process_chapter("text", "ch1")
+    # ... assertions
+```
+
+## Local Development Testing
+
+### Running Tests Locally
+
+**Unit tests only (fast, no LLM required):**
+```bash
+pytest tests/text_processing/test_dialogue*.py -m "unit and not integration" -v
+```
+
+**With real LLM (slower, requires Ollama):**
+```bash
+# Start Ollama first
+ollama serve
+
+# In another terminal, run tests
+OLLAMA_AVAILABLE=true pytest tests/text_processing/test_dialogue*.py -v
+```
+
+**Skip slow tests:**
+```bash
+pytest tests/text_processing/test_dialogue*.py -m "not slow" -v
+```
+
+### Conditional Test Execution
+
+The test utilities automatically detect if Ollama is available:
+
+```python
+from src.text_processing.dialogue.test_utils import is_ollama_available, get_test_llm_client
+
+# Check availability
+if is_ollama_available():
+    client = OllamaClient()  # Real client
+else:
+    client = MockOllamaClient()  # Mock client
+
+# Or use helper
+client = get_test_llm_client()  # Returns real if OLLAMA_AVAILABLE=true, mock otherwise
+```
+
 ## CI/CD Configuration
 
 For CI/CD pipelines, configure pytest to:
@@ -161,13 +279,28 @@ For CI/CD pipelines, configure pytest to:
 **Example GitHub Actions:**
 
 ```yaml
-- name: Run tests
+- name: Run unit tests
   run: |
     pytest tests/text_processing/test_dialogue*.py \
-      -m "unit and not slow" \
+      -m "unit and not slow and not integration" \
       --cov=src.text_processing.dialogue \
       --cov-report=xml \
       --cov-report=term
+
+# Optional: Run integration tests in separate job
+- name: Run integration tests
+  if: github.event_name == 'pull_request'
+  env:
+    OLLAMA_AVAILABLE: "true"
+  run: |
+    # Start Ollama service (e.g., using Docker)
+    docker run -d -p 11434:11434 ollama/ollama
+    sleep 10  # Wait for service to start
+    ollama pull llama3.1:8b
+    
+    pytest tests/text_processing/test_dialogue*.py \
+      -m "integration" \
+      -v
 ```
 
 ## Testing Validation
@@ -224,23 +357,44 @@ def test_llm_error_handling():
 
 ### Tests fail with "Connection refused"
 
-**Problem:** Tests are trying to connect to real Ollama.
+**Problem:** Tests are trying to connect to real Ollama when you want mocks.
 
 **Solution:** Ensure you're using `MockOllamaClient` or mocking `OllamaClient`:
 
 ```python
-# Correct
+# Correct (unit test)
 service = DialogueService(llm_client=MockOllamaClient())
 
-# Incorrect (will try real connection)
-service = DialogueService()  # Creates real OllamaClient
+# Also correct (integration test - requires Ollama)
+OLLAMA_AVAILABLE=true pytest tests/text_processing/test_dialogue_integration.py
+```
+
+### Integration tests are skipped
+
+**Problem:** Integration tests are being skipped even though Ollama is running.
+
+**Solution:** 
+1. Check that `OLLAMA_AVAILABLE=true` is set
+2. Verify Ollama is accessible: `curl http://localhost:11434/api/tags`
+3. Check the model is available: `ollama list`
+
+```bash
+# Debug connection
+python -c "from src.text_processing.dialogue.test_utils import is_ollama_available; print(is_ollama_available())"
 ```
 
 ### Tests are slow
 
-**Problem:** Tests are making real LLM calls.
+**Problem:** Tests are making real LLM calls when you want fast unit tests.
 
-**Solution:** Check that mocks are properly configured. Use `-v` flag to see which tests are slow:
+**Solution:** Run only unit tests:
+
+```bash
+# Skip integration and slow tests
+pytest tests/text_processing/test_dialogue*.py -m "unit and not slow and not integration" -v
+```
+
+**Alternative:** Check that mocks are properly configured. Use `-v` flag to see which tests are slow:
 
 ```bash
 pytest tests/text_processing/test_dialogue*.py -v --durations=10

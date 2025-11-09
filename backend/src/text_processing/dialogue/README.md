@@ -324,6 +324,26 @@ char_analysis, dialogue_analysis, warnings = service.process_chapter(
 - **Integration Tests**: Optional tests with real LLM (marked with `@pytest.mark.integration`)
 - **Validation Tests**: Test validation logic independently (no LLM required)
 
+### Integration Tests (Real LLM)
+
+To run integration tests with a real LLM:
+
+```bash
+# 1. Ensure Ollama is running
+ollama serve
+
+# 2. Set environment variable
+export OLLAMA_AVAILABLE=true
+
+# 3. Run integration tests
+pytest tests/text_processing/test_dialogue_integration.py -v
+
+# Or run all tests (unit + integration)
+pytest tests/text_processing/test_dialogue*.py -v
+```
+
+Integration tests automatically skip if Ollama is not available.
+
 See [DIALOGUE_TESTING.md](../../../docs/DIALOGUE_TESTING.md) for detailed testing documentation.
 
 ## Future Enhancements
