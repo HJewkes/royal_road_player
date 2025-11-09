@@ -269,3 +269,46 @@ k8s-logs-web: ## View web service logs
 k8s-logs-worker: ## View worker service logs
 	@kubectl logs -f deployment/audiobook-worker -n audiobook
 
+# Observability Commands
+observability-up: ## Start observability stack (Prometheus, Grafana, Loki, Tempo)
+	@echo "📊 Starting observability stack..."
+	@docker-compose -f docker-compose.local.yml -f docker-compose.observability.yml up -d prometheus grafana loki promtail tempo
+	@echo "✅ Observability stack started"
+	@echo "   Grafana: http://localhost:3001 (admin/admin)"
+	@echo "   Prometheus: http://localhost:9090"
+	@echo "   Loki: http://localhost:3100"
+	@echo "   Tempo: http://localhost:3200"
+
+observability-down: ## Stop observability stack
+	@echo "🛑 Stopping observability stack..."
+	@docker-compose -f docker-compose.observability.yml down
+	@echo "✅ Observability stack stopped"
+
+observability-logs: ## View observability stack logs
+	@docker-compose -f docker-compose.observability.yml logs -f
+
+local-dev-full: ## Start full local dev environment (app + observability)
+	@echo "🚀 Starting full local development environment..."
+	@docker-compose -f docker-compose.local.yml -f docker-compose.observability.yml up -d
+	@echo "✅ Full environment started"
+	@echo "   Application: http://localhost:8000"
+	@echo "   Grafana: http://localhost:3001 (admin/admin)"
+	@echo "   Prometheus: http://localhost:9090"
+	@echo "   Metrics endpoint: http://localhost:8000/metrics"
+
+grafana: ## Open Grafana dashboard
+	@echo "📊 Opening Grafana..."
+	@echo "   URL: http://localhost:3001"
+	@echo "   Username: admin"
+	@echo "   Password: admin"
+	@which xdg-open > /dev/null 2>&1 && xdg-open http://localhost:3001 || \
+	 which open > /dev/null 2>&1 && open http://localhost:3001 || \
+	 echo "   Please open http://localhost:3001 in your browser"
+
+prometheus: ## Open Prometheus UI
+	@echo "📈 Opening Prometheus..."
+	@echo "   URL: http://localhost:9090"
+	@which xdg-open > /dev/null 2>&1 && xdg-open http://localhost:9090 || \
+	 which open > /dev/null 2>&1 && open http://localhost:9090 || \
+	 echo "   Please open http://localhost:9090 in your browser"
+

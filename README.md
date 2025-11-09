@@ -19,6 +19,21 @@ Access:
 - **Database**: localhost:5432
 - **LocalStack**: http://localhost:4566
 
+### With Observability Stack
+
+```bash
+# Start app + observability (Prometheus, Grafana, Loki, Tempo)
+make local-dev-full
+
+# Or start observability separately
+make observability-up
+```
+
+Access:
+- **Grafana**: http://localhost:3001 (admin/admin)
+- **Prometheus**: http://localhost:9090
+- **Metrics**: http://localhost:8000/metrics
+
 ### Production Deployment
 
 See [SRE Guide](docs/SRE_GUIDE.md) for complete production deployment.
@@ -31,6 +46,7 @@ See [SRE Guide](docs/SRE_GUIDE.md) for complete production deployment.
 - ✅ **Scalable Architecture**: Kubernetes-ready
 - ✅ **Infrastructure as Code**: Terraform modules
 - ✅ **CI/CD**: GitHub Actions pipelines
+- ✅ **Observability**: Prometheus, Grafana, Loki, Tempo (local + production)
 - ✅ **Monitoring**: CloudWatch integration
 - ✅ **Storage**: S3-compatible (LocalStack/AWS)
 
@@ -68,6 +84,7 @@ See [SRE Guide](docs/SRE_GUIDE.md) for complete production deployment.
 │   └── environments/    # Environment configs
 ├── k8s/                 # Kubernetes manifests
 ├── helm/                # Helm chart
+├── monitoring/          # Observability configs (Prometheus, Grafana, Loki, Tempo)
 ├── .github/workflows/   # CI/CD pipelines
 └── docs/                # Documentation
 ```
@@ -100,11 +117,15 @@ make lint
 ### Make Commands
 
 ```bash
-make help              # Show all commands
-make local-dev         # Start local dev environment
-make test              # Run tests
-make lint              # Run linters
-make format            # Format code
+make help                  # Show all commands
+make local-dev             # Start local dev environment
+make local-dev-full        # Start app + observability stack
+make observability-up      # Start observability stack only
+make observability-down    # Stop observability stack
+make grafana               # Open Grafana dashboard
+make test                  # Run tests
+make lint                  # Run linters
+make format                # Format code
 ```
 
 ## 🚢 Deployment
@@ -148,6 +169,8 @@ terraform apply -var="database_password=SECURE_PASSWORD"
 ## 📚 Documentation
 
 - **[SRE Guide](docs/SRE_GUIDE.md)**: Complete production deployment guide
+- **[Observability Guide](docs/OBSERVABILITY.md)**: Metrics, logs, and tracing setup
+- **[Infrastructure Organization](docs/INFRASTRUCTURE_ORGANIZATION.md)**: Terraform module structure
 - **[Production Deployment](docs/PRODUCTION_DEPLOYMENT.md)**: Deployment details
 - **[LocalStack S3](docs/LOCALSTACK_S3.md)**: S3 storage guide
 - **[Docker Full Stack](docs/DOCKER_FULL_STACK.md)**: Docker Compose guide

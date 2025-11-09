@@ -78,6 +78,8 @@ services:
       - AWS_SECRET_ACCESS_KEY=test
       - AWS_DEFAULT_REGION=us-east-1
       - LOG_LEVEL=DEBUG
+      - TRACING_ENABLED=true
+      - TRACING_ENDPOINT=http://tempo:4317
     depends_on:
       localstack:
         condition: service_healthy
@@ -111,6 +113,8 @@ services:
       - AWS_SECRET_ACCESS_KEY=test
       - AWS_DEFAULT_REGION=us-east-1
       - LOG_LEVEL=DEBUG
+      - TRACING_ENABLED=true
+      - TRACING_ENDPOINT=http://tempo:4317
     depends_on:
       localstack:
         condition: service_healthy

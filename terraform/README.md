@@ -2,32 +2,78 @@
 
 Infrastructure as Code for Audiobook Generator deployment on AWS.
 
-## Structure
+## 📁 Structure
 
 ```
 terraform/
-├── modules/           # Reusable modules
-│   ├── vpc/          # VPC, subnets, NAT gateway
-│   ├── rds/          # PostgreSQL database
-│   ├── storage/      # S3 buckets
-│   ├── queue/        # SQS queues
-│   ├── notifications/# SNS topics
-│   └── logging/      # CloudWatch Logs
-└── environments/     # Environment-specific configs
-    ├── dev/          # Development
-    ├── staging/      # Staging
-    └── prod/         # Production
+├── modules/                    # Reusable Terraform modules
+│   ├── networking/             # VPC, subnets, NAT, IGW
+│   │   └── vpc/
+│   ├── compute/                # EKS, EC2 (if needed)
+│   │   └── eks/                # EKS cluster (future)
+│   ├── data/                   # Data layer
+│   │   ├── rds/                # PostgreSQL database
+│   │   ├── storage/            # S3 buckets
+│   │   └── cache/              # ElastiCache (future)
+│   ├── messaging/              # Messaging layer
+│   │   ├── queue/              # SQS queues
+│   │   └── notifications/      # SNS topics
+│   ├── observability/          # Observability stack
+│   │   ├── logging/            # CloudWatch Logs
+│   │   ├── monitoring/         # CloudWatch Alarms
+│   │   └── tracing/            # X-Ray (future)
+│   └── security/               # Security layer
+│       ├── iam/                # IAM roles and policies
+│       └── secrets/            # Secrets Manager
+│
+└── environments/               # Environment-specific configurations
+    ├── dev/                    # Development environment
+    │   ├── main.tf             # Main configuration
+    │   ├── variables.tf        # Input variables
+    │   ├── outputs.tf          # Output values
+    │   └── terraform.tfvars    # Variable values (gitignored)
+    ├── staging/                 # Staging environment
+    │   └── ...
+    └── prod/                    # Production environment
+        └── ...
 ```
 
-## Prerequisites
+## 🏗️ Module Organization
 
-1. **AWS CLI** configured with credentials
+### Networking (`modules/networking/`)
+- **VPC**: Virtual Private Cloud with public/private subnets
+- **NAT Gateway**: For private subnet internet access
+- **Internet Gateway**: For public subnet internet access
+- **Route Tables**: Routing configuration
+- **Security Groups**: Network security rules
+
+### Data (`modules/data/`)
+- **RDS**: Managed PostgreSQL database
+- **Storage**: S3 buckets with versioning and lifecycle policies
+- **Cache**: ElastiCache (Redis/Memcached) - future
+
+### Messaging (`modules/messaging/`)
+- **Queue**: SQS queues with dead letter queues
+- **Notifications**: SNS topics with subscriptions
+
+### Observability (`modules/observability/`)
+- **Logging**: CloudWatch Log Groups
+- **Monitoring**: CloudWatch Alarms and Dashboards
+- **Tracing**: X-Ray (future)
+
+### Security (`modules/security/`)
+- **IAM**: Roles, policies, and service accounts
+- **Secrets**: Secrets Manager integration
+
+## 🚀 Quick Start
+
+### Prerequisites
+
+1. **AWS CLI** configured
 2. **Terraform** >= 1.0
-3. **S3 bucket** for Terraform state (create manually first)
+3. **S3 bucket** for state storage (create manually)
 
-## Quick Start
-
-### 1. Create State Bucket
+### Initialize State Bucket
 
 ```bash
 aws s3 mb s3://audiobook-terraform-state --region us-east-1
@@ -36,28 +82,7 @@ aws s3api put-bucket-versioning \
   --versioning-configuration Status=Enabled
 ```
 
-### 2. Initialize Terraform
-
-```bash
-cd terraform/environments/dev
-terraform init
-```
-
-### 3. Plan Changes
-
-```bash
-terraform plan -out=tfplan
-```
-
-### 4. Apply Changes
-
-```bash
-terraform apply tfplan
-```
-
-## Environments
-
-### Development
+### Deploy Development Environment
 
 ```bash
 cd terraform/environments/dev
@@ -66,13 +91,7 @@ terraform plan
 terraform apply
 ```
 
-**Features:**
-- Single AZ deployment
-- No NAT gateway (cost savings)
-- Shorter log retention (7 days)
-- No DLQ (cost savings)
-
-### Production
+### Deploy Production Environment
 
 ```bash
 cd terraform/environments/prod
@@ -81,39 +100,27 @@ terraform plan -var="database_password=SECURE_PASSWORD"
 terraform apply -var="database_password=SECURE_PASSWORD"
 ```
 
-**Features:**
-- Multi-AZ deployment
-- NAT gateway enabled
-- RDS with multi-AZ
-- CloudWatch alarms
-- Longer log retention (90 days)
-- DLQ enabled
-- Lifecycle policies for S3
-
-## Modules
+## 📋 Module Usage
 
 ### VPC Module
 
-Creates VPC with public and private subnets, NAT gateway, and internet gateway.
-
 ```hcl
 module "vpc" {
-  source = "../../modules/vpc"
+  source = "../../modules/networking/vpc"
   
   name         = "audiobook"
   environment  = "prod"
   cidr         = "10.0.0.0/16"
-  availability_zones = ["us-east-1a", "us-east-1b"]
+  availability_zones = ["us-east-1a", "us-east-1b", "us-east-1c"]
+  enable_nat_gateway = true
 }
 ```
 
 ### RDS Module
 
-Creates PostgreSQL database with encryption, backups, and monitoring.
-
 ```hcl
 module "database" {
-  source = "../../modules/rds"
+  source = "../../modules/data/rds"
   
   name         = "audiobook"
   environment  = "prod"
@@ -122,86 +129,29 @@ module "database" {
   
   instance_class = "db.t3.medium"
   multi_az       = true
+  database_password = var.database_password
 }
 ```
 
 ### Storage Module
 
-Creates S3 bucket with versioning, encryption, and lifecycle policies.
-
 ```hcl
 module "storage" {
-  source = "../../modules/storage"
+  source = "../../modules/data/storage"
   
   name         = "audiobook"
   environment  = "prod"
-  bucket_name  = "audiobook-prod-data"
+  bucket_name  = "audiobook-prod-data-${data.aws_caller_identity.current.account_id}"
   
   versioning_enabled = true
 }
 ```
 
-### Queue Module
-
-Creates SQS queue with dead letter queue.
-
-```hcl
-module "queue" {
-  source = "../../modules/queue"
-  
-  name         = "audiobook"
-  environment  = "prod"
-  queue_name   = "audiobook-prod-jobs"
-  
-  dead_letter_queue_enabled = true
-}
-```
-
-## State Management
-
-Terraform state is stored in S3 with versioning enabled. Use remote state locking with DynamoDB for team collaboration:
-
-```bash
-aws dynamodb create-table \
-  --table-name terraform-state-lock \
-  --attribute-definitions AttributeName=LockID,AttributeType=S \
-  --key-schema AttributeName=LockID,KeyType=HASH \
-  --provisioned-throughput ReadCapacityUnits=5,WriteCapacityUnits=5
-```
-
-Then update backend configuration:
-
-```hcl
-backend "s3" {
-  bucket         = "audiobook-terraform-state"
-  key            = "prod/terraform.tfstate"
-  region         = "us-east-1"
-  encrypt        = true
-  dynamodb_table = "terraform-state-lock"
-}
-```
-
-## Outputs
-
-After applying, get outputs:
-
-```bash
-terraform output
-```
-
-Use outputs in Kubernetes/application configuration:
-
-```bash
-export S3_BUCKET=$(terraform output -raw s3_bucket_name)
-export SQS_QUEUE_URL=$(terraform output -raw sqs_queue_url)
-export DATABASE_ENDPOINT=$(terraform output -raw database_endpoint)
-```
-
-## Secrets Management
+## 🔐 Secrets Management
 
 **Never commit secrets to Git!**
 
-Use Terraform variables or AWS Secrets Manager:
+### Using Variables
 
 ```bash
 # Via environment variable
@@ -211,7 +161,7 @@ export TF_VAR_database_password="secure_password"
 terraform apply -var-file=secrets.tfvars
 ```
 
-For production, use AWS Secrets Manager:
+### Using AWS Secrets Manager
 
 ```hcl
 data "aws_secretsmanager_secret_version" "db_password" {
@@ -219,25 +169,75 @@ data "aws_secretsmanager_secret_version" "db_password" {
 }
 
 locals {
-  db_password = jsondecode(data.aws_secretsmanager_secret_version.db_password.secret_string)["password"]
+  db_password = jsondecode(
+    data.aws_secretsmanager_secret_version.db_password.secret_string
+  )["password"]
 }
 ```
 
-## Cost Optimization
+## 📊 Outputs
 
-### Development
-- Single AZ
-- No NAT gateway
-- Smaller instance sizes
-- Shorter retention periods
+Get infrastructure outputs:
 
-### Production
-- Multi-AZ for HA
-- Reserved instances for RDS
-- S3 lifecycle policies
-- CloudWatch log retention limits
+```bash
+terraform output
+```
 
-## Destroying Infrastructure
+Use outputs in Kubernetes/application:
+
+```bash
+export S3_BUCKET=$(terraform output -raw s3_bucket_name)
+export DATABASE_ENDPOINT=$(terraform output -raw database_endpoint)
+```
+
+## 🔄 State Management
+
+### Remote State
+
+State is stored in S3 with versioning:
+
+```hcl
+backend "s3" {
+  bucket = "audiobook-terraform-state"
+  key    = "prod/terraform.tfstate"
+  region = "us-east-1"
+  encrypt = true
+}
+```
+
+### State Locking
+
+Use DynamoDB for state locking:
+
+```bash
+aws dynamodb create-table \
+  --table-name terraform-state-lock \
+  --attribute-definitions AttributeName=LockID,AttributeType=S \
+  --key-schema AttributeName=LockID,KeyType=HASH \
+  --provisioned-throughput ReadCapacityUnits=5,WriteCapacityUnits=5
+```
+
+Then update backend:
+
+```hcl
+backend "s3" {
+  # ... existing config ...
+  dynamodb_table = "terraform-state-lock"
+}
+```
+
+## 🧹 Best Practices
+
+1. **Use Modules**: Don't duplicate code
+2. **Version State**: Enable S3 versioning
+3. **Lock State**: Use DynamoDB for team collaboration
+4. **Tag Resources**: For cost tracking
+5. **Review Plans**: Always review before apply
+6. **Separate Environments**: Use separate state files
+7. **Document Changes**: Update README with changes
+8. **Use Variables**: Don't hardcode values
+
+## 🚨 Destroying Infrastructure
 
 **⚠️ WARNING: This will delete all resources!**
 
@@ -245,24 +245,21 @@ locals {
 terraform destroy
 ```
 
-For production, add confirmation:
+For production, require confirmation:
 
 ```bash
 terraform destroy -var="database_password=..." -auto-approve=false
 ```
 
-## Best Practices
+## 📚 Module Documentation
 
-1. **Always use modules** - Don't duplicate code
-2. **Version state backend** - Enable S3 versioning
-3. **Use workspaces** - Separate state per environment
-4. **Tag resources** - For cost tracking
-5. **Review plans** - Always review before apply
-6. **Backup state** - Keep state backups
-7. **Use variables** - Don't hardcode values
-8. **Document changes** - Update README with changes
+Each module includes:
+- **README.md**: Usage and examples
+- **variables.tf**: Input variables
+- **outputs.tf**: Output values
+- **main.tf**: Resource definitions
 
-## Troubleshooting
+## 🔍 Troubleshooting
 
 ### State Locked
 
@@ -288,6 +285,8 @@ terraform import aws_s3_bucket.main bucket-name
 terraform init -upgrade
 ```
 
-## CI/CD Integration
+## 🔗 Related Documentation
 
-See `.github/workflows/terraform.yml` for automated Terraform runs.
+- [SRE Guide](../docs/SRE_GUIDE.md)
+- [Production Deployment](../docs/PRODUCTION_DEPLOYMENT.md)
+- [Infrastructure Organization](../docs/INFRASTRUCTURE_ORGANIZATION.md)
