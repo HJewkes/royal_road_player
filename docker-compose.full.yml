@@ -1,8 +1,5 @@
 version: '3.8'
 
-# Full stack with database, web, and worker services
-# Usage: docker-compose up -d
-
 services:
   # PostgreSQL Database
   db:
@@ -97,6 +94,94 @@ services:
         reservations:
           cpus: '1'
           memory: 2G
+
+  # GPU-enabled versions (optional profiles)
+  web-gpu:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        TORCH_VERSION: ${TORCH_VERSION:-cuda118}
+    container_name: audiobook-web-gpu
+    ports:
+      - "${WEB_PORT:-8000}:8000"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - DATABASE_URL=postgresql://audiobook:${POSTGRES_PASSWORD:-audiobook_password}@db:5432/audiobook
+      - TTS_GPU=true
+      - WEB_HOST=0.0.0.0
+      - WEB_PORT=8000
+      - ENABLE_BACKGROUND_PROCESSOR=false
+      - WORKER_MODE=false
+      - AUDIO_OUTPUT_FORMAT=${AUDIO_OUTPUT_FORMAT:-m4b}
+      - AUDIO_BITRATE=${AUDIO_BITRATE:-128k}
+      - TTS_FINE_TUNED_MODEL=${TTS_FINE_TUNED_MODEL:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    networks:
+      - audiobook-network
+    profiles:
+      - gpu
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  worker-gpu:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        TORCH_VERSION: ${TORCH_VERSION:-cuda118}
+    container_name: audiobook-worker-gpu
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - DATABASE_URL=postgresql://audiobook:${POSTGRES_PASSWORD:-audiobook_password}@db:5432/audiobook
+      - TTS_GPU=true
+      - WORKER_MODE=true
+      - ENABLE_BACKGROUND_PROCESSOR=true
+      - AUDIO_OUTPUT_FORMAT=${AUDIO_OUTPUT_FORMAT:-m4b}
+      - AUDIO_BITRATE=${AUDIO_BITRATE:-128k}
+      - TTS_FINE_TUNED_MODEL=${TTS_FINE_TUNED_MODEL:-}
+    depends_on:
+      db:
+        condition: service_healthy
+      web-gpu:
+        condition: service_healthy
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+        limits:
+          cpus: '${WORKER_CPUS:-4}'
+          memory: ${WORKER_MEMORY:-8G}
+        reservations:
+          cpus: '2'
+          memory: 4G
+    restart: unless-stopped
+    networks:
+      - audiobook-network
+    profiles:
+      - gpu
+    command: python -m src.web.worker
 
 volumes:
   postgres_data:

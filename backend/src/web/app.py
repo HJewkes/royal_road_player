@@ -25,27 +25,41 @@ async def lifespan(app: FastAPI):
     init_db()
     print("✅ Database initialized")
     
-    # Startup: Start background processor (if enabled)
-    queue = get_queue()
-    if settings.enable_background_processor:
-        queue.start_background_processor(interval_seconds=1.0)
-        print("✅ Background job processor started (logs: logs/queue_processor.log)")
+    # Startup: Start background processor (if enabled and not running as separate worker)
+    # In Docker, worker runs as separate service, so skip here
+    worker_mode = os.getenv("WORKER_MODE", "false").lower() == "true"
+    if not worker_mode:
+        queue = get_queue()
+        if settings.enable_background_processor:
+            queue.start_background_processor(interval_seconds=1.0)
+            print("✅ Background job processor started (logs: logs/queue_processor.log)")
+        else:
+            print("⚠️  Background job processor disabled (set ENABLE_BACKGROUND_PROCESSOR=true to enable)")
     else:
-        print("⚠️  Background job processor disabled (set ENABLE_BACKGROUND_PROCESSOR=true to enable)")
+        print("ℹ️  Running in worker mode - background processor handled by worker service")
     
     yield
     
-    # Shutdown: Stop background processor (if it was started)
-    if settings.enable_background_processor and queue._processor_task and not queue._processor_task.done():
-        queue._processor_task.cancel()
-        try:
-            await queue._processor_task
-        except asyncio.CancelledError:
-            pass
-        print("✅ Background job processor stopped")
+    # Shutdown: Stop background processor (if it was started and not in worker mode)
+    worker_mode = os.getenv("WORKER_MODE", "false").lower() == "true"
+    if not worker_mode:
+        queue = get_queue()
+        if settings.enable_background_processor and queue._processor_task and not queue._processor_task.done():
+            queue._processor_task.cancel()
+            try:
+                await queue._processor_task
+            except asyncio.CancelledError:
+                pass
+            print("✅ Background job processor stopped")
 
 
 app = FastAPI(title="Audiobook System", version="0.1.0", lifespan=lifespan)
+
+
+@app.get("/health")
+async def health_check():
+    """Simple health check endpoint for Docker."""
+    return {"status": "healthy", "service": "audiobook-web"}
 
 # CORS middleware for development (React dev server)
 app.add_middleware(

@@ -1,6 +1,7 @@
 """Database connection and session management."""
 
 import logging
+import os
 from contextlib import contextmanager
 from pathlib import Path
 from sqlalchemy import create_engine, event
@@ -27,28 +28,44 @@ def get_engine():
     global _engine
     if _engine is None:
         settings = get_settings()
-        database_path = Path(settings.database_path)
-        database_path.parent.mkdir(parents=True, exist_ok=True)
         
-        # SQLite connection string
-        database_url = f"sqlite:///{database_path}"
+        # Check for DATABASE_URL environment variable (for PostgreSQL)
+        database_url = os.getenv("DATABASE_URL")
         
-        # Create engine with connection pooling optimized for SQLite
-        _engine = create_engine(
-            database_url,
-            connect_args={"check_same_thread": False},  # Allow multi-threaded access
-            poolclass=StaticPool,  # SQLite doesn't need connection pooling
-            echo=False,  # Set to True for SQL query logging
-        )
+        if database_url:
+            # PostgreSQL connection
+            logger.info(f"Using PostgreSQL database: {database_url.split('@')[1] if '@' in database_url else 'configured'}")
+            _engine = create_engine(
+                database_url,
+                pool_size=10,
+                max_overflow=20,
+                pool_pre_ping=True,  # Verify connections before using
+                echo=False,  # Set to True for SQL query logging
+            )
+        else:
+            # SQLite connection (fallback)
+            database_path = Path(settings.database_path)
+            database_path.parent.mkdir(parents=True, exist_ok=True)
+            database_url = f"sqlite:///{database_path}"
+            
+            # Create engine with connection pooling optimized for SQLite
+            _engine = create_engine(
+                database_url,
+                connect_args={"check_same_thread": False},  # Allow multi-threaded access
+                poolclass=StaticPool,  # SQLite doesn't need connection pooling
+                echo=False,  # Set to True for SQL query logging
+            )
+            
+            # Enable foreign keys for SQLite
+            @event.listens_for(_engine, "connect")
+            def set_sqlite_pragma(dbapi_conn, connection_record):
+                cursor = dbapi_conn.cursor()
+                cursor.execute("PRAGMA foreign_keys=ON")
+                cursor.close()
+            
+            logger.info(f"Using SQLite database: {database_path}")
         
-        # Enable foreign keys for SQLite
-        @event.listens_for(_engine, "connect")
-        def set_sqlite_pragma(dbapi_conn, connection_record):
-            cursor = dbapi_conn.cursor()
-            cursor.execute("PRAGMA foreign_keys=ON")
-            cursor.close()
-        
-        logger.info(f"Database engine created: {database_url}")
+        logger.info(f"Database engine created")
     
     return _engine
 
