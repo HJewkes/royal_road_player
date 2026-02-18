@@ -1,133 +1,240 @@
-# Audiobook System
+# Audiobook Generator
 
-A comprehensive local audiobook system for Royal Road books with high-quality text-to-speech and web-based playback controls.
+Production-ready audiobook generation system with full SRE infrastructure.
 
-## Features
+## 🚀 Quick Start
 
-- **Web Scraping:** Download chapters from Royal Road automatically
-- **Text Formatting:** Clean, well-formatted text files
-- **LLM Annotation:** Automatic text annotation for inflection and timing using local LLM
-- **High-Quality TTS:** Local text-to-speech conversion with annotation support
-- **Web Playback:** Local web app with full playback controls
+### Local Development
 
-## Quick Start
+```bash
+# One-command setup
+make local-dev
+
+# Or manually
+docker-compose -f docker-compose.local.yml up -d
+```
+
+Access:
+- **Web UI**: http://localhost:8000
+- **Database**: localhost:5432
+- **LocalStack**: http://localhost:4566
+
+### With Observability Stack
+
+```bash
+# Start app + observability (Prometheus, Grafana, Loki, Tempo)
+make local-dev-full
+
+# Or start observability separately
+make observability-up
+```
+
+Access:
+- **Grafana**: http://localhost:3001 (admin/admin)
+- **Prometheus**: http://localhost:9090
+- **Metrics**: http://localhost:8000/metrics
+
+### Production Deployment
+
+See [SRE Guide](docs/SRE_GUIDE.md) for complete production deployment.
+
+## 📋 Features
+
+- ✅ **Text-to-Speech**: Multiple TTS engines (Coqui XTTSv2, fine-tuned models)
+- ✅ **Ebook Processing**: EPUB, MOBI, PDF, TXT support
+- ✅ **Audio Generation**: M4B with chapter markers
+- ✅ **Scalable Architecture**: Kubernetes-ready
+- ✅ **Infrastructure as Code**: Terraform modules
+- ✅ **CI/CD**: GitHub Actions pipelines
+- ✅ **Observability**: Prometheus, Grafana, Loki, Tempo (local + production)
+- ✅ **Monitoring**: CloudWatch integration
+- ✅ **Storage**: S3-compatible (LocalStack/AWS)
+
+## 🏗️ Architecture
+
+```
+┌─────────────┐
+│   Web UI    │
+│  (FastAPI)  │
+└──────┬──────┘
+       │
+       ├──────────────┬──────────────┐
+       │              │              │
+┌──────▼──────┐  ┌────▼──────┐  ┌───▼────────┐
+│  PostgreSQL │  │  Worker   │  │ LocalStack │
+│  Database   │  │  Service  │  │  (S3)      │
+└─────────────┘  └───────────┘  └────────────┘
+```
+
+## 📁 Project Structure
+
+```
+.
+├── backend/              # Python backend
+│   ├── src/
+│   │   ├── controllers/ # API controllers
+│   │   ├── services/    # Business logic
+│   │   ├── storage/     # S3 storage abstraction
+│   │   ├── monitoring/  # CloudWatch, SNS, Secrets Manager
+│   │   └── web/         # FastAPI application
+│   └── tests/           # Test suite
+├── frontend/            # React frontend
+├── terraform/           # Infrastructure as Code
+│   ├── modules/         # Reusable modules
+│   └── environments/    # Environment configs
+├── k8s/                 # Kubernetes manifests
+├── helm/                # Helm chart
+├── monitoring/          # Observability configs (Prometheus, Grafana, Loki, Tempo)
+├── .github/workflows/   # CI/CD pipelines
+└── docs/                # Documentation
+```
+
+## 🛠️ Development
 
 ### Prerequisites
 
+- Docker & Docker Compose
 - Python 3.10+
-- Node.js 18+ (for frontend development)
-- 8GB+ RAM (16GB recommended for TTS)
-- 10GB+ free storage
+- Node.js 18+
+- Terraform (for infrastructure)
 
-### Installation
+### Setup
 
 ```bash
-# One-command setup (installs Ollama, TTS, and all dependencies)
+# Install dependencies
 make setup
 
-# Optional: Pull default LLM model for annotations
-make setup-ollama-model
-```
+# Start local dev environment
+make local-dev
 
-### Usage
-
-#### 1. Find a Book on Royal Road
-
-```bash
-# Using Python module CLI (from project root)
-cd backend && python -m src.scraper.royal_road --help
-
-# Search for books (via Python API)
-cd backend && python -c "from src.scraper.royal_road import RoyalRoadScraper; scraper = RoyalRoadScraper(); print(scraper.search_royal_road('Player Manager Ted Steele'))"
-```
-
-#### 2. Download Chapters
-
-```bash
-# Download all chapters from a book (from project root)
-cd backend && python -m src.scraper.royal_road "https://www.royalroad.com/fiction/12345/book-title"
-
-# Download specific book number from a series
-cd backend && python -m src.scraper.royal_road "URL" -b 7
-
-# Test with limited chapters
-cd backend && python -m src.scraper.royal_road "URL" -m 5
-
-# Custom output directory
-cd backend && python -m src.scraper.royal_road "URL" -o ./my_books
-```
-
-#### 3. Generate Audio
-
-Audio generation is handled through the web interface. You can also use the Python API directly:
-
-```python
-# From backend directory or with PYTHONPATH=backend
-from src.tts.generator import AudioGenerator
-from pathlib import Path
-
-generator = AudioGenerator()
-audio_files = generator.generate_chapter_chunked(
-    text_path=Path("data/books/.../chapters/07-01 - Chapter Title.txt"),
-    chunk_duration_minutes=1.0
-)
-```
-
-#### 4. Start Web App
-
-```bash
-make run
-# Then open http://localhost:8000 in your browser
-```
-
-The web app provides:
-- Library view with all downloaded books
-- Chapter playback with progress tracking
-- Background job management (scraping, audio generation)
-- Series discovery and book search
-- Chunk timeline visualization
-
-## Documentation
-
-The `docs/` directory focuses on setup and architecture:
-
-- **[SETUP.md](SETUP.md)** - Complete setup guide
-- **[docs/TTS_SETUP.md](docs/TTS_SETUP.md)** - Text-to-speech setup instructions and model configuration
-- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** - System architecture, component overview, project structure, and data flow
-
-### Additional Documentation
-
-Additional guides and reference documentation are archived in [`.archive/docs/`](.archive/docs/):
-
-**Reference:**
-- **API.md** - REST API reference with all endpoints and request/response formats
-- **TTS_OPTIMIZATION_GUIDE.md** - Performance optimization guide for TTS processing
-- **XTTS_V2_TEXT_PREPARATION.md** - Text preparation guide for XTTS v2 model
-- **DATA_SYNCHRONIZER_USAGE.md** - Guide for using the data synchronizer
-
-**Analysis & Audits:**
-- **CODEBASE_AUDIT.md** - Codebase audit findings
-- **CODE_REVIEW_HIGH_VALUE_IMPROVEMENTS.md** - Code review improvements
-- **TTS_PERFORMANCE_AUDIT.md** - TTS performance analysis
-- **PLAYER_AESTHETIC_IMPROVEMENTS_SUMMARY.md** - Player UI improvements summary
-- **PLAYER_DESIGN_IMPROVEMENTS.md** - Player design improvements
-- **CHATTERBOX_ANALYSIS.md** - Analysis of external project features
-- **TTS_QUICK_OPTIMIZATION.md** - Quick optimization guide (consolidated into TTS_OPTIMIZATION_GUIDE.md)
-
-## Development
-
-### Running Tests
-```bash
+# Run tests
 make test
-```
 
-### Code Quality
-```bash
+# Run linters
 make lint
-make format
 ```
 
-## License
+### Make Commands
 
-MIT
+```bash
+make help                  # Show all commands
+make local-dev             # Start local dev environment
+make local-dev-full        # Start app + observability stack
+make observability-up      # Start observability stack only
+make observability-down    # Stop observability stack
+make grafana               # Open Grafana dashboard
+make test                  # Run tests
+make lint                  # Run linters
+make format                # Format code
+```
 
+## 🚢 Deployment
+
+### Docker Compose
+
+```bash
+# Development (LocalStack)
+docker-compose -f docker-compose.local.yml up -d
+
+# Production (AWS)
+docker-compose up -d
+```
+
+### Kubernetes
+
+```bash
+# Using Helm
+helm install audiobook ./helm/audiobook \
+  --namespace audiobook \
+  --create-namespace
+
+# Using raw manifests
+kubectl apply -f k8s/
+```
+
+### Terraform
+
+```bash
+# Development
+cd terraform/environments/dev
+terraform init
+terraform apply
+
+# Production
+cd terraform/environments/prod
+terraform init
+terraform apply -var="database_password=SECURE_PASSWORD"
+```
+
+## 📚 Documentation
+
+- **[SRE Guide](docs/SRE_GUIDE.md)**: Complete production deployment guide
+- **[Observability Guide](docs/OBSERVABILITY.md)**: Metrics, logs, and tracing setup
+- **[Infrastructure Organization](docs/INFRASTRUCTURE_ORGANIZATION.md)**: Terraform module structure
+- **[Production Deployment](docs/PRODUCTION_DEPLOYMENT.md)**: Deployment details
+- **[LocalStack S3](docs/LOCALSTACK_S3.md)**: S3 storage guide
+- **[Docker Full Stack](docs/DOCKER_FULL_STACK.md)**: Docker Compose guide
+- **[Terraform](terraform/README.md)**: Infrastructure documentation
+- **[Architecture](docs/ARCHITECTURE.md)**: System architecture
+
+## 🔧 Configuration
+
+### Environment Variables
+
+See `.env.example` for all configuration options.
+
+**Key Variables:**
+- `DATABASE_URL`: PostgreSQL connection string
+- `S3_BUCKET_NAME`: S3 bucket name
+- `S3_ENDPOINT_URL`: S3 endpoint (empty for AWS, `http://localstack:4566` for LocalStack)
+- `SQS_USE_QUEUE`: Enable SQS queue (true/false)
+- `CLOUDWATCH_LOG_GROUP`: CloudWatch log group name
+
+## 🧪 Testing
+
+```bash
+# Backend tests
+cd backend
+pytest --cov=src
+
+# Frontend tests
+cd frontend
+npm test
+
+# Integration tests
+docker-compose -f docker-compose.local.yml up -d
+pytest tests/integration/
+```
+
+## 📊 Monitoring
+
+- **CloudWatch Logs**: Centralized logging
+- **CloudWatch Metrics**: Application metrics
+- **Health Checks**: `/health` endpoint
+- **Kubernetes**: Pod metrics and HPA
+
+## 🔒 Security
+
+- Secrets in Kubernetes Secrets / AWS Secrets Manager
+- IAM roles for AWS access
+- Network policies (Kubernetes)
+- TLS/SSL encryption
+- Database encryption at rest
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make changes
+4. Run tests and linters
+5. Submit a pull request
+
+## 📝 License
+
+[Your License Here]
+
+## 🙏 Acknowledgments
+
+- [Coqui TTS](https://github.com/coqui-ai/TTS)
+- [LocalStack](https://localstack.cloud/)
+- [FastAPI](https://fastapi.tiangolo.com/)

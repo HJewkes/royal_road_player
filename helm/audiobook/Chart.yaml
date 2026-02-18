@@ -1,0 +1,13 @@
+apiVersion: v2
+name: audiobook
+description: Audiobook Generator - Full Stack Deployment
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - audiobook
+  - tts
+  - text-to-speech
+maintainers:
+  - name: Audiobook Team
+dependencies: []

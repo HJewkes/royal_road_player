@@ -227,3 +227,88 @@ clean: ## Remove build artifacts
 	@rm -rf backend/data backend/logs
 	@find . -type d -name "*.egg-info" -exec rm -rf {} + || true
 
+# SRE / DevOps Commands
+local-dev: ## Start local development environment (Docker Compose + LocalStack)
+	@./scripts/deploy/local-dev.sh
+
+terraform-init-dev: ## Initialize Terraform for dev environment
+	@cd terraform/environments/dev && terraform init
+
+terraform-plan-dev: ## Plan Terraform changes for dev
+	@cd terraform/environments/dev && terraform plan
+
+terraform-apply-dev: ## Apply Terraform changes for dev
+	@cd terraform/environments/dev && terraform apply
+
+terraform-init-prod: ## Initialize Terraform for prod environment
+	@cd terraform/environments/prod && terraform init
+
+terraform-plan-prod: ## Plan Terraform changes for prod
+	@cd terraform/environments/prod && terraform plan
+
+terraform-apply-prod: ## Apply Terraform changes for prod (requires confirmation)
+	@cd terraform/environments/prod && terraform apply
+
+helm-install: ## Install Helm chart (staging)
+	@helm upgrade --install audiobook ./helm/audiobook \
+		--namespace audiobook \
+		--create-namespace
+
+helm-upgrade: ## Upgrade Helm chart
+	@helm upgrade audiobook ./helm/audiobook \
+		--namespace audiobook
+
+k8s-status: ## Check Kubernetes deployment status
+	@kubectl get pods -n audiobook
+	@kubectl get svc -n audiobook
+	@kubectl get ingress -n audiobook
+
+k8s-logs-web: ## View web service logs
+	@kubectl logs -f deployment/audiobook-web -n audiobook
+
+k8s-logs-worker: ## View worker service logs
+	@kubectl logs -f deployment/audiobook-worker -n audiobook
+
+# Observability Commands
+observability-up: ## Start observability stack (Prometheus, Grafana, Loki, Tempo)
+	@echo "📊 Starting observability stack..."
+	@docker-compose -f docker-compose.local.yml -f docker-compose.observability.yml up -d prometheus grafana loki promtail tempo
+	@echo "✅ Observability stack started"
+	@echo "   Grafana: http://localhost:3001 (admin/admin)"
+	@echo "   Prometheus: http://localhost:9090"
+	@echo "   Loki: http://localhost:3100"
+	@echo "   Tempo: http://localhost:3200"
+
+observability-down: ## Stop observability stack
+	@echo "🛑 Stopping observability stack..."
+	@docker-compose -f docker-compose.observability.yml down
+	@echo "✅ Observability stack stopped"
+
+observability-logs: ## View observability stack logs
+	@docker-compose -f docker-compose.observability.yml logs -f
+
+local-dev-full: ## Start full local dev environment (app + observability)
+	@echo "🚀 Starting full local development environment..."
+	@docker-compose -f docker-compose.local.yml -f docker-compose.observability.yml up -d
+	@echo "✅ Full environment started"
+	@echo "   Application: http://localhost:8000"
+	@echo "   Grafana: http://localhost:3001 (admin/admin)"
+	@echo "   Prometheus: http://localhost:9090"
+	@echo "   Metrics endpoint: http://localhost:8000/metrics"
+
+grafana: ## Open Grafana dashboard
+	@echo "📊 Opening Grafana..."
+	@echo "   URL: http://localhost:3001"
+	@echo "   Username: admin"
+	@echo "   Password: admin"
+	@which xdg-open > /dev/null 2>&1 && xdg-open http://localhost:3001 || \
+	 which open > /dev/null 2>&1 && open http://localhost:3001 || \
+	 echo "   Please open http://localhost:3001 in your browser"
+
+prometheus: ## Open Prometheus UI
+	@echo "📈 Opening Prometheus..."
+	@echo "   URL: http://localhost:9090"
+	@which xdg-open > /dev/null 2>&1 && xdg-open http://localhost:9090 || \
+	 which open > /dev/null 2>&1 && open http://localhost:9090 || \
+	 echo "   Please open http://localhost:9090 in your browser"
+

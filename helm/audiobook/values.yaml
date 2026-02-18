@@ -1,0 +1,144 @@
+# Default values for audiobook
+# This is a YAML-formatted file.
+
+replicaCount:
+  web: 2
+  worker: 2
+
+image:
+  repository: audiobook
+  pullPolicy: Always
+  tag: "latest"
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# Service configuration
+service:
+  type: ClusterIP
+  webPort: 8000
+
+# Ingress configuration
+ingress:
+  enabled: false
+  className: "nginx"
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: audiobook.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: audiobook-tls
+      hosts:
+        - audiobook.example.com
+
+# Database configuration
+database:
+  enabled: true
+  image: postgres:15-alpine
+  storage: 10Gi
+  storageClass: standard
+  password: "audiobook_password"  # Change in production!
+
+# LocalStack configuration
+localstack:
+  enabled: true
+  storage: 5Gi
+  storageClass: standard
+  services: "s3,sqs,logs,sns,secretsmanager"
+
+# Resource limits
+resources:
+  web:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "2Gi"
+      cpu: "1000m"
+  worker:
+    requests:
+      memory: "2Gi"
+      cpu: "500m"
+    limits:
+      memory: "8Gi"
+      cpu: "4000m"
+  database:
+    requests:
+      memory: "256Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+
+# Autoscaling
+autoscaling:
+  web:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+  worker:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 20
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+
+# Configuration
+config:
+  # Database
+  databaseUrl: "postgresql://audiobook:$(POSTGRES_PASSWORD)@audiobook-db:5432/audiobook"
+  
+  # Web Service
+  webHost: "0.0.0.0"
+  webPort: "8000"
+  enableBackgroundProcessor: false
+  workerMode: false
+  
+  # TTS Configuration
+  ttsGpu: false
+  torchVersion: "cpu"
+  audioOutputFormat: "m4b"
+  audioBitrate: "128k"
+  
+  # S3 Storage
+  s3BucketName: "audiobook-data"
+  s3UseStorage: true
+  awsDefaultRegion: "us-east-1"
+  
+  # SQS Queue
+  sqsUseQueue: false
+  
+  # CloudWatch Logs
+  cloudwatchLogGroup: ""
+  
+  # SNS Notifications
+  snsTopicArn: ""
+  
+  # Logging
+  logLevel: "INFO"
+
+# Secrets (change in production!)
+secrets:
+  postgresPassword: "audiobook_password"
+  awsAccessKeyId: "test"
+  awsSecretAccessKey: "test"
+  s3EndpointUrl: "http://localstack:4566"
+  sqsEndpointUrl: "http://localstack:4566"
+  cloudwatchEndpointUrl: "http://localstack:4566"
+  snsEndpointUrl: "http://localstack:4566"
+  secretsManagerEndpointUrl: "http://localstack:4566"
+
+# Node selector (for GPU nodes)
+nodeSelector: {}
+
+# Tolerations
+tolerations: []
+
+# Affinity
+affinity: {}

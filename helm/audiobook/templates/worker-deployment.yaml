@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "audiobook.fullname" . }}-worker
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "audiobook.labels" . | nindent 4 }}
+    component: worker
+spec:
+  replicas: {{ .Values.replicaCount.worker }}
+  selector:
+    matchLabels:
+      {{- include "audiobook.selectorLabels" . | nindent 6 }}
+      component: worker
+  template:
+    metadata:
+      labels:
+        {{- include "audiobook.selectorLabels" . | nindent 8 }}
+        component: worker
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+      - name: worker
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        command: ["python", "-m", "src.web.worker"]
+        envFrom:
+        - configMapRef:
+            name: {{ include "audiobook.fullname" . }}-config
+        - secretRef:
+            name: {{ include "audiobook.fullname" . }}-secrets
+        env:
+        - name: DATABASE_URL
+          value: "{{ .Values.config.databaseUrl }}"
+        - name: WORKER_MODE
+          value: "true"
+        - name: ENABLE_BACKGROUND_PROCESSOR
+          value: "true"
+        resources:
+          {{- toYaml .Values.resources.worker | nindent 10 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

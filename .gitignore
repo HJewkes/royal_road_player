@@ -1,416 +1,82 @@
-# ==============================================================================
-# Credentials & Secrets
-# ==============================================================================
-.env
-.env.local
-.env.*.local
-*.key
-*.pem
-*.p12
-*.pfx
-secrets/
-*.secret
-credentials.json
-
-# ==============================================================================
 # Python
-# ==============================================================================
-# Virtual environments
-venv/
-env/
-ENV/
-.venv/
-.ENV/
-
-# Python cache
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
-
-# Distribution / packaging
 .Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-share/python-wheels/
+venv/
+env/
+ENV/
+.venv
 *.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
-
-# PyInstaller
-*.manifest
-*.spec
-
-# Unit test / coverage reports
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.coverage
 htmlcov/
 .tox/
-.nox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.py,cover
-.hypothesis/
-.pytest_cache/
-cover/
 
-# Jupyter Notebook
-.ipynb_checkpoints
-
-# IPython
-profile_default/
-ipython_config.py
-
-# pyenv
-.python-version
-
-# pipenv
-Pipfile.lock
-
-# poetry
-poetry.lock
-
-# Celery
-celerybeat-schedule
-celerybeat.pid
-
-# SageMath
-*.sage.py
-
-# Environments
-.env
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
-
-# Spyder
-.spyderproject
-.spyproject
-
-# Rope
-.ropeproject
-
-# mkdocs
-/site
-
-# mypy
-.mypy_cache/
-.dmypy.json
-dmypy.json
-
-# Pyre
-.pyre/
-
-# pytype
-.pytype/
-
-# Cython
-cython_debug/
-
-# ==============================================================================
-# Node.js / React / Vite
-# ==============================================================================
-# Dependencies
+# Node.js
 node_modules/
-frontend/node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-lerna-debug.log*
 .pnpm-debug.log*
+frontend/dist/
+frontend/.vite/
 
-# Build outputs
-dist/
-dist-ssr/
-build/
-*.local
-
-# Vite
-.vite/
-vite.config.js.timestamp-*
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
 
 # Environment
+.env
 .env.local
-.env.development.local
-.env.test.local
-.env.production.local
+.env.*.local
+*.env
 
-# Testing
-coverage/
-.nyc_output/
-
-# ESLint
-.eslintcache
-
-# Optional npm cache
-.npm
-
-# Optional eslint cache
-.eslintcache
-
-# Optional stylelint cache
-.stylelintcache
-
-# Microbundle cache
-.rpt2_cache/
-.rts2_cache_cjs/
-.rts2_cache_es/
-.rts2_cache_umd/
-
-# Optional REPL history
-.node_repl_history
-
-# Output of 'npm pack'
-*.tgz
-
-# Yarn Integrity
-.yarn-integrity
-
-# parcel-bundler cache
-.cache
-.parcel-cache
-
-# Next.js
-.next/
-out/
-
-# Nuxt.js
-.nuxt
-dist
-
-# Gatsby
-.cache/
-public
-
-# Storybook
-storybook-static
-
-# ==============================================================================
-# Runtime Data & Application Files
-# ==============================================================================
-# Application data
-# Ignore all contents but allow .gitkeep files for directory structure
-data/*
-!data/.gitkeep
-data/**/*
-!data/**/.gitkeep
-logs/*
-!logs/.gitkeep
-backend/data/
-backend/logs/
+# Data & Logs
+data/
+logs/
 *.log
-*.log.*
-
-# Databases
 *.db
-*.db-shm
-*.db-wal
 *.db-*
-*.sqlite
-*.sqlite3
 
-# Audio files (runtime generated)
-*.wav
-*.mp3
-*.ogg
-*.flac
-*.m4a
+# Docker
+.dockerignore
 
-# Voice samples and models (runtime generated)
-data/voice_samples/
-data/voices/*.wav
-data/voices/*.mp3
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+terraform.tfvars
+*.tfvars
+.terraform.tfstate.lock.info
 
-# Checkpoints
-data/checkpoints/
+# Secrets
+secrets/
+*.key
+*.pem
+*.p12
+*.pfx
 
-# Metrics (runtime generated)
-data/metrics/
-
-# Jobs (runtime generated)
-data/jobs.json
-
-# Books (runtime scraped content)
-data/books/
-
-# ==============================================================================
-# Build Artifacts
-# ==============================================================================
-# Frontend build
-frontend/dist/
-
-# Python build
-build/
-dist/
-*.egg-info/
-
-# ==============================================================================
-# IDE & Editor Files
-# ==============================================================================
-# VSCode
-.vscode/
-*.code-workspace
-.history/
-
-# IntelliJ IDEA / PyCharm
-.idea/
-*.iml
-*.iws
-*.ipr
-out/
-
-# Sublime Text
-*.sublime-project
-*.sublime-workspace
-
-# Vim
-*.swp
-*.swo
-*~
-.vim/
-
-# Emacs
-*~
-\#*\#
-/.emacs.desktop
-/.emacs.desktop.lock
-*.elc
-auto-save-list
-tramp
-.\#*
-
-# VS Code
-.vscode/*
-!.vscode/settings.json
-!.vscode/tasks.json
-!.vscode/launch.json
-!.vscode/extensions.json
-*.code-workspace
-
-# ==============================================================================
-# OS Files
-# ==============================================================================
-# macOS
-.DS_Store
-.AppleDouble
-.LSOverride
-Icon
-._*
-.DocumentRevisions-V100
-.fseventsd
-.Spotlight-V100
-.TemporaryItems
-.Trashes
-.VolumeIcon.icns
-.com.apple.timemachine.donotpresent
-.AppleDB
-.AppleDesktop
-Network Trash Folder
-Temporary Items
-.apdisk
-
-# Windows
-Thumbs.db
-Thumbs.db:encryptable
-ehthumbs.db
-ehthumbs_vista.db
-*.stackdump
-[Dd]esktop.ini
-$RECYCLE.BIN/
-*.cab
-*.msi
-*.msix
-*.msm
-*.msp
-*.lnk
-
-# Linux
-*~
-.fuse_hidden*
-.directory
-.Trash-*
-.nfs*
-
-# ==============================================================================
-# Model Files & ML Artifacts
-# ==============================================================================
-# TTS Models (downloaded at runtime)
-*.pt
-*.pth
-*.onnx
-*.tflite
-models/
-checkpoints/
-*.ckpt
-*.safetensors
-
-# Hugging Face cache
-.cache/
-huggingface/
-.transformers/
-
-# ==============================================================================
-# Temporary Files
-# ==============================================================================
+# Temporary files
+tmp/
+temp/
 *.tmp
-*.temp
-*.bak
-*.backup
-*.swp
-*.swo
-*~
-.cache/
 
-# ==============================================================================
-# Archive & Documentation (if contains sensitive data)
-# ==============================================================================
-# Only ignore if archive contains runtime data
-# .archive/ is typically version controlled, but be careful
+# OS
+Thumbs.db
+.DS_Store
 
-# ==============================================================================
-# Miscellaneous
-# ==============================================================================
-# Local configuration overrides
-local_settings.py
-local_config.py
-
-# Profiling data
-*.prof
-
-# Compiled files
-*.com
-*.class
-*.dll
-*.exe
-*.o
-*.so
-
-# Archives
-*.7z
-*.dmg
-*.gz
-*.iso
-*.jar
-*.rar
-*.tar
-*.zip
-
-# System files
-.Spotlight-V100
-.Trashes
+# Monitoring data
+monitoring/grafana/data/
+monitoring/prometheus/data/
+monitoring/loki/data/
+monitoring/tempo/data/

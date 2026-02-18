@@ -14,6 +14,8 @@ from src.utils.config import get_settings
 from src.web.routes import router
 from src.services.job_queue import get_queue
 from src.data.database import init_db
+from src.monitoring.metrics import MetricsMiddleware, get_metrics
+from src.monitoring.tracing import setup_tracing, instrument_fastapi, instrument_sqlalchemy
 
 settings = get_settings()
 
@@ -21,31 +23,54 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application lifespan - start/stop background services."""
+    # Startup: Set up observability
+    tracing_endpoint = os.getenv("TRACING_ENDPOINT", "http://tempo:4317")
+    setup_tracing(
+        service_name="audiobook-web",
+        endpoint=tracing_endpoint if os.getenv("TRACING_ENABLED", "false").lower() == "true" else None,
+        enabled=os.getenv("TRACING_ENABLED", "false").lower() == "true"
+    )
+    instrument_sqlalchemy()
+    
     # Startup: Initialize database
     init_db()
     print("✅ Database initialized")
     
-    # Startup: Start background processor (if enabled)
-    queue = get_queue()
-    if settings.enable_background_processor:
-        queue.start_background_processor(interval_seconds=1.0)
-        print("✅ Background job processor started (logs: logs/queue_processor.log)")
+    # Startup: Start background processor (if enabled and not running as separate worker)
+    # In Docker, worker runs as separate service, so skip here
+    worker_mode = os.getenv("WORKER_MODE", "false").lower() == "true"
+    if not worker_mode:
+        queue = get_queue()
+        if settings.enable_background_processor:
+            queue.start_background_processor(interval_seconds=1.0)
+            print("✅ Background job processor started (logs: logs/queue_processor.log)")
+        else:
+            print("⚠️  Background job processor disabled (set ENABLE_BACKGROUND_PROCESSOR=true to enable)")
     else:
-        print("⚠️  Background job processor disabled (set ENABLE_BACKGROUND_PROCESSOR=true to enable)")
+        print("ℹ️  Running in worker mode - background processor handled by worker service")
     
     yield
     
-    # Shutdown: Stop background processor (if it was started)
-    if settings.enable_background_processor and queue._processor_task and not queue._processor_task.done():
-        queue._processor_task.cancel()
-        try:
-            await queue._processor_task
-        except asyncio.CancelledError:
-            pass
-        print("✅ Background job processor stopped")
+    # Shutdown: Stop background processor (if it was started and not in worker mode)
+    worker_mode = os.getenv("WORKER_MODE", "false").lower() == "true"
+    if not worker_mode:
+        queue = get_queue()
+        if settings.enable_background_processor and queue._processor_task and not queue._processor_task.done():
+            queue._processor_task.cancel()
+            try:
+                await queue._processor_task
+            except asyncio.CancelledError:
+                pass
+            print("✅ Background job processor stopped")
 
 
 app = FastAPI(title="Audiobook System", version="0.1.0", lifespan=lifespan)
+
+# Instrument FastAPI for tracing
+instrument_fastapi(app)
+
+# Add Prometheus metrics middleware
+app.add_middleware(MetricsMiddleware)
 
 # CORS middleware for development (React dev server)
 app.add_middleware(
@@ -55,6 +80,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/health")
+async def health_check():
+    """Simple health check endpoint for Docker."""
+    return {"status": "healthy", "service": "audiobook-web"}
+
+
+@app.get("/metrics")
+async def metrics():
+    """Prometheus metrics endpoint."""
+    from fastapi.responses import Response
+    metrics_data, content_type = get_metrics()
+    return Response(content=metrics_data, media_type=content_type)
 
 # Include API routes
 app.include_router(router, prefix="")

@@ -1,0 +1,60 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info
+dist
+build
+.pytest_cache
+.mypy_cache
+.coverage
+htmlcov
+
+# Virtual environments
+venv/
+env/
+ENV/
+python_env/
+
+# Node
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Data (will be mounted as volume)
+data/
+logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+
+# Documentation
+docs/
+.archive/
+
+# Scripts (not needed in container)
+scripts/
+
+# Frontend build (will be built in container)
+frontend/dist/
+frontend/build/
