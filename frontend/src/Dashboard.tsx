@@ -17,7 +17,7 @@ interface SeriesBookInfo {
   chapters_complete: number
   progress_percent: number
   status: string
-  chapters_on_royal_road?: number | null
+  chapters_on_source?: number | null
 }
 
 interface FictionPreview {
@@ -27,6 +27,7 @@ interface FictionPreview {
   url: string
   book_count: number
   books: Array<{ book_number: number; chapter_count: number }>
+  source?: string
 }
 
 interface DashboardProps {
@@ -68,7 +69,11 @@ function Dashboard({ onSelectBook }: DashboardProps) {
       
       const fictionInfos: FictionInfo[] = await res.json()
       // Sort by fiction_id numerically (lower IDs first = older series first)
-      fictionInfos.sort((a, b) => parseInt(a.fiction_id) - parseInt(b.fiction_id))
+      fictionInfos.sort((a, b) => {
+        const aNum = parseInt(a.fiction_id.replace(/\D/g, '')) || 0
+        const bNum = parseInt(b.fiction_id.replace(/\D/g, '')) || 0
+        return aNum - bNum
+      })
       setFictions(fictionInfos)
 
       // Load series info in parallel (uses cached Royal Road data)
@@ -137,7 +142,7 @@ function Dashboard({ onSelectBook }: DashboardProps) {
     }
   }
 
-  const checkRoyalRoad = async (fictionId: string, e?: React.MouseEvent) => {
+  const checkSource = async (fictionId: string, e?: React.MouseEvent) => {
     e?.stopPropagation()
     setRefreshingFiction(fictionId)
     try {
@@ -147,19 +152,19 @@ function Dashboard({ onSelectBook }: DashboardProps) {
       setSeriesBooks(prev => ({ ...prev, [fictionId]: books }))
 
       const newChapterBooks = books.filter(
-        b => b.is_downloaded && b.chapters_on_royal_road != null && b.chapters_on_royal_road > b.chapter_count
+        b => b.is_downloaded && b.chapters_on_source != null && b.chapters_on_source > b.chapter_count
       )
       if (newChapterBooks.length > 0) {
         const msg = newChapterBooks
-          .map(b => `Book ${b.book_number}: ${b.chapters_on_royal_road! - b.chapter_count} new`)
+          .map(b => `Book ${b.book_number}: ${b.chapters_on_source! - b.chapter_count} new`)
           .join('; ')
         toast.info('New chapters available', msg)
       } else {
-        toast.success('Royal Road checked', 'All books are up to date')
+        toast.success('Source checked', 'All books are up to date')
       }
     } catch (err) {
-      toast.error('Check failed', 'Could not fetch Royal Road data')
-      console.error('Royal Road check failed:', err)
+      toast.error('Check failed', 'Could not fetch source data')
+      console.error('Source check failed:', err)
     } finally {
       setRefreshingFiction(null)
     }
@@ -196,8 +201,8 @@ function Dashboard({ onSelectBook }: DashboardProps) {
     if (!newSeriesUrl.trim()) return
 
     // Basic URL validation
-    if (!newSeriesUrl.includes('royalroad.com/fiction/')) {
-      setAddingError('Please enter a valid Royal Road fiction URL')
+    if (!newSeriesUrl.includes('royalroad.com/fiction/') && !newSeriesUrl.includes('patreon.com/c/')) {
+      setAddingError('Please enter a Royal Road or Patreon URL')
       return
     }
 
@@ -297,7 +302,7 @@ function Dashboard({ onSelectBook }: DashboardProps) {
           <div className="add-series-input-group">
             <input
               type="text"
-              placeholder="https://www.royalroad.com/fiction/..."
+              placeholder="Royal Road or Patreon URL"
               value={newSeriesUrl}
               onChange={(e) => setNewSeriesUrl(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') void handlePreviewSeries() }}
@@ -354,7 +359,7 @@ function Dashboard({ onSelectBook }: DashboardProps) {
 
           {!preview && !previewLoading && (
             <p className="add-series-hint">
-              Paste a Royal Road fiction URL to preview and add a series
+              Paste a Royal Road or Patreon URL to preview and add a series
             </p>
           )}
         </div>
@@ -395,11 +400,11 @@ function Dashboard({ onSelectBook }: DashboardProps) {
 
               <button
                 className="btn btn-sm btn-check-rr"
-                onClick={(e) => void checkRoyalRoad(fiction.fiction_id, e)}
+                onClick={(e) => void checkSource(fiction.fiction_id, e)}
                 disabled={refreshingFiction === fiction.fiction_id}
-                title="Check Royal Road for new chapters"
+                title="Check for new chapters"
               >
-                {refreshingFiction === fiction.fiction_id ? '...' : '↻ Check RR'}
+                {refreshingFiction === fiction.fiction_id ? '...' : '↻ Check'}
               </button>
               
               {totalChapters > 0 && (
@@ -459,7 +464,7 @@ function Dashboard({ onSelectBook }: DashboardProps) {
             <div className="empty-book" />
           </div>
           <h3>Your library awaits</h3>
-          <p>Add a Royal Road fiction URL to begin building your audiobook collection</p>
+          <p>Add a Royal Road or Patreon URL to begin building your audiobook collection</p>
           <button
             className="btn btn-primary btn-lg"
             onClick={() => setShowAddSeries(true)}
