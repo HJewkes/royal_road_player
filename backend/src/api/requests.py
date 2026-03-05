@@ -28,13 +28,14 @@ class FictionInfo(BaseModel):
 
 
 class FictionPreview(BaseModel):
-    """Preview of a fiction from Royal Road."""
+    """Preview of a fiction from a content source."""
     fiction_id: str
     title: str
     author: str | None
     url: str
     book_count: int
     books: list[dict] = []
+    source: str = "royal_road"
 
 
 class SeriesBookInfo(BaseModel):
@@ -49,8 +50,8 @@ class SeriesBookInfo(BaseModel):
     chapters_exported: int = 0
     progress_percent: float = 0.0
     status: BookStatus = BookStatus.NOT_DOWNLOADED
-    # Royal Road chapter count (when refreshed); enables "new chapters" detection
-    chapters_on_royal_road: Optional[int] = None
+    # Source chapter count (when refreshed); enables "new chapters" detection
+    chapters_on_source: Optional[int] = None
 
 
 # ============================================================================
