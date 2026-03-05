@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     enable_background_processor: bool = True
     max_concurrent_chunks: int = 1  # XTTS is GPU-bound, run one at a time
 
+    # Patreon settings
+    patreon_session_id: str = ""
+    patreon_chapter_pattern: str = r"^(\d+)\.(\d+)\s*-\s*(.+?)(?:\s*\[.*\])?$"
+
     class Config:
         env_prefix = "AUDIOBOOK_"
         env_file = ".env"
