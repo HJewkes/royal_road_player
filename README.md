@@ -1,133 +1,217 @@
-# Audiobook System
+# Audiobook
 
-A comprehensive local audiobook system for Royal Road books with high-quality text-to-speech and web-based playback controls.
+A streamlined audiobook production system for converting Royal Road web fiction to audiobooks.
 
-## Features
+## Key Features
 
-- **Web Scraping:** Download chapters from Royal Road automatically
-- **Text Formatting:** Clean, well-formatted text files
-- **LLM Annotation:** Automatic text annotation for inflection and timing using local LLM
-- **High-Quality TTS:** Local text-to-speech conversion with annotation support
-- **Web Playback:** Local web app with full playback controls
+- **Filesystem-based state**: No database required - all state is derived from file existence
+- **Chapter-by-chapter processing**: Completes one chapter before moving to the next
+- **Auto-export on completion**: Chapters are automatically exported when all chunks complete
+- **STT Validation**: Validate generated audio against source text using Whisper
+- **Simple workflow**: Scrape → Normalize → Chunk → Generate → Validate → Export
+
+## Directory Structure
+
+```
+audiobook/
+├── backend/
+│   ├── src/
+│   │   ├── api/           # FastAPI routes
+│   │   ├── scraper/       # Royal Road scraper
+│   │   ├── text/          # Normalization + chunking
+│   │   ├── tts/           # XTTS v2 engine
+│   │   ├── validation/    # STT validation
+│   │   ├── export/        # Audio concatenation
+│   │   ├── queue/         # Job processing
+│   │   ├── discovery.py   # Filesystem discovery
+│   │   ├── models.py      # Pydantic models
+│   │   └── config.py      # Settings
+│   ├── tests/
+│   └── main.py
+├── frontend/
+│   └── src/
+│       ├── App.tsx
+│       ├── Dashboard.tsx
+│       └── BookView.tsx
+├── data/
+│   ├── books/             # Book data
+│   │   └── {fiction_id}/
+│   │       └── book_{N}/
+│   │           ├── metadata.json
+│   │           └── chapters/
+│   │               └── chapter_{N}/
+│   │                   ├── raw.txt
+│   │                   ├── normalized.txt
+│   │                   ├── chunks/
+│   │                   │   ├── 001.txt
+│   │                   │   └── 001.wav
+│   │                   ├── validation.json
+│   │                   └── audio.wav
+│   └── cache/
+│       └── stt/           # Whisper cache
+└── exports/               # Final audio files
+```
+
+## Prerequisites
+
+- **Python 3.11** (required for TTS library compatibility)
+- **Python 3.14+** (for general development)
+- **Node.js** (for frontend)
+
+On macOS with Homebrew:
+```bash
+brew install python@3.11 node
+```
 
 ## Quick Start
 
-### Prerequisites
-
-- Python 3.10+
-- Node.js 18+ (for frontend development)
-- 8GB+ RAM (16GB recommended for TTS)
-- 10GB+ free storage
-
-### Installation
+### 1. Check System Requirements
 
 ```bash
-# One-command setup (installs Ollama, TTS, and all dependencies)
+make check-system
+```
+
+### 2. Setup
+
+This creates two virtual environments:
+- `venv` (Python 3.14+) - General dependencies
+- `venv311` (Python 3.11) - TTS dependencies (required for audio generation)
+
+```bash
 make setup
-
-# Optional: Pull default LLM model for annotations
-make setup-ollama-model
 ```
 
-### Usage
+### 3. Run the Server
 
-#### 1. Find a Book on Royal Road
+The server uses `venv311` which includes TTS support:
 
 ```bash
-# Using Python module CLI (from project root)
-cd backend && python -m src.scraper.royal_road --help
-
-# Search for books (via Python API)
-cd backend && python -c "from src.scraper.royal_road import RoyalRoadScraper; scraper = RoyalRoadScraper(); print(scraper.search_royal_road('Player Manager Ted Steele'))"
+make dev
 ```
 
-#### 2. Download Chapters
+### 4. Run the Frontend
 
 ```bash
-# Download all chapters from a book (from project root)
-cd backend && python -m src.scraper.royal_road "https://www.royalroad.com/fiction/12345/book-title"
-
-# Download specific book number from a series
-cd backend && python -m src.scraper.royal_road "URL" -b 7
-
-# Test with limited chapters
-cd backend && python -m src.scraper.royal_road "URL" -m 5
-
-# Custom output directory
-cd backend && python -m src.scraper.royal_road "URL" -o ./my_books
+make frontend-setup  # First time only
+make frontend-dev
 ```
 
-#### 3. Generate Audio
-
-Audio generation is handled through the web interface. You can also use the Python API directly:
-
-```python
-# From backend directory or with PYTHONPATH=backend
-from src.tts.generator import AudioGenerator
-from pathlib import Path
-
-generator = AudioGenerator()
-audio_files = generator.generate_chapter_chunked(
-    text_path=Path("data/books/.../chapters/07-01 - Chapter Title.txt"),
-    chunk_duration_minutes=1.0
-)
-```
-
-#### 4. Start Web App
+Or run both together:
 
 ```bash
-make run
-# Then open http://localhost:8000 in your browser
+make dev-all
 ```
 
-The web app provides:
-- Library view with all downloaded books
-- Chapter playback with progress tracking
-- Background job management (scraping, audio generation)
-- Series discovery and book search
-- Chunk timeline visualization
+Open http://localhost:5173 to access the web UI.
 
-## Documentation
+## API Endpoints
 
-The `docs/` directory focuses on setup and architecture:
+### Discovery
 
-- **[SETUP.md](SETUP.md)** - Complete setup guide
-- **[docs/TTS_SETUP.md](docs/TTS_SETUP.md)** - Text-to-speech setup instructions and model configuration
-- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** - System architecture, component overview, project structure, and data flow
+- `GET /api/fictions` - List all fiction IDs
+- `GET /api/books/{fiction_id}` - List books for a fiction
+- `GET /api/books/{fiction_id}/{book_number}` - Get book details
+- `GET /api/books/{fiction_id}/{book_number}/chapters` - List chapters
 
-### Additional Documentation
+### Scraping
 
-Additional guides and reference documentation are archived in [`.archive/docs/`](.archive/docs/):
+- `GET /api/scraper/preview?fiction_id=X&book_number=Y` - Preview chapters
+- `POST /api/scraper/download` - Download a book
 
-**Reference:**
-- **API.md** - REST API reference with all endpoints and request/response formats
-- **TTS_OPTIMIZATION_GUIDE.md** - Performance optimization guide for TTS processing
-- **XTTS_V2_TEXT_PREPARATION.md** - Text preparation guide for XTTS v2 model
-- **DATA_SYNCHRONIZER_USAGE.md** - Guide for using the data synchronizer
+### Text Processing
 
-**Analysis & Audits:**
-- **CODEBASE_AUDIT.md** - Codebase audit findings
-- **CODE_REVIEW_HIGH_VALUE_IMPROVEMENTS.md** - Code review improvements
-- **TTS_PERFORMANCE_AUDIT.md** - TTS performance analysis
-- **PLAYER_AESTHETIC_IMPROVEMENTS_SUMMARY.md** - Player UI improvements summary
-- **PLAYER_DESIGN_IMPROVEMENTS.md** - Player design improvements
-- **CHATTERBOX_ANALYSIS.md** - Analysis of external project features
-- **TTS_QUICK_OPTIMIZATION.md** - Quick optimization guide (consolidated into TTS_OPTIMIZATION_GUIDE.md)
+- `POST /api/normalize` - Normalize chapter text
+- `POST /api/chunk` - Chunk normalized text
+
+### Audio Generation
+
+- `POST /api/generate` - Queue chapters for audio generation
+- `GET /api/queue/status` - Get queue status
+- `GET /api/queue/chapter/{fiction_id}/{book_number}/{chapter_number}` - Chapter status
+- `POST /api/queue/retry` - Retry failed jobs
+
+### Validation
+
+- `POST /api/validate` - Validate a chapter
+- `GET /api/validation/{fiction_id}/{book_number}/{chapter_number}` - Get results
+
+### Export
+
+- `POST /api/export` - Export chapter to audio file
+- `GET /api/export/status/{fiction_id}/{book_number}` - Get export status
+
+## Dependencies
+
+The project uses two Python virtual environments:
+
+- **venv** (Python 3.14+): General dependencies (`backend/requirements.txt`)
+  - FastAPI, web scraping, text processing, etc.
+  
+- **venv311** (Python 3.11): TTS dependencies (`backend/requirements-tts.txt`)
+  - Coqui TTS, PyTorch, Whisper for validation
+  - **Required for audio generation**
+
+The `make setup` command automatically creates both environments. The development server (`make dev`) uses `venv311` to ensure TTS functionality is available.
+
+## Configuration
+
+Environment variables (in `.env`):
+
+```env
+# TTS Settings
+AUDIOBOOK_TTS_MODEL=tts_models/multilingual/multi-dataset/xtts_v2
+AUDIOBOOK_VOICE_SAMPLE_PATH=/path/to/voice.wav
+
+# Validation
+AUDIOBOOK_WHISPER_MODEL=base
+AUDIOBOOK_VALIDATION_THRESHOLD=0.90
+
+# Server
+AUDIOBOOK_HOST=0.0.0.0
+AUDIOBOOK_PORT=8000
+AUDIOBOOK_DEBUG=false
+```
+
+## State Derivation
+
+Status is determined by file existence:
+
+| Files Present | Status |
+|--------------|--------|
+| `raw.txt` | Downloaded |
+| `normalized.txt` | Normalized |
+| `chunks/*.txt` | Chunked |
+| All `chunks/*.wav` | Audio Complete |
+| `validation.json` | Validated |
+| `audio.wav` | Chapter Ready |
+| In `exports/` | Exported |
 
 ## Development
 
-### Running Tests
+### Run Tests
+
 ```bash
 make test
 ```
 
-### Code Quality
+### Lint
+
 ```bash
 make lint
+```
+
+### Format
+
+```bash
 make format
+```
+
+### Clean Rebuild
+
+```bash
+make rebuild
 ```
 
 ## License
 
-MIT
-
+Private project - not for distribution.

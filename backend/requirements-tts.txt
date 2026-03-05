@@ -1,0 +1,28 @@
+# TTS dependencies - require Python 3.9-3.11
+# These are installed in venv311 (Python 3.11) by the Makefile setup target.
+# Do NOT install these in the main venv (Python 3.14+) as TTS is not compatible.
+
+# Text-to-Speech Engine
+# NOTE: TTS 0.21.0 and 0.22.0 have compatibility issues with transformers 5.1.0
+# (missing BeamSearchScorer). If you encounter import errors, you may need to
+# use an older TTS version or wait for a fix.
+TTS>=0.21.0
+
+# PyTorch (required by TTS)
+# PyTorch 2.6+ changed torch.load defaults (weights_only=True) which breaks TTS model loading
+# Use PyTorch < 2.6 for compatibility
+torch>=2.0.0,<2.6.0
+torchaudio>=2.0.0,<2.6.0
+
+# Transformers - pinned to 4.36.0 for BeamSearchScorer compatibility with TTS
+# TTS requires BeamSearchScorer which was removed in transformers 5.x
+transformers==4.36.0
+
+# NumPy - pinned for compatibility with numba and gruut
+# numba requires numpy<2.4, gruut requires numpy<2.0.0
+numpy>=1.19.0,<2.0.0
+
+# Speech-to-Text Validation
+openai-whisper>=20231117
+
+

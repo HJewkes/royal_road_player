@@ -1,4 +1,5 @@
-"""Audiobook system for Royal Road books."""
+"""Audiobook V2 - Streamlined audiobook production system."""
 
-__version__ = "0.1.0"
+__version__ = "2.0.0"
+
 

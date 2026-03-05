@@ -1,12 +1,6 @@
-"""Scraper module."""
+"""Royal Road scraper module."""
 
-from src.scraper.royal_road_client import RoyalRoadClient
-from src.scraper.html_processor import HTMLProcessor
-from src.scraper.royal_road_controller import RoyalRoadController
+from src.scraper.royal_road import RoyalRoadScraper, get_scraper
 
-__all__ = [
-    'RoyalRoadClient',
-    'HTMLProcessor',
-    'RoyalRoadController',
-]
+__all__ = ['RoyalRoadScraper', 'get_scraper']
 

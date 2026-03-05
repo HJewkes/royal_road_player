@@ -1,31 +1,23 @@
-# Web Framework
+# Web framework
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
-websockets>=12.0
 
-# Web Scraping
+# Text processing
 beautifulsoup4>=4.12.0
-requests>=2.31.0
 lxml>=4.9.0
-markdownify>=0.11.0
+requests>=2.31.0
 
-# TTS (Coqui TTS) - Requires Python <3.12
-# Note: If using Python 3.12+, consider using Piper TTS or downgrade to Python 3.11
-TTS>=0.22.0; python_version < "3.12"
-torch>=2.1.0
+# Audio processing
+pydub>=0.25.0
+scipy>=1.11.0
 
-# LLM Client
-httpx>=0.25.0
-
-# Database
-sqlalchemy>=2.0.0
+# Data models
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
 
 # Utilities
 python-dotenv>=1.0.0
-pydantic>=2.5.0
-pydantic-settings>=2.1.0
-attrs>=23.2.0
+aiofiles>=23.2.0
 
-# Text Chunking
-chunkipy>=0.1.0
-
+# Testing
+pytest>=7.4.0

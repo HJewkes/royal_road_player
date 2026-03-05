@@ -1,229 +1,151 @@
-.PHONY: help setup teardown rebuild check-system install dev dev-all test test-coverage lint lint-flake8 lint-mypy lint-pylint format format-check run clean
+# ============================================================================
+# Audiobook Makefile
+# ============================================================================
+# This project uses TWO virtual environments:
+#
+#   venv (Python 3.14+)
+#     - General dependencies (FastAPI, web scraping, text processing)
+#     - Used for: tests, linting, formatting
+#
+#   venv311 (Python 3.11)
+#     - TTS dependencies (Coqui TTS requires Python 3.9-3.11)
+#     - Includes all general dependencies + TTS libraries
+#     - Used for: running the server (make dev, make dev-bg, make dev-all)
+#
+# The server MUST use venv311 to have TTS functionality available.
+# ============================================================================
 
-help: ## Show available commands
-	@echo "Available commands:"
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
+.PHONY: help setup teardown rebuild dev dev-bg kill-dev test lint format clean frontend-setup frontend-dev frontend-build dev-all
 
-check-system: ## Validate system prerequisites
-	@echo "🔍 Checking system requirements..."
-	@python3 --version || (echo "❌ Python 3.10+ required" && exit 1)
-	@python_version=$$(python3 --version 2>&1 | awk '{print $$2}' | cut -d. -f1,2); \
-	if [ "$$(echo "$$python_version >= 3.12" | bc 2>/dev/null || echo 0)" = "1" ]; then \
-		echo "⚠️  Warning: Python $$python_version detected. Coqui TTS requires Python <3.12."; \
-		echo "   Consider using Python 3.11 for TTS support, or use Piper TTS instead."; \
-	fi
-	@echo "✅ System checks passed"
+# Default target
+help:
+	@echo "Audiobook - Available commands:"
+	@echo ""
+	@echo "  Setup:"
+	@echo "    make check-system   - Check system requirements (Python 3.11, Node.js)"
+	@echo "    make setup          - Create venvs and install dependencies"
+	@echo "    make teardown       - Clean everything for fresh start"
+	@echo "    make rebuild        - teardown + setup"
+	@echo ""
+	@echo "  Development:"
+	@echo "    make dev            - Run backend server"
+	@echo "    make dev-bg         - Run backend server in background"
+	@echo "    make kill-dev       - Stop all dev servers"
+	@echo "    make dev-all        - Run both backend and frontend"
+	@echo ""
+	@echo "  Frontend:"
+	@echo "    make frontend-setup - Install frontend dependencies"
+	@echo "    make frontend-dev   - Run frontend dev server"
+	@echo "    make frontend-build - Build frontend for production"
+	@echo ""
+	@echo "  Code Quality:"
+	@echo "    make test           - Run tests"
+	@echo "    make lint           - Run linters"
+	@echo "    make format         - Format code"
+	@echo "    make clean          - Remove build artifacts"
+	@echo ""
 
-install-ollama: ## Install Ollama (if not present)
-	@echo "📥 Checking Ollama installation..."
-	@if ! command -v ollama > /dev/null 2>&1; then \
-		echo "📦 Installing Ollama..."; \
-		curl -fsSL https://ollama.ai/install.sh | sh || (echo "❌ Failed to install Ollama. Please install manually from https://ollama.ai" && exit 1); \
-	else \
-		echo "✅ Ollama already installed: $$(ollama --version)"; \
-	fi
+# Check system requirements
+check-system:
+	@echo "Checking system requirements..."
+	@which python3.11 > /dev/null || (echo "❌ Python 3.11 not found. Install with: brew install python@3.11" && exit 1)
+	@which python3 > /dev/null || (echo "❌ Python 3 not found" && exit 1)
+	@which node > /dev/null || (echo "❌ Node.js not found" && exit 1)
+	@echo "✅ System requirements met"
 
-install-tts-coqui: ## Install Coqui TTS
-	@echo "📥 Installing Coqui TTS..."
-	@if [ ! -d venv ]; then \
-		echo "❌ Virtual environment not found. Run 'make setup' first." && exit 1; \
-	fi
-	@. venv/bin/activate && pip install TTS>=0.22.0 || (echo "❌ Failed to install Coqui TTS" && exit 1)
-	@echo "✅ Coqui TTS installed. Models will download on first use."
+# Setup virtual environment and install dependencies
+setup: check-system
+	@echo "Creating virtual environments..."
+	@echo "Creating venv (Python 3) for general dependencies..."
+	@if [ -d "venv" ]; then echo "⚠️  venv already exists, skipping creation"; else python3 -m venv venv; fi
+	./venv/bin/pip install --upgrade pip
+	./venv/bin/pip install -r backend/requirements.txt
+	@echo "Creating venv311 (Python 3.11) for TTS dependencies..."
+	@if [ -d "venv311" ]; then echo "⚠️  venv311 already exists, skipping creation"; else python3.11 -m venv venv311; fi
+	./venv311/bin/pip install --upgrade pip
+	./venv311/bin/pip install -r backend/requirements.txt -r backend/requirements-tts.txt
+	@echo "✅ Setup complete!"
+	@echo "  - venv (Python 3.14+): General dependencies"
+	@echo "  - venv311 (Python 3.11): TTS dependencies (used by server)"
 
-setup-tts-model: ## Check and setup TTS model
-	@echo "📥 Checking TTS model setup..."
-	@if [ ! -d venv ]; then \
-		echo "❌ Virtual environment not found. Run 'make setup' first." && exit 1; \
-	fi
-	@. venv/bin/activate && PYTHONPATH=backend python scripts/setup_tts.py || (echo "⚠️  TTS model setup failed" && exit 1)
-	@echo "✅ TTS model ready"
+# Run development server (uses venv311 for TTS support)
+dev:
+	@if [ ! -d "venv311" ]; then echo "❌ venv311 not found. Run 'make setup' first." && exit 1; fi
+	@echo "Starting development server (using venv311 for TTS support)..."
+	cd backend && ../venv311/bin/python main.py
 
-install-tts-piper: ## Install Piper TTS (requires manual download)
-	@echo "📥 Piper TTS installation..."
-	@echo "⚠️  Piper TTS requires manual setup:"
-	@echo "   1. Download from: https://github.com/rhasspy/piper/releases"
-	@echo "   2. Extract to a directory"
-	@echo "   3. Set PIPER_PATH in .env file"
-	@echo "   Or use: pip install piper-tts (if available)"
+# Run in background
+dev-bg:
+	@if [ ! -d "venv311" ]; then echo "❌ venv311 not found. Run 'make setup' first." && exit 1; fi
+	@echo "Starting development server in background (using venv311)..."
+	cd backend && ../venv311/bin/python main.py &
 
-install-tts: install-tts-coqui ## Install TTS system (defaults to Coqui)
-	@echo "✅ TTS system ready"
+# Kill dev servers
+kill-dev:
+	@echo "Stopping development servers..."
+	-pkill -f "python main.py" || true
+	-pkill -f "vite" || true
+	-pkill -f "npm run dev" || true
+	@echo "✅ Servers stopped"
 
-setup-ollama-model: ## Pull default Ollama model
-	@echo "📥 Pulling Ollama model..."
-	@if ! command -v ollama > /dev/null 2>&1; then \
-		echo "❌ Ollama not installed. Run 'make install-ollama' first." && exit 1; \
-	fi
-	@. venv/bin/activate && PYTHONPATH=backend python scripts/setup_ollama.py || (echo "⚠️  Model pull failed. You can pull manually with: ollama pull llama3.1:8b" && exit 1)
-	@echo "✅ Ollama model ready"
+# Run tests (uses venv - doesn't need TTS)
+test:
+	@if [ ! -d "venv" ]; then echo "❌ venv not found. Run 'make setup' first." && exit 1; fi
+	cd backend && ../venv/bin/pytest tests/ -v
 
-setup: check-system install-ollama ## Complete one-command setup
-	@echo "🚀 Setting up audiobook system..."
-	@python3 -m venv venv || (echo "❌ Failed to create venv" && exit 1)
-	@. venv/bin/activate && pip install --upgrade pip
-	@. venv/bin/activate && pip install -r backend/requirements.txt
-	@. venv/bin/activate && pip install -r backend/requirements-dev.txt
-	@$(MAKE) install-tts
-	@mkdir -p data/books data/databases data/checkpoints logs
-	@mkdir -p frontend/src/components frontend/src/store frontend/src/styles frontend/src/types
-	@mkdir -p scripts
-	@touch data/.gitkeep data/books/.gitkeep data/databases/.gitkeep data/checkpoints/.gitkeep
-	@touch logs/.gitkeep
-	@if ! command -v npm > /dev/null 2>&1; then \
-		echo "⚠️  npm not found. Install Node.js to build React frontend."; \
-		echo "   For now, you can use the backend API directly."; \
-	else \
-		echo "📦 Installing Node.js dependencies..."; \
-		cd frontend && npm install || (echo "⚠️  Failed to install npm dependencies. You can install manually with 'cd frontend && npm install'" && exit 0); \
-		echo "✅ Node.js dependencies installed"; \
-	fi
-	@if [ ! -f .env ]; then \
-		echo "OLLAMA_BASE_URL=http://localhost:11434" > .env; \
-		echo "OLLAMA_MODEL=llama3.1:8b" >> .env; \
-		echo "TTS_ENGINE=coqui" >> .env; \
-		echo "TTS_MODEL=tts_models/multilingual/multi-dataset/xtts_v2" >> .env; \
-		echo "TTS_LANGUAGE=en" >> .env; \
-		echo "TTS_SPEED=1.0" >> .env; \
-		echo "WEB_HOST=127.0.0.1" >> .env; \
-		echo "WEB_PORT=8000" >> .env; \
-		echo "DEBUG=false" >> .env; \
-		echo "DATA_DIR=./data" >> .env; \
-		echo "BOOKS_DIR=./data/books" >> .env; \
-		echo "AUDIO_DIR=./data/books" >> .env; \
-		echo "DATABASE_PATH=./data/databases/audiobook.db" >> .env; \
-		echo "SCRAPER_DELAY_SECONDS=2" >> .env; \
-		echo "SCRAPER_USER_AGENT=Mozilla/5.0 (compatible; AudiobookBot/1.0)" >> .env; \
-		echo "SCRAPER_RETRY_ATTEMPTS=3" >> .env; \
-		echo "LOG_LEVEL=INFO" >> .env; \
-		echo "LOG_DIR=./logs" >> .env; \
-		echo "📝 Created .env file"; \
-	fi
-	@echo "✅ Setup complete! Activate venv with: source venv/bin/activate"
-	@echo "💡 Optional: Run 'make setup-ollama-model' to pull the default LLM model"
-	@echo "💡 Optional: Run 'make setup-tts-model' to check/download TTS models"
+# Run linters (uses venv - doesn't need TTS)
+lint:
+	@if [ ! -d "venv" ]; then echo "❌ venv not found. Run 'make setup' first." && exit 1; fi
+	cd backend && ../venv/bin/python -m mypy src/
+	cd backend && ../venv/bin/python -m pylint src/
 
-teardown: ## Complete cleanup to clean state
+# Format code (uses venv - doesn't need TTS)
+format:
+	@if [ ! -d "venv" ]; then echo "❌ venv not found. Run 'make setup' first." && exit 1; fi
+	cd backend && ../venv/bin/python -m black src/ tests/
+	cd backend && ../venv/bin/python -m isort src/ tests/
+
+# Clean build artifacts
+clean:
+	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+	find . -type d -name ".pytest_cache" -exec rm -rf {} + 2>/dev/null || true
+	find . -type d -name ".mypy_cache" -exec rm -rf {} + 2>/dev/null || true
+	find . -type f -name "*.pyc" -delete 2>/dev/null || true
+	@echo "✅ Cleaned!"
+
+# Frontend commands
+frontend-setup:
+	cd frontend && npm install
+
+frontend-dev:
+	cd frontend && npm run dev
+
+frontend-build:
+	cd frontend && npm run build
+
+# Teardown - clean everything for fresh start
+teardown:
 	@echo "🧹 Cleaning up..."
-	@rm -rf venv || true
-	@rm -rf frontend/node_modules frontend/dist || true
-	@rm -rf data/books/* data/databases/* data/checkpoints/* logs/* || true
-	@rm -rf .pytest_cache .mypy_cache htmlcov .coverage || true
-	@rm -rf backend/.pytest_cache backend/.mypy_cache backend/htmlcov backend/.coverage || true
-	@rm -rf backend/__pycache__ backend/src/**/__pycache__ backend/tests/**/__pycache__ || true
-	@rm -rf backend/data backend/logs || true
-	@find . -type d -name "*.egg-info" -exec rm -rf {} + || true
+	rm -rf venv venv311 || true
+	rm -rf frontend/node_modules frontend/dist || true
+	rm -rf data/cache || true
+	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+	find . -type d -name ".pytest_cache" -exec rm -rf {} + 2>/dev/null || true
+	find . -type d -name ".mypy_cache" -exec rm -rf {} + 2>/dev/null || true
 	@echo "✅ Cleanup complete"
 
-rebuild: teardown setup ## Teardown + setup (recovery)
+# Rebuild - teardown + setup
+rebuild: teardown setup
 
-install: ## Install dependencies only
-	@echo "📦 Installing dependencies..."
-	@. venv/bin/activate && pip install -r backend/requirements.txt
-	@. venv/bin/activate && pip install -r backend/requirements-dev.txt
-	@echo "✅ Dependencies installed"
-
-dev: ## Run backend in development mode
-	@echo "🔧 Starting backend development server..."
-	@if [ ! -d "venv" ]; then \
-		echo "❌ Virtual environment not found. Run 'make setup' first." && exit 1; \
-	fi
-	@. venv/bin/activate && cd backend && PYTHONPATH=. python -m uvicorn src.web.app:app --host 127.0.0.1 --port 8000 --reload
-
-test: ## Run all tests
-	@echo "🧪 Running tests..."
-	@. venv/bin/activate && cd backend && pytest tests/ -v
-
-test-coverage: ## Run tests with coverage
-	@echo "📊 Running tests with coverage..."
-	@. venv/bin/activate && cd backend && pytest tests/ --cov=src --cov-report=html --cov-report=term
-
-lint: lint-flake8 lint-mypy lint-pylint ## Run all linters
-
-lint-flake8: ## Run flake8 (PEP8) linter
-	@echo "🔍 Running flake8 (PEP8)..."
-	@. venv/bin/activate && cd backend && flake8 src tests
-
-lint-mypy: ## Run mypy type checker
-	@echo "🔍 Running mypy type checker..."
-	@. venv/bin/activate && cd backend && mypy src
-
-lint-pylint: ## Run pylint
-	@echo "🔍 Running pylint..."
-	@. venv/bin/activate && cd backend && pylint src
-
-format: ## Format code
-	@echo "✨ Formatting code..."
-	@. venv/bin/activate && cd backend && black src tests
-	@. venv/bin/activate && cd backend && isort src tests
-
-format-check: ## Check formatting
-	@echo "🔍 Checking code formatting..."
-	@. venv/bin/activate && cd backend && black --check src tests
-	@. venv/bin/activate && cd backend && isort --check src tests
-
-run: ## Run application
-	@echo "🎵 Starting audiobook web app..."
-	@if [ ! -d "frontend/dist" ] || [ -z "$$(ls -A frontend/dist 2>/dev/null)" ]; then \
-		echo "⚠️  React build not found. Building React app..."; \
-		if command -v npm > /dev/null 2>&1; then \
-			cd frontend && npm run build || (echo "❌ Failed to build React app. Run 'cd frontend && npm install' first." && exit 1); \
-		else \
-			echo "❌ npm not found. Install Node.js to build React frontend."; \
-			echo "   Backend will run but frontend won't be available."; \
-		fi; \
-	fi
-	@. venv/bin/activate && cd backend && python -m src.web.app
-
-build-frontend: ## Build React frontend
-	@echo "🔨 Building React frontend..."
-	@if ! command -v npm > /dev/null 2>&1; then \
-		echo "❌ npm not found. Please install Node.js." && exit 1; \
-	fi
-	@cd frontend && npm run build
-	@echo "✅ Frontend built successfully"
-
-dev-frontend: ## Run React dev server (for development)
-	@echo "🔧 Starting React dev server..."
-	@if ! command -v npm > /dev/null 2>&1; then \
-		echo "❌ npm not found. Please install Node.js." && exit 1; \
-	fi
-	@cd frontend && npm run dev
-
-dev-all: ## Start both backend and frontend dev servers concurrently
-	@echo "🚀 Starting backend and frontend dev servers..."
-	@if [ ! -d "venv" ]; then \
-		echo "❌ Virtual environment not found. Run 'make setup' first." && exit 1; \
-	fi
-	@if ! command -v npm > /dev/null 2>&1; then \
-		echo "❌ npm not found. Please install Node.js." && exit 1; \
-	fi
-	@echo "🧹 Cleaning up any existing dev processes..."
-	@pkill -f "uvicorn src.web.app:app" 2>/dev/null || true
-	@pkill -f "vite" 2>/dev/null || true
-	@pkill -f "npm run dev" 2>/dev/null || true
-	@sleep 1
-	@echo "📡 Backend will be available at http://localhost:8000"
-	@echo "🌐 Frontend will be available at http://localhost:3000"
+# Run both backend and frontend dev servers
+dev-all:
+	@if [ ! -d "venv311" ]; then echo "❌ venv311 not found. Run 'make setup' first." && exit 1; fi
+	@echo "Starting backend and frontend dev servers..."
+	@echo "📡 Backend: http://localhost:8000 (using venv311 for TTS)"
+	@echo "🌐 Frontend: http://localhost:5173"
 	@echo "🛑 Press Ctrl+C to stop both servers"
-	@trap 'pkill -f "uvicorn src.web.app:app" 2>/dev/null; pkill -f "vite" 2>/dev/null; pkill -f "npm run dev" 2>/dev/null; exit' EXIT INT TERM; \
-	(. venv/bin/activate && cd backend && PYTHONPATH=. python -m uvicorn src.web.app:app --host 127.0.0.1 --port 8000 --reload) & \
-	(cd frontend && npm run dev) & \
+	@trap 'pkill -f "python main.py" 2>/dev/null; pkill -f "vite" 2>/dev/null; exit' EXIT INT TERM; \
+	(cd backend && ../venv311/bin/python main.py > /tmp/backend.log 2>&1) & \
+	(cd frontend && npm run dev > /tmp/frontend.log 2>&1) & \
 	wait
-
-kill-dev: ## Kill all running dev servers (backend and frontend)
-	@echo "🛑 Stopping all dev servers..."
-	@pkill -f "uvicorn src.web.app:app" 2>/dev/null && echo "✅ Stopped backend server" || echo "⚠️  No backend server running"
-	@pkill -f "vite" 2>/dev/null && echo "✅ Stopped frontend dev server(s)" || echo "⚠️  No frontend dev server running"
-	@pkill -f "npm run dev" 2>/dev/null && echo "✅ Stopped npm dev processes" || echo "⚠️  No npm dev processes running"
-	@sleep 1
-	@echo "✅ Cleanup complete"
-
-clean: ## Remove build artifacts
-	@echo "🧹 Cleaning build artifacts..."
-	@rm -rf .pytest_cache .mypy_cache htmlcov .coverage
-	@rm -rf backend/.pytest_cache backend/.mypy_cache backend/htmlcov backend/.coverage
-	@rm -rf backend/__pycache__ backend/src/**/__pycache__ backend/tests/**/__pycache__
-	@rm -rf backend/data backend/logs
-	@find . -type d -name "*.egg-info" -exec rm -rf {} + || true
 

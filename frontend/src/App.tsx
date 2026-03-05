@@ -1,210 +1,192 @@
-import { useState, useEffect } from 'react'
-import { BookOpen, ArrowLeft } from 'lucide-react'
-import LibraryView from './components/LibraryView'
-import PlayerView from './components/PlayerView'
-import AudioPlayer from './components/AudioPlayer'
-import ToastContainer from './components/ToastContainer'
-import ConfirmModal from './components/ConfirmModal'
-import QueueStatusFlyout from './components/QueueStatusFlyout'
-import useAudiobookStore from './store/useAudiobookStore'
-import useToastStore from './store/useToastStore'
-import type { Book, BookStats } from './types'
-import styles from './components/App.module.css'
+import { useState, useEffect, createContext, useContext } from 'react'
+import Dashboard from './Dashboard'
+import BookView, { BookHeaderInfo } from './BookView'
+import { Toast, useToast } from './Toast'
+import { AudioPlayer } from './AudioPlayer'
+import { QueueIndicator } from './QueueIndicator'
+import { PipelineStages } from './CircularProgress'
+import { QueueStatus } from './types'
 
-interface SavedState {
-  bookId: string
-  chapter?: number
-  position?: number
-  timestamp?: number
+// Toast context for global access
+interface ToastContextType {
+  success: (title: string, message?: string) => void
+  error: (title: string, message?: string) => void
+  info: (title: string, message?: string) => void
+  warning: (title: string, message?: string) => void
+}
+
+const ToastContext = createContext<ToastContextType | null>(null)
+
+export function useToastContext() {
+  const context = useContext(ToastContext)
+  if (!context) {
+    throw new Error('useToastContext must be used within ToastProvider')
+  }
+  return context
+}
+
+// Audio player context
+interface AudioContextType {
+  playAudio: (src: string, title: string) => void
+}
+
+const AudioContext = createContext<AudioContextType | null>(null)
+
+export function useAudioContext() {
+  const context = useContext(AudioContext)
+  if (!context) {
+    throw new Error('useAudioContext must be used within AudioProvider')
+  }
+  return context
 }
 
 function App() {
-  const [currentView, setCurrentView] = useState<'library' | 'player'>('library')
-  const [showSeriesPanel, setShowSeriesPanel] = useState(false)
-  const { setCurrentBook, setCurrentChapter, currentBook } = useAudiobookStore()
-  const toast = useToastStore()
+  const [selectedBook, setSelectedBook] = useState<{
+    fictionId: string
+    bookNumber: number
+  } | null>(null)
+  const [bookHeaderInfo, setBookHeaderInfo] = useState<BookHeaderInfo | null>(null)
+  const [queueStatus, setQueueStatus] = useState<QueueStatus | null>(null)
+  
+  // Toast system
+  const { toasts, dismissToast, success, error, info, warning } = useToast()
+  
+  // Audio player state
+  const [audioPlayer, setAudioPlayer] = useState<{
+    src: string
+    title: string
+  } | null>(null)
 
-  const getLocalStorageState = (): SavedState | null => {
-    try {
-      const saved = localStorage.getItem('audiobook_player_state')
-      return saved ? JSON.parse(saved) as SavedState : null
-    } catch {
-      return null
-    }
+  const playAudio = (src: string, title: string) => {
+    setAudioPlayer({ src, title })
   }
 
-  const setLocalStorageState = (bookId: string, chapter: number | null, position: number | null): void => {
-    try {
-      localStorage.setItem('audiobook_player_state', JSON.stringify({
-        bookId,
-        chapter: chapter ?? undefined,
-        position: position ?? undefined,
-        timestamp: Date.now()
-      }))
-    } catch (e) {
-      console.warn('Failed to save to localStorage:', e)
-    }
+  const closeAudio = () => {
+    setAudioPlayer(null)
   }
 
-  const updateURL = (bookId: string, chapter: number | null, position: number | null): void => {
-    const params = new URLSearchParams()
-    params.set('book', bookId)
-    if (chapter !== null) {
-      params.set('chapter', chapter.toString())
-    }
-    if (position !== null && position > 0) {
-      params.set('position', position.toFixed(1))
-    }
-    
-    const newURL = `${window.location.pathname}?${params.toString()}`
-    window.history.replaceState({}, '', newURL)
+  const handleBack = () => {
+    setSelectedBook(null)
+    setBookHeaderInfo(null)
   }
 
-  const loadBook = async (bookId: string, chapterNumber: number | null, position: number | null): Promise<void> => {
-    try {
-      // First load: skip stats for faster initial load, just get book metadata and chapters
-      const response = await fetch(`/api/books/${bookId}?include_stats=false`)
-      if (!response.ok) {
-        throw new Error(`Failed to fetch book: ${response.statusText}`)
-      }
-      const bookInfo = await response.json() as { book_id: string; book_title: string; book_url: string | null; author: string | null; filter_book_number: number | null; stats: BookStats | null; chapters: Array<{ chapter_number: number | null; title: string; number: number | null; url: string | null }> }
-      
-      // Transform BookInfo to Book format
-      // If stats weren't included, we'll fetch them separately after initial load
-      const book: Book = {
-        id: bookInfo.book_id,
-        title: bookInfo.book_title,
-        author: bookInfo.author,
-        url: bookInfo.book_url || '',
-        chapter_count: bookInfo.chapters?.length || 0,
-        path: '', // Not in BookInfo, will be set from other sources if needed
-        stats: bookInfo.stats || undefined, // Stats might be null if include_stats=false
-      }
-      
-      // If stats weren't included, fetch them in the background
-      if (!bookInfo.stats) {
-        void fetch(`/api/books/${bookId}?include_stats=true&lightweight=true`)
-          .then(res => res.json())
-          .then((data: { stats?: BookStats }) => {
-            if (data.stats) {
-              // Update the book with stats
-              setCurrentBook({ ...book, stats: data.stats })
-            }
-          })
-          .catch(err => console.error('Failed to fetch book stats:', err))
-      }
-      
-      await setCurrentBook(book)
-      setCurrentView('player')
-      
-      // Determine which chapter and position to load
-      let targetChapter: number | null = chapterNumber
-      let targetPosition: number | null = position
-      
-      // If not provided, default to first chapter
-      // Note: setCurrentBook will fetch chapters and set the first one automatically
-      // but we still need to handle the case where a specific chapter is requested
-      if (targetChapter === null) {
-        // Wait a bit for chapters to load, then check
-        // The store will set the first chapter automatically, but we can override if needed
-        targetChapter = 1
-        targetPosition = 0
-      }
-      
-      // Update URL and localStorage
-      if (targetChapter !== null) {
-        updateURL(bookId, targetChapter, targetPosition ?? 0)
-        setLocalStorageState(bookId, targetChapter, targetPosition ?? 0)
-        
-        // Set current chapter and playing chapter via store
-        await setCurrentChapter(targetChapter, targetPosition ?? 0)
-        // Also set as playing chapter so audio player starts
-        await useAudiobookStore.getState().setPlayingChapter(targetChapter, targetPosition ?? 0)
-      }
-    } catch (error) {
-      console.error('Failed to load book:', error)
-      toast.error(error instanceof Error ? error.message : 'Failed to load book')
-    }
-  }
-
-  // Initialize from URL or localStorage
+  // Read URL params on initial load
   useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search)
-    const bookId = urlParams.get('book')
-    const chapter = urlParams.get('chapter')
-    const position = urlParams.get('position')
-
-    if (bookId) {
-      // Skip library view, go straight to player
-      setCurrentView('player')
-      // Load book from URL
-      void loadBook(
-        bookId,
-        chapter ? parseInt(chapter, 10) : null,
-        position ? parseFloat(position) : null
-      )
-    } else {
-      // Check localStorage
-      const savedState = getLocalStorageState()
-      if (savedState?.bookId) {
-        setCurrentView('player')
-        void loadBook(
-          savedState.bookId,
-          savedState.chapter ?? null,
-          savedState.position ?? null
-        )
-      } else {
-        setCurrentView('library')
-      }
+    const params = new URLSearchParams(window.location.search)
+    const fiction = params.get('fiction')
+    const book = params.get('book')
+    if (fiction && book) {
+      setSelectedBook({ fictionId: fiction, bookNumber: parseInt(book) })
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const showLibraryView = (): void => {
-    setCurrentView('library')
-    setCurrentBook(null as unknown as Book)
-    setCurrentChapter(null as unknown as number, 0)
-    window.history.replaceState({}, '', window.location.pathname)
-    localStorage.removeItem('audiobook_player_state')
-  }
+  // Poll queue status
+  useEffect(() => {
+    const fetchStatus = async () => {
+      try {
+        const res = await fetch('/api/queue/status')
+        if (res.ok) {
+          const status = await res.json()
+          setQueueStatus(status)
+        }
+      } catch (e) {
+        console.error('Failed to fetch queue status:', e)
+      }
+    }
+
+    fetchStatus()
+    const interval = setInterval(fetchStatus, 2000)
+    return () => clearInterval(interval)
+  }, [])
 
   return (
-    <div className={styles.container}>
-      <ToastContainer />
-      <ConfirmModal />
-      <header className={styles.header}>
-        {currentView === 'player' && currentBook && (
-          <button className={styles.btnBack} onClick={showLibraryView}>
-            <ArrowLeft size={16} />
-            Back to Library
-          </button>
-        )}
-        <h1 className={styles.title}>
-          <BookOpen size={32} style={{ display: 'inline-block', verticalAlign: 'middle', marginRight: '8px' }} />
-          Audiobook Player
-        </h1>
-        <QueueStatusFlyout />
-      </header>
-
-      <main className={styles.main}>
-        {currentView === 'library' && !currentBook && (
-          <LibraryView onBookSelect={(bookId, chapterNumber, position) => { return loadBook(bookId, chapterNumber ?? null, position ?? null) }} />
-        )}
-        {currentView === 'player' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            {/* Audio player at book level - independent of chapter views */}
-            {currentBook && (
-              <AudioPlayer 
-                book={currentBook}
+    <ToastContext.Provider value={{ success, error, info, warning }}>
+      <AudioContext.Provider value={{ playAudio }}>
+        <div className="app">
+          <header className="header">
+            <h1 
+              className={selectedBook ? 'clickable' : ''} 
+              onClick={selectedBook ? handleBack : undefined}
+              title={selectedBook ? 'Back to Library' : undefined}
+            >
+              <span>Audiobook</span> Studio
+            </h1>
+            {queueStatus && <QueueIndicator status={queueStatus} />}
+          </header>
+          
+          {/* Book context sub-header */}
+          {selectedBook && bookHeaderInfo && (
+            <div className="book-subheader">
+              <div className="book-subheader-info">
+                <div className="book-subheader-title-row">
+                  <span className="book-subheader-title">{bookHeaderInfo.fictionName}</span>
+                  {bookHeaderInfo.sourceUrl && (
+                    <a 
+                      href={bookHeaderInfo.sourceUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="book-subheader-rr-link"
+                      title="View on Royal Road"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                        <polyline points="15 3 21 3 21 9"></polyline>
+                        <line x1="10" y1="14" x2="21" y2="3"></line>
+                      </svg>
+                    </a>
+                  )}
+                </div>
+                <span className="book-subheader-meta">
+                  Book {bookHeaderInfo.bookNumber} · {bookHeaderInfo.chapterCount} ch
+                  {bookHeaderInfo.eta && <span className="book-subheader-eta"> · {bookHeaderInfo.eta}</span>}
+                </span>
+              </div>
+              <PipelineStages
+                normalized={bookHeaderInfo.normalizedCount}
+                chunked={bookHeaderInfo.chunkedCount}
+                audioComplete={bookHeaderInfo.audioCompleteCount}
+                exported={bookHeaderInfo.exportedCount}
+                totalChapters={bookHeaderInfo.chapterCount}
+                onNormalize={bookHeaderInfo.onNormalize}
+                onChunk={bookHeaderInfo.onChunk}
+                onGenerate={bookHeaderInfo.onGenerate}
+                onExport={bookHeaderInfo.onExport}
+                disabled={bookHeaderInfo.isProcessing}
+                compact
               />
+            </div>
+          )}
+
+          <main className="main">
+            {selectedBook ? (
+              <BookView
+                fictionId={selectedBook.fictionId}
+                bookNumber={selectedBook.bookNumber}
+                onBack={handleBack}
+                onHeaderUpdate={setBookHeaderInfo}
+              />
+            ) : (
+              <Dashboard onSelectBook={(fictionId, bookNumber) => 
+                setSelectedBook({ fictionId, bookNumber })
+              } />
             )}
-            <PlayerView onBack={showLibraryView} showSeriesPanel={showSeriesPanel} onCloseSeriesPanel={() => { setShowSeriesPanel(false) }} />
-          </div>
-        )}
-      </main>
-    </div>
+          </main>
+
+          {/* Toast notifications */}
+          <Toast toasts={toasts} onDismiss={dismissToast} />
+
+          {/* Audio player modal */}
+          {audioPlayer && (
+            <AudioPlayer
+              src={audioPlayer.src}
+              title={audioPlayer.title}
+              onClose={closeAudio}
+            />
+          )}
+        </div>
+      </AudioContext.Provider>
+    </ToastContext.Provider>
   )
 }
 
 export default App
-
