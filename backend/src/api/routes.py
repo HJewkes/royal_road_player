@@ -129,10 +129,12 @@ async def start_processor():
 async def start_download_processor():
     """Start the download job processor."""
     download_queue = get_download_queue()
-    scraper = get_scraper()
 
     def do_download(fiction_id: str, book_number: int, on_progress):
         """Download a book with progress tracking."""
+        is_patreon = fiction_id.startswith("patreon_")
+        source = "patreon" if is_patreon else "royal_road"
+        scraper = get_scraper(source)
         scraper.download_book(fiction_id, book_number, on_progress=on_progress)
 
     await download_queue.start_processing(do_download)
@@ -164,24 +166,40 @@ async def list_fictions() -> list[FictionInfo]:
     return fictions
 
 
-def _extract_fiction_id(url: str) -> str | None:
-    """Extract fiction ID from a Royal Road URL."""
-    match = re.search(r'royalroad\.com/fiction/(\d+)', url)
-    return match.group(1) if match else None
+def _parse_source_url(url: str) -> tuple[str, str]:
+    """Parse a URL into (fiction_id, source).
+
+    Returns:
+        Tuple of (fiction_id, source) where source is "royal_road" or "patreon"
+    """
+    rr_match = re.search(r'royalroad\.com/fiction/(\d+)', url)
+    if rr_match:
+        return rr_match.group(1), "royal_road"
+
+    pt_match = re.search(r'patreon\.com/c/([^/]+)', url)
+    if pt_match:
+        slug = pt_match.group(1)
+        return f"patreon_{slug}", "patreon"
+
+    return None, None
 
 
 @app.post("/api/fictions/preview")
 async def preview_fiction(request: AddFictionRequest) -> FictionPreview:
-    """Preview a fiction from Royal Road URL without adding it."""
-    fiction_id = _extract_fiction_id(request.url)
+    """Preview a fiction from URL without adding it."""
+    fiction_id, source = _parse_source_url(request.url)
     if not fiction_id:
-        raise HTTPException(status_code=400, detail="Invalid Royal Road URL")
+        raise HTTPException(status_code=400, detail="Invalid URL. Supported: Royal Road, Patreon")
 
-    scraper = get_scraper()
+    scraper = get_scraper(source)
 
     try:
         info = scraper.get_fiction_info(fiction_id)
-        books = scraper.get_all_books_in_series(fiction_id)
+
+        if source == "patreon":
+            books = scraper.get_books_from_posts(fiction_id)
+        else:
+            books = scraper.get_all_books_in_series(fiction_id)
 
         return FictionPreview(
             fiction_id=fiction_id,
@@ -190,7 +208,10 @@ async def preview_fiction(request: AddFictionRequest) -> FictionPreview:
             url=info["url"],
             book_count=len(books),
             books=books,
+            source=source,
         )
+    except PermissionError as e:
+        raise HTTPException(status_code=401, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to fetch fiction {fiction_id}: {e}")
         raise HTTPException(status_code=400, detail=f"Failed to fetch fiction: {str(e)}")
@@ -198,18 +219,16 @@ async def preview_fiction(request: AddFictionRequest) -> FictionPreview:
 
 @app.post("/api/fictions/add")
 async def add_fiction(request: AddFictionRequest) -> FictionInfo:
-    """Add a fiction to the library by URL (creates directory structure)."""
-    fiction_id = _extract_fiction_id(request.url)
+    """Add a fiction to the library by URL."""
+    fiction_id, source = _parse_source_url(request.url)
     if not fiction_id:
-        raise HTTPException(status_code=400, detail="Invalid Royal Road URL")
+        raise HTTPException(status_code=400, detail="Invalid URL. Supported: Royal Road, Patreon")
 
-    scraper = get_scraper()
+    scraper = get_scraper(source)
     discovery = get_book_discovery()
 
-    # Check if already exists
     existing = discovery.list_fictions()
     if fiction_id in existing:
-        # Return existing
         books = discovery.list_books(fiction_id)
         if books:
             name = _extract_series_name(books[0].title)
@@ -218,7 +237,6 @@ async def add_fiction(request: AddFictionRequest) -> FictionInfo:
             name = info["title"]
         return FictionInfo(fiction_id=fiction_id, name=name)
 
-    # Get info and create fiction directory
     try:
         info = scraper.get_fiction_info(fiction_id)
         settings = get_settings()
@@ -226,6 +244,8 @@ async def add_fiction(request: AddFictionRequest) -> FictionInfo:
         fiction_path.mkdir(parents=True, exist_ok=True)
 
         return FictionInfo(fiction_id=fiction_id, name=info["title"])
+    except PermissionError as e:
+        raise HTTPException(status_code=401, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to add fiction {fiction_id}: {e}")
         raise HTTPException(status_code=400, detail=f"Failed to add fiction: {str(e)}")
@@ -233,34 +253,33 @@ async def add_fiction(request: AddFictionRequest) -> FictionInfo:
 
 @app.get("/api/series/{fiction_id}")
 async def get_series_info(fiction_id: FictionIdPath, refresh: bool = False) -> list[SeriesBookInfo]:
-    """
-    Get all books in a series from Royal Road, merged with local download status.
-    
-    Uses cache by default (10 min TTL). Pass refresh=true to force refresh from Royal Road.
-    """
+    """Get all books in a series, merged with local download status."""
+    is_patreon = fiction_id.startswith("patreon_")
+    source = "patreon" if is_patreon else "royal_road"
+
     cache = get_royal_road_cache()
     cache_key = f"series:{fiction_id}"
-    
-    # Check cache first (unless refresh requested)
+
     if not refresh:
         cached = cache.get(cache_key)
         if cached is not None:
-            # Merge with fresh local status
             return _merge_with_local_status(fiction_id, cached)
-    
-    # Fetch from Royal Road
-    scraper = get_scraper()
+
+    scraper = get_scraper(source)
     try:
-        rr_books = scraper.get_all_books_in_series(fiction_id)
-        # Cache the Royal Road data
-        cache.set(cache_key, rr_books)
-        logger.info(f"Cached Royal Road data for fiction {fiction_id}: {len(rr_books)} books")
+        if is_patreon:
+            source_books = scraper.get_books_from_posts(fiction_id)
+        else:
+            source_books = scraper.get_all_books_in_series(fiction_id)
+        cache.set(cache_key, source_books)
+        logger.info(f"Cached source data for fiction {fiction_id}: {len(source_books)} books")
+    except PermissionError as e:
+        raise HTTPException(status_code=401, detail=str(e))
     except Exception as e:
-        logger.error(f"Failed to fetch from Royal Road: {e}")
-        # Return local-only data on failure
+        logger.error(f"Failed to fetch from source: {e}")
         return _get_local_only_books(fiction_id)
-    
-    return _merge_with_local_status(fiction_id, rr_books)
+
+    return _merge_with_local_status(fiction_id, source_books)
 
 
 def _merge_with_local_status(fiction_id: str, rr_books: list[dict]) -> list[SeriesBookInfo]:
@@ -286,7 +305,7 @@ def _merge_with_local_status(fiction_id: str, rr_books: list[dict]) -> list[Seri
                 chapters_complete=local.chapters_complete,
                 progress_percent=local.progress_percent,
                 status=local.status,
-                chapters_on_royal_road=rr_book.get("chapter_count"),
+                chapters_on_source=rr_book.get("chapter_count"),
             ))
         else:
             result.append(SeriesBookInfo(
@@ -384,7 +403,9 @@ async def get_chapter(fiction_id: FictionIdPath, book_number: BookNumberPath, ch
 @app.get("/api/scraper/preview")
 async def preview_chapters(fiction_id: FictionIdPath, book_number: BookNumberQuery = None):
     """Preview available chapters without downloading."""
-    scraper = get_scraper()
+    is_patreon = fiction_id.startswith("patreon_")
+    source = "patreon" if is_patreon else "royal_road"
+    scraper = get_scraper(source)
     return scraper.get_chapter_list(fiction_id, book_number)
 
 
@@ -392,9 +413,10 @@ async def preview_chapters(fiction_id: FictionIdPath, book_number: BookNumberQue
 async def download_book(request: DownloadRequest):
     """Download a book (runs in background with progress tracking)."""
     download_queue = get_download_queue()
+    is_patreon = request.fiction_id.startswith("patreon_")
+    source = "patreon" if is_patreon else "royal_road"
 
-    # Get chapter count for progress tracking
-    scraper = get_scraper()
+    scraper = get_scraper(source)
     try:
         chapters = scraper.get_chapter_list(request.fiction_id, request.book_number)
         total_chapters = len(chapters)
@@ -455,6 +477,13 @@ async def backfill_chapter_titles(request: BackfillTitlesRequest) -> BackfillRes
     - validation results
     - export status
     """
+    if request.fiction_id.startswith("patreon_"):
+        return BackfillResult(
+            success=False,
+            message="Backfill not supported for Patreon fictions",
+            updated=0, skipped=0, errors=[],
+        )
+
     scraper = get_scraper()
     chapter_discovery = get_chapter_discovery()
     settings = get_settings()
@@ -563,6 +592,9 @@ async def preview_backfill(fiction_id: FictionIdPath, book_number: BookNumberPat
 
     Returns list of chapters with current and new titles.
     """
+    if fiction_id.startswith("patreon_"):
+        raise HTTPException(status_code=400, detail="Backfill not supported for Patreon")
+
     scraper = get_scraper()
     chapter_discovery = get_chapter_discovery()
 
