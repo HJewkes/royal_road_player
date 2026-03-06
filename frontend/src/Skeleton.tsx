@@ -1,28 +1,33 @@
 // Skeleton loading components for perceived performance
+import { Skeleton as TitanSkeleton } from '@titan-design/react-ui'
 
 interface SkeletonProps {
   className?: string
   width?: string | number
   height?: string | number
+  style?: React.CSSProperties
 }
 
-export function Skeleton({ className = '', width, height }: SkeletonProps) {
+export function Skeleton({ className = '', width, height, style }: SkeletonProps) {
   return (
-    <div 
-      className={`skeleton ${className}`}
-      style={{ width, height }}
+    <TitanSkeleton
+      className={className}
+      variant="rounded"
+      width={width}
+      height={height}
+      style={style}
     />
   )
 }
 
 export function SkeletonText({ lines = 1, className = '' }: { lines?: number; className?: string }) {
   return (
-    <div className={`skeleton-text ${className}`}>
+    <div className={`flex flex-col gap-2 ${className}`}>
       {Array.from({ length: lines }).map((_, i) => (
-        <Skeleton 
-          key={i} 
-          className="skeleton-line"
+        <Skeleton
+          key={i}
           width={i === lines - 1 && lines > 1 ? '70%' : '100%'}
+          height={14}
         />
       ))}
     </div>
@@ -32,18 +37,18 @@ export function SkeletonText({ lines = 1, className = '' }: { lines?: number; cl
 // Dashboard skeleton
 export function DashboardSkeleton() {
   return (
-    <div className="dashboard skeleton-container">
+    <div className="dashboard">
       {/* Header skeleton */}
       <div className="dashboard-header">
-        <Skeleton className="skeleton-title" width={120} height={28} />
-        <Skeleton className="skeleton-button" width={120} height={40} />
+        <Skeleton width={120} height={28} />
+        <Skeleton width={120} height={40} />
       </div>
 
       {/* Series skeleton */}
       {[1, 2].map(i => (
         <section key={i} className="fiction-section" style={{ animationDelay: `${i * 100}ms` }}>
           <div className="fiction-header">
-            <Skeleton className="skeleton-title" width={280} height={32} />
+            <Skeleton width={280} height={32} />
             <div className="fiction-summary" style={{ gap: '2rem' }}>
               <Skeleton width={80} height={40} />
               <Skeleton width={80} height={40} />
@@ -83,11 +88,11 @@ export function DashboardSkeleton() {
 // Book view skeleton
 export function BookViewSkeleton() {
   return (
-    <div className="book-view skeleton-container">
-      <Skeleton className="skeleton-back-link" width={160} height={20} />
-      
+    <div className="book-view">
+      <Skeleton width={160} height={20} />
+
       <div className="book-header" style={{ marginTop: '1rem' }}>
-        <Skeleton className="skeleton-title" width={200} height={48} />
+        <Skeleton width={200} height={48} />
         <Skeleton width={180} height={16} style={{ marginTop: '0.5rem' }} />
       </div>
 
@@ -137,4 +142,3 @@ export function BookViewSkeleton() {
 }
 
 export default Skeleton
-

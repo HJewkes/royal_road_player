@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { Toast as TitanToast } from '@titan-design/react-ui'
 
 export interface ToastMessage {
   id: string
@@ -15,13 +16,12 @@ interface ToastProps {
 
 export function Toast({ toasts, onDismiss }: ToastProps) {
   return (
-    <div className="toast-container">
-      {toasts.map((toast, index) => (
-        <ToastItem 
-          key={toast.id} 
-          toast={toast} 
+    <div className="fixed bottom-6 right-6 z-[1000] flex flex-col-reverse gap-3 pointer-events-none">
+      {toasts.map((toast) => (
+        <ToastItem
+          key={toast.id}
+          toast={toast}
           onDismiss={onDismiss}
-          index={index}
         />
       ))}
     </div>
@@ -31,10 +31,9 @@ export function Toast({ toasts, onDismiss }: ToastProps) {
 interface ToastItemProps {
   toast: ToastMessage
   onDismiss: (id: string) => void
-  index: number
 }
 
-function ToastItem({ toast, onDismiss, index }: ToastItemProps) {
+function ToastItem({ toast, onDismiss }: ToastItemProps) {
   const [isExiting, setIsExiting] = useState(false)
 
   useEffect(() => {
@@ -52,25 +51,18 @@ function ToastItem({ toast, onDismiss, index }: ToastItemProps) {
     setTimeout(() => onDismiss(toast.id), 300)
   }
 
-  const icons = {
-    success: '✓',
-    error: '✕',
-    warning: '!',
-    info: 'i'
-  }
-
   return (
-    <div 
-      className={`toast toast-${toast.type} ${isExiting ? 'toast-exit' : ''}`}
-      style={{ animationDelay: `${index * 50}ms` }}
+    <div
+      className={`pointer-events-auto cursor-pointer transition-all duration-300 ${isExiting ? 'opacity-0 translate-x-12 scale-95' : 'animate-[slideInRight_0.3s_ease-out]'}`}
       onClick={handleDismiss}
     >
-      <div className="toast-icon">{icons[toast.type]}</div>
-      <div className="toast-content">
-        <div className="toast-title">{toast.title}</div>
-        {toast.message && <div className="toast-message">{toast.message}</div>}
-      </div>
-      <button className="toast-close" onClick={handleDismiss}>×</button>
+      <TitanToast
+        title={toast.title}
+        description={toast.message}
+        status={toast.type}
+        isClosable
+        onClose={handleDismiss}
+      />
     </div>
   )
 }
@@ -108,4 +100,3 @@ export function useToast() {
 }
 
 export default Toast
-

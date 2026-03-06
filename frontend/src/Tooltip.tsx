@@ -8,10 +8,10 @@ interface TooltipProps {
   className?: string
 }
 
-export function Tooltip({ 
-  content, 
-  children, 
-  position = 'top', 
+export function Tooltip({
+  content,
+  children,
+  position = 'top',
   delay = 300,
   className = ''
 }: TooltipProps) {
@@ -38,7 +38,7 @@ export function Tooltip({
     if (isVisible && triggerRef.current && tooltipRef.current) {
       const trigger = triggerRef.current.getBoundingClientRect()
       const tooltip = tooltipRef.current.getBoundingClientRect()
-      
+
       let top = 0
       let left = 0
       const gap = 8
@@ -71,8 +71,8 @@ export function Tooltip({
   }, [isVisible, position])
 
   return (
-    <div 
-      className={`tooltip-wrapper ${className}`}
+    <div
+      className={`inline-flex relative ${className}`}
       ref={triggerRef}
       onMouseEnter={showTooltip}
       onMouseLeave={hideTooltip}
@@ -81,10 +81,10 @@ export function Tooltip({
     >
       {children}
       {isVisible && (
-        <div 
+        <div
           ref={tooltipRef}
-          className={`tooltip tooltip-${position}`}
-          style={{ 
+          className="bg-surface-elevated border border-border-default rounded-md px-3 py-2 text-xs text-text-primary shadow-lg z-[300] max-w-[280px] pointer-events-none animate-[tooltipFadeIn_0.15s_ease-out]"
+          style={{
             position: 'fixed',
             top: coords.top,
             left: coords.left,
@@ -105,8 +105,8 @@ interface HelpTooltipProps {
 
 export function HelpTooltip({ content, position = 'top' }: HelpTooltipProps) {
   return (
-    <Tooltip content={content} position={position} className="help-tooltip-wrapper">
-      <span className="help-icon">?</span>
+    <Tooltip content={content} position={position} className="inline-flex flex-shrink-0">
+      <span className="inline-flex items-center justify-center w-3 h-3 rounded-full border border-border-default text-[8px] font-semibold text-text-tertiary cursor-help opacity-60 transition-all duration-150 hover:border-brand-primary hover:text-brand-primary hover:opacity-100">?</span>
     </Tooltip>
   )
 }
@@ -114,36 +114,35 @@ export function HelpTooltip({ content, position = 'top' }: HelpTooltipProps) {
 // Pipeline stage explanations
 export const PipelineHelp = {
   normalize: (
-    <div className="tooltip-help-content">
-      <strong>Normalize</strong>
-      <p>Cleans and formats the raw chapter text for TTS processing. Removes HTML, fixes encoding issues, and standardizes formatting.</p>
+    <div className="leading-relaxed">
+      <strong className="block mb-1 text-brand-primary text-xs uppercase tracking-wide">Normalize</strong>
+      <p className="m-0 text-text-secondary">Cleans and formats the raw chapter text for TTS processing. Removes HTML, fixes encoding issues, and standardizes formatting.</p>
     </div>
   ),
   chunk: (
-    <div className="tooltip-help-content">
-      <strong>Chunk</strong>
-      <p>Splits chapters into smaller segments (≤250 chars) suitable for the TTS engine. Preserves sentence boundaries.</p>
+    <div className="leading-relaxed">
+      <strong className="block mb-1 text-brand-primary text-xs uppercase tracking-wide">Chunk</strong>
+      <p className="m-0 text-text-secondary">Splits chapters into smaller segments (≤250 chars) suitable for the TTS engine. Preserves sentence boundaries.</p>
     </div>
   ),
   audio: (
-    <div className="tooltip-help-content">
-      <strong>Audio Generation</strong>
-      <p>Converts text chunks to speech using the TTS model. This is the most time-consuming step.</p>
+    <div className="leading-relaxed">
+      <strong className="block mb-1 text-brand-primary text-xs uppercase tracking-wide">Audio Generation</strong>
+      <p className="m-0 text-text-secondary">Converts text chunks to speech using the TTS model. This is the most time-consuming step.</p>
     </div>
   ),
   validate: (
-    <div className="tooltip-help-content">
-      <strong>Validate</strong>
-      <p>Checks generated audio for quality issues like truncation, silence, or artifacts.</p>
+    <div className="leading-relaxed">
+      <strong className="block mb-1 text-brand-primary text-xs uppercase tracking-wide">Validate</strong>
+      <p className="m-0 text-text-secondary">Checks generated audio for quality issues like truncation, silence, or artifacts.</p>
     </div>
   ),
   export: (
-    <div className="tooltip-help-content">
-      <strong>Export</strong>
-      <p>Combines all audio chunks into a single M4B audiobook file with chapter markers.</p>
+    <div className="leading-relaxed">
+      <strong className="block mb-1 text-brand-primary text-xs uppercase tracking-wide">Export</strong>
+      <p className="m-0 text-text-secondary">Combines all audio chunks into a single M4B audiobook file with chapter markers.</p>
     </div>
   )
 }
 
 export default Tooltip
-
