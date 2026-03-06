@@ -36,6 +36,15 @@ class FictionPreview(BaseModel):
     book_count: int
     books: list[dict] = []
     source: str = "royal_road"
+    series: list[dict] = []  # Patreon only: detected series with date ranges
+
+
+class ImportPatreonBooksRequest(BaseModel):
+    """Request to import specific books from Patreon into a fiction."""
+    patreon_url: str
+    fiction_id: str  # Target fiction to add books into (existing or new)
+    fiction_name: str  # Used when creating a new fiction
+    book_numbers: list[int]  # Which books to download
 
 
 class SeriesBookInfo(BaseModel):

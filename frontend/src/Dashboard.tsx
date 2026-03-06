@@ -20,6 +20,16 @@ interface SeriesBookInfo {
   chapters_on_source?: number | null
 }
 
+interface PatreonSeriesInfo {
+  series_index: number
+  name: string
+  first_date: string
+  last_date: string
+  book_count: number
+  chapter_count: number
+  books: Array<{ book_number: number; chapter_count: number; first_date: string; last_date: string }>
+}
+
 interface FictionPreview {
   fiction_id: string
   title: string
@@ -28,6 +38,7 @@ interface FictionPreview {
   book_count: number
   books: Array<{ book_number: number; chapter_count: number }>
   source?: string
+  series?: PatreonSeriesInfo[]
 }
 
 interface DashboardProps {
@@ -49,6 +60,9 @@ function Dashboard({ onSelectBook }: DashboardProps) {
   const [addingError, setAddingError] = useState<string | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
   const [preview, setPreview] = useState<FictionPreview | null>(null)
+  const [selectedBooks, setSelectedBooks] = useState<Set<number>>(new Set())
+  const [targetFictionId, setTargetFictionId] = useState<string>('')
+  const [newFictionName, setNewFictionName] = useState('')
   
 
   // Initial load - fetch full series info (hits Royal Road cache)
@@ -224,6 +238,7 @@ function Dashboard({ onSelectBook }: DashboardProps) {
 
       const previewData: FictionPreview = await res.json()
       setPreview(previewData)
+      setSelectedBooks(new Set(previewData.books.map(b => b.book_number)))
       toast.info('Preview loaded', `Found "${previewData.title}"`)
     } catch (e) {
       setAddingError(e instanceof Error ? e.message : 'Failed to preview series')
@@ -237,26 +252,63 @@ function Dashboard({ onSelectBook }: DashboardProps) {
     if (!preview) return
 
     try {
-      const res = await fetch('/api/fictions/add', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: newSeriesUrl.trim() }),
-      })
+      if (preview.source === 'patreon') {
+        // Patreon: import selected books into target fiction
+        const fictionId = targetFictionId === '__new__'
+          ? newFictionName.trim().toLowerCase().replace(/\s+/g, '_')
+          : targetFictionId
+        const fictionName = targetFictionId === '__new__'
+          ? newFictionName.trim()
+          : fictions.find(f => f.fiction_id === targetFictionId)?.name || preview.title
 
-      if (!res.ok) {
-        const error = await res.json()
-        throw new Error(error.detail || 'Failed to add series')
+        if (!fictionId) {
+          setAddingError('Please select or name a target fiction')
+          return
+        }
+
+        const res = await fetch('/api/fictions/import-patreon', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            patreon_url: newSeriesUrl.trim(),
+            fiction_id: fictionId,
+            fiction_name: fictionName,
+            book_numbers: Array.from(selectedBooks).sort(),
+          }),
+        })
+
+        if (!res.ok) {
+          const error = await res.json()
+          throw new Error(error.detail || 'Failed to import books')
+        }
+
+        toast.success('Import started', `Downloading ${selectedBooks.size} book(s) from Patreon`)
+      } else {
+        // Royal Road: standard add flow
+        const res = await fetch('/api/fictions/add', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: newSeriesUrl.trim() }),
+        })
+
+        if (!res.ok) {
+          const error = await res.json()
+          throw new Error(error.detail || 'Failed to add series')
+        }
+
+        toast.success('Series added', `"${preview.title}" has been added to your library`)
       }
 
-      // Success - reset and refresh
-      toast.success('Series added', `"${preview.title}" has been added to your library`)
       setShowAddSeries(false)
       setNewSeriesUrl('')
       setPreview(null)
-      loadFictionsWithFullSeries()  // Refresh to get full series info
+      setSelectedBooks(new Set())
+      setTargetFictionId('')
+      setNewFictionName('')
+      setTimeout(() => loadFictionsWithFullSeries(), 2000)
     } catch (e) {
       setAddingError(e instanceof Error ? e.message : 'Failed to add series')
-      toast.error('Failed to add series', e instanceof Error ? e.message : 'Unknown error')
+      toast.error('Failed', e instanceof Error ? e.message : 'Unknown error')
     }
   }
 
@@ -265,6 +317,9 @@ function Dashboard({ onSelectBook }: DashboardProps) {
     setNewSeriesUrl('')
     setPreview(null)
     setAddingError(null)
+    setSelectedBooks(new Set())
+    setTargetFictionId('')
+    setNewFictionName('')
   }
 
   const toggleSection = (fictionId: string) => {
@@ -329,17 +384,71 @@ function Dashboard({ onSelectBook }: DashboardProps) {
                 {preview.author && <span className="preview-author">by {preview.author}</span>}
               </div>
               <div className="preview-stats">
-                <span>{preview.book_count} book{preview.book_count !== 1 ? 's' : ''}</span>
+                <span>{selectedBooks.size}/{preview.book_count} book{preview.book_count !== 1 ? 's' : ''} selected</span>
                 <span>•</span>
-                <span>{preview.books.reduce((sum, b) => sum + b.chapter_count, 0)} total chapters</span>
+                <span>{preview.books.filter(b => selectedBooks.has(b.book_number)).reduce((sum, b) => sum + b.chapter_count, 0)} chapters</span>
               </div>
               <div className="preview-books">
-                {preview.books.map(book => (
-                  <span key={book.book_number} className="preview-book-badge">
-                    Book {book.book_number}: {book.chapter_count} ch
-                  </span>
-                ))}
+                {preview.books.map(book => {
+                  const isSelected = selectedBooks.has(book.book_number)
+                  return (
+                    <span
+                      key={book.book_number}
+                      className={`preview-book-badge ${isSelected ? '' : 'deselected'}`}
+                      onClick={() => {
+                        setSelectedBooks(prev => {
+                          const next = new Set(prev)
+                          if (next.has(book.book_number)) {
+                            next.delete(book.book_number)
+                          } else {
+                            next.add(book.book_number)
+                          }
+                          return next
+                        })
+                      }}
+                      style={{
+                        cursor: 'pointer',
+                        opacity: isSelected ? 1 : 0.4,
+                        textDecoration: isSelected ? 'none' : 'line-through',
+                      }}
+                      title={isSelected ? 'Click to exclude' : 'Click to include'}
+                    >
+                      Book {book.book_number}: {book.chapter_count} ch
+                    </span>
+                  )
+                })}
               </div>
+              {/* Patreon: target fiction selector */}
+              {preview.source === 'patreon' && (
+                <div style={{ margin: '10px 0' }}>
+                  <label style={{ fontSize: '0.85em', opacity: 0.7, display: 'block', marginBottom: '4px' }}>
+                    Add books to:
+                  </label>
+                  <select
+                    value={targetFictionId}
+                    onChange={(e) => setTargetFictionId(e.target.value)}
+                    className="add-series-input"
+                    style={{ width: '100%', padding: '6px 8px' }}
+                  >
+                    <option value="">— Select fiction —</option>
+                    {fictions.map(f => (
+                      <option key={f.fiction_id} value={f.fiction_id}>{f.name}</option>
+                    ))}
+                    <option value="__new__">+ New fiction...</option>
+                  </select>
+                  {targetFictionId === '__new__' && (
+                    <input
+                      type="text"
+                      placeholder="Fiction name (e.g., Soccer Supremo)"
+                      value={newFictionName}
+                      onChange={(e) => setNewFictionName(e.target.value)}
+                      className="add-series-input"
+                      style={{ width: '100%', marginTop: '6px' }}
+                    />
+                  )}
+                </div>
+              )}
+
               <div className="preview-actions">
                 <button
                   className="btn btn-secondary"
@@ -350,8 +459,9 @@ function Dashboard({ onSelectBook }: DashboardProps) {
                 <button
                   className="btn btn-primary"
                   onClick={() => void handleAddSeries()}
+                  disabled={selectedBooks.size === 0 || (preview.source === 'patreon' && !targetFictionId) || (targetFictionId === '__new__' && !newFictionName.trim())}
                 >
-                  Add to Library
+                  {preview.source === 'patreon' ? `Import ${selectedBooks.size} Book(s)` : 'Add to Library'}
                 </button>
               </div>
             </div>

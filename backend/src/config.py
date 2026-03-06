@@ -39,7 +39,7 @@ class Settings(BaseSettings):
 
     class Config:
         env_prefix = "AUDIOBOOK_"
-        env_file = ".env"
+        env_file = str(Path(__file__).parent.parent.parent / ".env")
 
 
 @lru_cache

@@ -78,8 +78,17 @@ class PatreonScraper:
         response.raise_for_status()
         return response.json()
 
-    def _fetch_all_posts(self, campaign_id: str) -> list[dict]:
-        """Fetch all posts for a campaign using cursor-based pagination."""
+    def _fetch_all_posts(self, campaign_id: str, months_back: int = 4) -> list[dict]:
+        """Fetch recent posts for a campaign using cursor-based pagination.
+
+        Args:
+            campaign_id: Patreon campaign ID
+            months_back: Only fetch posts from the last N months (default 2)
+        """
+        from datetime import timedelta
+        cutoff = datetime.utcnow() - timedelta(days=months_back * 30)
+        cutoff_iso = cutoff.isoformat() + "Z"
+
         all_posts = []
         url = f"{self.BASE_URL}/api/posts"
         params = {
@@ -93,19 +102,29 @@ class PatreonScraper:
         while url:
             data = self._fetch_api(url, params=params)
             posts = data.get("data", [])
-            all_posts.extend(posts)
 
-            # Cursor pagination
+            # Posts are sorted newest-first; stop when we hit the cutoff
+            hit_cutoff = False
+            for post in posts:
+                published = post.get("attributes", {}).get("published_at", "")
+                if published and published < cutoff_iso:
+                    hit_cutoff = True
+                    break
+                all_posts.append(post)
+
+            if hit_cutoff:
+                break
+
             next_link = data.get("links", {}).get("next")
             if next_link:
                 url = next_link
-                params = None  # Next link includes all params
+                params = None
             else:
                 break
 
             logger.debug(f"Fetched {len(all_posts)} posts so far...")
 
-        logger.info(f"Fetched {len(all_posts)} total posts for campaign {campaign_id}")
+        logger.info(f"Fetched {len(all_posts)} posts (last {months_back} months) for campaign {campaign_id}")
         return all_posts
 
     def _parse_chapter_title(self, title: str) -> tuple[int, int, str] | None:
@@ -177,11 +196,7 @@ class PatreonScraper:
             fiction_id: Patreon fiction ID in format "patreon_<campaign_id>"
                         or "patreon_<creator_slug>"
         """
-        campaign_id = fiction_id.removeprefix("patreon_")
-
-        # If it's not numeric, treat as slug and resolve
-        if not campaign_id.isdigit():
-            campaign_id = self._resolve_campaign_id(campaign_id)
+        campaign_id = self._resolve_campaign_id_from_fiction(fiction_id)
 
         url = f"{self.BASE_URL}/api/campaigns/{campaign_id}"
         try:
@@ -205,24 +220,60 @@ class PatreonScraper:
         }
 
     def get_chapter_list(
-        self, fiction_id: str, book_number: Optional[int] = None
+        self,
+        fiction_id: str,
+        book_number: Optional[int] = None,
+        series_index: int | None = None,
     ) -> list[dict]:
         """Get list of chapters from Patreon posts.
 
+        Args:
+            fiction_id: Patreon fiction ID
+            book_number: Filter to a specific book number
+            series_index: Filter to a specific series (0-based). Required when
+                         multiple series have overlapping book numbers.
+
         Returns list of dicts with: url, number, title, book_number
         """
-        campaign_id = fiction_id.removeprefix("patreon_")
-        if not campaign_id.isdigit():
-            campaign_id = self._resolve_campaign_id(campaign_id)
+        campaign_id = self._resolve_campaign_id_from_fiction(fiction_id)
 
         posts = self._fetch_all_posts(campaign_id)
-        chapters = self._filter_chapter_posts(posts, book_number)
+        all_chapters = self._filter_chapter_posts(posts)
+
+        # If series_index specified, filter to that series' chapters
+        if series_index is not None:
+            series_list = self._detect_series_from_posts(all_chapters)
+            if 0 <= series_index < len(series_list):
+                # Get the post_ids belonging to this series
+                sorted_chapters = sorted(all_chapters, key=lambda c: c["published_at"])
+                series_boundaries = []
+                max_book = 0
+                current_start = 0
+                for j, ch in enumerate(sorted_chapters):
+                    if ch["book_number"] <= max_book and ch["book_number"] == 1 and j > 0:
+                        series_boundaries.append((current_start, j))
+                        current_start = j
+                        max_book = 0
+                    max_book = max(max_book, ch["book_number"])
+                series_boundaries.append((current_start, len(sorted_chapters)))
+
+                if series_index < len(series_boundaries):
+                    start, end = series_boundaries[series_index]
+                    series_post_ids = {ch["post_id"] for ch in sorted_chapters[start:end]}
+                    all_chapters = [ch for ch in all_chapters if ch["post_id"] in series_post_ids]
+
+        # Filter by book number
+        if book_number is not None:
+            all_chapters = [ch for ch in all_chapters if ch["book_number"] == book_number]
+
+        # Sort by book number, then chapter number
+        all_chapters.sort(key=lambda c: (c["book_number"], c["chapter_number"]))
 
         # Renumber sequentially within the book (1-based)
         result = []
-        for i, ch in enumerate(chapters, 1):
+        for i, ch in enumerate(all_chapters, 1):
             result.append({
-                "url": ch["post_id"],  # Post ID used as chapter ref
+                "url": ch["post_id"],
                 "number": i,
                 "title": ch["title"],
                 "book_number": ch["book_number"],
@@ -231,14 +282,88 @@ class PatreonScraper:
 
         return result
 
-    def get_books_from_posts(self, fiction_id: str) -> list[dict]:
-        """Derive book list from post titles (Patreon-specific, not in Protocol)."""
-        campaign_id = fiction_id.removeprefix("patreon_")
-        if not campaign_id.isdigit():
-            campaign_id = self._resolve_campaign_id(campaign_id)
+    def _detect_series_from_posts(self, chapters: list[dict]) -> list[dict]:
+        """Detect multiple series by finding where book numbers restart.
 
+        When book numbers go backwards (e.g., Book 4 followed by Book 1),
+        that signals a new series. Returns a list of series, each with
+        a name, date range, and book list.
+        """
+        if not chapters:
+            return []
+
+        # Sort by publication date (oldest first)
+        sorted_chapters = sorted(chapters, key=lambda c: c["published_at"])
+
+        series_list: list[list[dict]] = [[]]
+        max_book_in_current_series = 0
+
+        for ch in sorted_chapters:
+            book_num = ch["book_number"]
+            if book_num <= max_book_in_current_series and book_num == 1:
+                # Book numbers restarted — new series
+                series_list.append([])
+                max_book_in_current_series = 0
+            max_book_in_current_series = max(max_book_in_current_series, book_num)
+            series_list[-1].append(ch)
+
+        # Build series info
+        default_names = ["Player Manager", "Soccer Supremo"]
+        result = []
+        for i, series_chapters in enumerate(series_list):
+            if not series_chapters:
+                continue
+
+            # Group by book number
+            books: dict[int, list[dict]] = {}
+            for ch in series_chapters:
+                books.setdefault(ch["book_number"], []).append(ch)
+
+            dates = [ch["published_at"] for ch in series_chapters if ch["published_at"]]
+            first_date = min(dates) if dates else ""
+            last_date = max(dates) if dates else ""
+
+            name = default_names[i] if i < len(default_names) else f"Series {i + 1}"
+
+            book_list = sorted([
+                {
+                    "book_number": num,
+                    "chapter_count": len(chs),
+                    "first_date": min(c["published_at"] for c in chs) if chs else "",
+                    "last_date": max(c["published_at"] for c in chs) if chs else "",
+                }
+                for num, chs in books.items()
+            ], key=lambda b: b["book_number"])
+
+            result.append({
+                "series_index": i,
+                "name": name,
+                "first_date": first_date[:10] if first_date else "",
+                "last_date": last_date[:10] if last_date else "",
+                "book_count": len(books),
+                "chapter_count": len(series_chapters),
+                "books": book_list,
+            })
+
+        return result
+
+    def get_books_from_posts(self, fiction_id: str, series_index: int | None = None) -> list[dict]:
+        """Derive book list from post titles (Patreon-specific, not in Protocol).
+
+        Args:
+            fiction_id: Patreon fiction ID
+            series_index: If set, only return books from this series (0-based).
+                         If None, returns all books (legacy behavior).
+        """
+        campaign_id = self._resolve_campaign_id_from_fiction(fiction_id)
         posts = self._fetch_all_posts(campaign_id)
         chapters = self._filter_chapter_posts(posts)
+
+        if series_index is not None:
+            series_list = self._detect_series_from_posts(chapters)
+            if 0 <= series_index < len(series_list):
+                return series_list[series_index]["books"]
+            return []
 
         books: dict[int, int] = {}
         for ch in chapters:
@@ -250,6 +375,53 @@ class PatreonScraper:
             for num, count in books.items()
         ], key=lambda b: b["book_number"])
 
+    def get_series_preview(self, fiction_id: str) -> list[dict]:
+        """Get a preview of all detected series with their books and date ranges."""
+        campaign_id = self._resolve_campaign_id_from_fiction(fiction_id)
+        posts = self._fetch_all_posts(campaign_id)
+        chapters = self._filter_chapter_posts(posts)
+        return self._detect_series_from_posts(chapters)
+
+    def _extract_series_index(self, fiction_id: str) -> int | None:
+        """Extract series index from fiction_id like patreon_tedsteel_s1."""
+        m = re.search(r'_s(\d+)$', fiction_id)
+        return int(m.group(1)) if m else None
+
+    def _resolve_campaign_id_from_fiction(self, fiction_id: str) -> str:
+        """Extract campaign ID from fiction_id, resolving slug if needed.
+
+        Handles formats like: patreon_9319026, patreon_tedsteel, patreon_tedsteel_s1
+        """
+        stripped = fiction_id.removeprefix("patreon_")
+        # Remove series suffix like _s0, _s1
+        stripped = re.sub(r'_s\d+$', '', stripped)
+        if not stripped.isdigit():
+            stripped = self._resolve_campaign_id(stripped)
+        return stripped
+
+    def _prosemirror_to_text(self, doc: dict) -> str:
+        """Convert ProseMirror JSON document to plain text."""
+        lines = []
+
+        def walk(node: dict):
+            node_type = node.get("type", "")
+            if node_type == "text":
+                lines.append(node.get("text", ""))
+            elif node_type in ("paragraph", "heading"):
+                for child in node.get("content", []):
+                    walk(child)
+                lines.append("\n\n")
+            elif node_type == "hardBreak":
+                lines.append("\n")
+            else:
+                for child in node.get("content", []):
+                    walk(child)
+
+        walk(doc)
+        text = "".join(lines)
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        return text.strip()
+
     def download_chapter_text(self, chapter_ref: str) -> str:
         """Download and extract text from a Patreon post.
 
@@ -258,14 +430,25 @@ class PatreonScraper:
         """
         data = self._fetch_api(
             f"{self.BASE_URL}/api/posts/{chapter_ref}",
-            params={"fields[post]": "content,title"},
+            params={"fields[post]": "content,content_json_string,title"},
         )
 
-        content = data.get("data", {}).get("attributes", {}).get("content", "")
-        if not content:
-            raise ValueError(f"Post {chapter_ref} has no content")
+        attrs = data.get("data", {}).get("attributes", {})
 
-        return self._html_to_text(content)
+        # Try content_json_string first (ProseMirror JSON)
+        json_str = attrs.get("content_json_string")
+        if json_str:
+            doc = json.loads(json_str)
+            text = self._prosemirror_to_text(doc)
+            if text:
+                return text
+
+        # Fallback to HTML content
+        content = attrs.get("content", "")
+        if content:
+            return self._html_to_text(content)
+
+        raise ValueError(f"Post {chapter_ref} has no content")
 
     def download_book(
         self,
@@ -273,9 +456,17 @@ class PatreonScraper:
         book_number: int,
         delay: float = 1.0,
         on_progress: Optional[Callable[[int, str], None]] = None,
+        fetch_fiction_id: str | None = None,
     ) -> BookMetadata:
-        """Download a complete book from Patreon posts."""
-        info = self.get_fiction_info(fiction_id)
+        """Download a complete book from Patreon posts.
+
+        Args:
+            fiction_id: Local fiction ID for saving files (e.g., "58187")
+            fetch_fiction_id: Patreon fiction ID for API calls (e.g., "patreon_tedsteel").
+                            If None, uses fiction_id for both.
+        """
+        source_fid = fetch_fiction_id or fiction_id
+        info = self.get_fiction_info(source_fid)
         title = info["title"]
 
         logger.info(f"Downloading: {title} - Book {book_number}")
@@ -293,7 +484,8 @@ class PatreonScraper:
 
         book = self.book_discovery.create_book(metadata)
 
-        chapters = self.get_chapter_list(fiction_id, book_number)
+        series_index = self._extract_series_index(source_fid)
+        chapters = self.get_chapter_list(source_fid, book_number, series_index=series_index)
         logger.info(f"Found {len(chapters)} chapters")
         if on_progress:
             on_progress(0, f"Found {len(chapters)} chapters")

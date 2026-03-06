@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.requests import (
     AddFictionRequest,
+    ImportPatreonBooksRequest,
     BackfillResult,
     BackfillTitlesRequest,
     ChunkRequest,
@@ -132,9 +133,20 @@ async def start_download_processor():
 
     def do_download(fiction_id: str, book_number: int, on_progress):
         """Download a book with progress tracking."""
-        is_patreon = fiction_id.startswith("patreon_")
-        source = "patreon" if is_patreon else "royal_road"
+        source = _detect_source(fiction_id)
         scraper = get_scraper(source)
+        if source == "patreon":
+            # For Patreon books stored under a Royal Road fiction_id,
+            # we need the Patreon URL to know where to fetch from
+            patreon_url = _get_patreon_url(fiction_id)
+            if patreon_url:
+                patreon_fid, _ = _parse_source_url(patreon_url)
+                scraper.download_book(
+                    fiction_id, book_number,
+                    on_progress=on_progress,
+                    fetch_fiction_id=patreon_fid,
+                )
+                return
         scraper.download_book(fiction_id, book_number, on_progress=on_progress)
 
     await download_queue.start_processing(do_download)
@@ -164,6 +176,45 @@ async def list_fictions() -> list[FictionInfo]:
             name = f"Fiction {fiction_id}"
         fictions.append(FictionInfo(fiction_id=fiction_id, name=name))
     return fictions
+
+
+def _detect_source(fiction_id: str) -> str:
+    """Detect whether a fiction uses Patreon or Royal Road."""
+    if fiction_id.startswith("patreon_"):
+        return "patreon"
+    settings = get_settings()
+    meta_path = Path(settings.books_dir) / fiction_id / "patreon_meta.json"
+    if meta_path.exists():
+        return "patreon"
+    return "royal_road"
+
+
+def _get_patreon_url(fiction_id: str) -> str | None:
+    """Get the Patreon URL for a fiction from its metadata."""
+    settings = get_settings()
+    meta_path = Path(settings.books_dir) / fiction_id / "patreon_meta.json"
+    if meta_path.exists():
+        with open(meta_path) as f:
+            return json.load(f).get("patreon_url")
+    return None
+
+
+def _get_patreon_series_index(fiction_id: str) -> int | None:
+    """Read the series_index from a Patreon fiction's metadata file."""
+    settings = get_settings()
+    meta_path = Path(settings.books_dir) / fiction_id / "patreon_meta.json"
+    if meta_path.exists():
+        with open(meta_path) as f:
+            meta = json.load(f)
+        return meta.get("series_index")
+    # Try to extract from fiction_id pattern like patreon_tedsteel_s1
+    m = re.search(r'_s(\d+)$', fiction_id)
+    return int(m.group(1)) if m else None
+
+
+def _get_patreon_base_fiction_id(fiction_id: str) -> str:
+    """Strip the _sN suffix to get the base fiction_id for API calls."""
+    return re.sub(r'_s\d+$', '', fiction_id)
 
 
 def _parse_source_url(url: str) -> tuple[str, str]:
@@ -251,6 +302,51 @@ async def add_fiction(request: AddFictionRequest) -> FictionInfo:
         raise HTTPException(status_code=400, detail=f"Failed to add fiction: {str(e)}")
 
 
+@app.post("/api/fictions/import-patreon")
+async def import_patreon_books(request: ImportPatreonBooksRequest):
+    """Import selected books from Patreon into a fiction (existing or new)."""
+    fiction_id = request.fiction_id
+    discovery = get_book_discovery()
+    settings = get_settings()
+    download_queue = get_download_queue()
+
+    # Ensure fiction directory exists
+    fiction_path = Path(settings.books_dir) / fiction_id
+    if not fiction_path.exists():
+        fiction_path.mkdir(parents=True, exist_ok=True)
+
+    # Save patreon metadata so download processor knows to use PatreonScraper
+    meta_path = fiction_path / "patreon_meta.json"
+    meta = {
+        "source": "patreon",
+        "patreon_url": request.patreon_url,
+    }
+    with open(meta_path, "w") as f:
+        json.dump(meta, f, indent=2)
+
+    # Queue downloads for each selected book
+    scraper = get_scraper("patreon")
+    patreon_fiction_id, _ = _parse_source_url(request.patreon_url)
+    queued = []
+    for book_number in request.book_numbers:
+        try:
+            chapters = scraper.get_chapter_list(patreon_fiction_id, book_number)
+            total_chapters = len(chapters)
+        except Exception:
+            total_chapters = 0
+
+        job = await download_queue.add_job(
+            fiction_id, book_number, total_chapters=total_chapters
+        )
+        queued.append({"book_number": book_number, "job_id": job.job_id})
+
+    return OperationResult(
+        success=True,
+        message=f"Queued {len(queued)} book(s) for download from Patreon",
+        data={"queued": queued},
+    )
+
+
 @app.get("/api/series/{fiction_id}")
 async def get_series_info(fiction_id: FictionIdPath, refresh: bool = False) -> list[SeriesBookInfo]:
     """Get all books in a series, merged with local download status."""
@@ -268,7 +364,8 @@ async def get_series_info(fiction_id: FictionIdPath, refresh: bool = False) -> l
     scraper = get_scraper(source)
     try:
         if is_patreon:
-            source_books = scraper.get_books_from_posts(fiction_id)
+            series_index = _get_patreon_series_index(fiction_id)
+            source_books = scraper.get_books_from_posts(fiction_id, series_index=series_index)
         else:
             source_books = scraper.get_all_books_in_series(fiction_id)
         cache.set(cache_key, source_books)
