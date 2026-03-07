@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
-import { Button, ButtonText, Badge, BadgeText, Progress } from '@titan-design/react-ui'
+import { Button, ButtonText, Badge, BadgeText, Progress, cn } from '@titan-design/react-ui'
 import { useToastContext, useAudioContext } from './App'
 import { BookViewSkeleton } from './Skeleton'
 import { Tooltip } from './Tooltip'
@@ -437,11 +437,11 @@ function BookView({ fictionId, bookNumber, onHeaderUpdate }: BookViewProps) {
       </div>
 
       {/* Chapter table */}
-      <div className="chapter-table">
-        <div className="chapter-header">
-          <div className="col-chapter">Chapter</div>
-          <div className="col-status">Status</div>
-          <div className="col-actions">Actions</div>
+      <div className="bg-surface-base border border-border-subtle rounded-lg overflow-hidden">
+        <div className="grid grid-cols-[1fr_140px_180px] items-center gap-4 px-5 py-2 bg-black/20 text-xs text-text-tertiary uppercase tracking-[0.08em] font-medium border-b border-border-subtle">
+          <div className="flex items-center gap-3 min-w-0">Chapter</div>
+          <div className="flex items-center justify-start">Status</div>
+          <div className="flex items-center justify-end gap-2">Actions</div>
         </div>
 
         {chapters.map((chapter, index) => {
@@ -456,14 +456,26 @@ function BookView({ fictionId, bookNumber, onHeaderUpdate }: BookViewProps) {
             : chapter.is_normalized ? 'chunked'
             : 'pending'
 
+          const rowStateBg: Record<string, string> = {
+            'exported': 'bg-status-success/[0.02] hover:bg-status-success/[0.05]',
+            'audio-complete': 'bg-brand-secondary/[0.02] hover:bg-brand-secondary/[0.05]',
+            'generating': 'bg-brand-primary/[0.03]',
+            'processing': 'bg-brand-primary/[0.08]',
+            'default': 'hover:bg-white/[0.02]',
+          }
+
           return (
             <div
               key={chapter.chapter_number}
-              className={`chapter-row state-${rowState} ${isProcessingThis ? 'processing' : ''}`}
-              style={{ animationDelay: `${index * 30}ms` }}
+              className={cn(
+                "grid grid-cols-[1fr_140px_180px] items-center gap-4 px-5 py-3 border-b border-border-subtle last:border-b-0 transition-all duration-fast animate-[rowFadeIn_var(--duration-normal)_var(--ease-out)_backwards]",
+                rowStateBg[rowState] || rowStateBg.default,
+                isProcessingThis && "bg-brand-primary/[0.08]"
+              )}
+              style={{ animationDelay: `${index * 40}ms` }}
             >
               {/* Chapter Info */}
-              <div className="col-chapter">
+              <div className="flex items-center gap-3 min-w-0">
                 <span className="font-mono font-medium text-sm text-text-tertiary min-w-[2.5ch] text-right shrink-0">{chapter.chapter_number}</span>
                 <Tooltip content={cleanChapterTitle(chapter.title)} position="right" delay={500}>
                   <span className="text-sm text-text-primary whitespace-nowrap overflow-hidden text-ellipsis">{cleanChapterTitle(chapter.title)}</span>
@@ -471,7 +483,7 @@ function BookView({ fictionId, bookNumber, onHeaderUpdate }: BookViewProps) {
               </div>
 
               {/* Status Column - Shows progress or completion state */}
-              <div className="col-status">
+              <div className="flex items-center justify-start">
                 {chapter.is_exported ? (
                   <Badge color="success" variant="subtle"><BadgeText>✓ Exported</BadgeText></Badge>
                 ) : chapter.is_audio_complete ? (
@@ -491,33 +503,36 @@ function BookView({ fictionId, bookNumber, onHeaderUpdate }: BookViewProps) {
               </div>
 
               {/* Actions Column - Contextual actions */}
-              <div className="col-actions">
+              <div className="flex items-center justify-end gap-2">
                 {chapter.is_exported ? (
-                  <button
-                    className="action-btn play"
-                    onClick={() => handlePlayAudio(chapter.chapter_number, cleanChapterTitle(chapter.title))}
-                    title="Preview audio"
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-brand-secondary border border-brand-secondary/25 min-w-[28px] p-1"
+                    onPress={() => handlePlayAudio(chapter.chapter_number, cleanChapterTitle(chapter.title))}
                   >
-                    ▶
-                  </button>
+                    <ButtonText>▶</ButtonText>
+                  </Button>
                 ) : chapter.is_audio_complete ? (
                   <div className="flex items-center gap-2">
-                    <button
-                      className="action-btn play"
-                      onClick={() => handlePlayAudio(chapter.chapter_number, cleanChapterTitle(chapter.title))}
-                      title="Preview audio"
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-brand-secondary border border-brand-secondary/25 min-w-[28px] p-1"
+                      onPress={() => handlePlayAudio(chapter.chapter_number, cleanChapterTitle(chapter.title))}
                     >
-                      ▶
-                    </button>
+                      <ButtonText>▶</ButtonText>
+                    </Button>
                     {!validation && (
-                      <button
-                        className="action-btn"
-                        onClick={() => validateChapter(chapter.chapter_number)}
-                        disabled={processing === `validate-${chapter.chapter_number}`}
-                        title="Validate audio"
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-text-secondary border border-border hover:border-brand-primary hover:text-brand-primary hover:bg-brand-primary/[0.08]"
+                        onPress={() => validateChapter(chapter.chapter_number)}
+                        isDisabled={processing === `validate-${chapter.chapter_number}`}
                       >
-                        {processing === `validate-${chapter.chapter_number}` ? '...' : '?'}
-                      </button>
+                        <ButtonText>{processing === `validate-${chapter.chapter_number}` ? '...' : '?'}</ButtonText>
+                      </Button>
                     )}
                     {validation && (
                       <Badge
@@ -528,46 +543,50 @@ function BookView({ fictionId, bookNumber, onHeaderUpdate }: BookViewProps) {
                         <BadgeText>{validation.pass_rate.toFixed(0)}%</BadgeText>
                       </Badge>
                     )}
-                    <button
-                      className="action-btn export"
-                      onClick={() => exportChapter(chapter.chapter_number)}
-                      disabled={processing === `export-${chapter.chapter_number}`}
-                      title="Export M4B"
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-brand-secondary border border-brand-secondary/25 hover:bg-brand-secondary/10"
+                      onPress={() => exportChapter(chapter.chapter_number)}
+                      isDisabled={processing === `export-${chapter.chapter_number}`}
                     >
-                      {processing === `export-${chapter.chapter_number}` ? '...' : '↓'}
-                    </button>
+                      <ButtonText>{processing === `export-${chapter.chapter_number}` ? '...' : '↓'}</ButtonText>
+                    </Button>
                   </div>
                 ) : chapter.is_chunked ? (
                   chapter.chunks_completed === 0 ? (
-                    <button
-                      className="action-btn generate"
-                      onClick={() => generateChapter(chapter.chapter_number)}
-                      disabled={processing === `generate-${chapter.chapter_number}`}
-                      title="Generate audio"
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-brand-primary border border-brand-primary/25 hover:bg-brand-primary/10"
+                      onPress={() => generateChapter(chapter.chapter_number)}
+                      isDisabled={processing === `generate-${chapter.chapter_number}`}
                     >
-                      {processing === `generate-${chapter.chapter_number}` ? '...' : 'Generate'}
-                    </button>
+                      <ButtonText>{processing === `generate-${chapter.chapter_number}` ? '...' : 'Generate'}</ButtonText>
+                    </Button>
                   ) : (
                     <span className="font-mono text-xs text-brand-primary-light animate-[statusPulse_1.5s_ease-in-out_infinite]">Generating...</span>
                   )
                 ) : chapter.is_normalized ? (
-                  <button
-                    className="action-btn"
-                    onClick={() => chunkChapter(chapter.chapter_number)}
-                    disabled={processing === `chunk-${chapter.chapter_number}`}
-                    title="Split into chunks"
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-text-secondary border border-border hover:border-brand-primary hover:text-brand-primary hover:bg-brand-primary/[0.08]"
+                    onPress={() => chunkChapter(chapter.chapter_number)}
+                    isDisabled={processing === `chunk-${chapter.chapter_number}`}
                   >
-                    {processing === `chunk-${chapter.chapter_number}` ? '...' : 'Chunk'}
-                  </button>
+                    <ButtonText>{processing === `chunk-${chapter.chapter_number}` ? '...' : 'Chunk'}</ButtonText>
+                  </Button>
                 ) : (
-                  <button
-                    className="action-btn"
-                    onClick={() => normalizeChapter(chapter.chapter_number)}
-                    disabled={processing === `normalize-${chapter.chapter_number}`}
-                    title="Normalize text"
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-text-secondary border border-border hover:border-brand-primary hover:text-brand-primary hover:bg-brand-primary/[0.08]"
+                    onPress={() => normalizeChapter(chapter.chapter_number)}
+                    isDisabled={processing === `normalize-${chapter.chapter_number}`}
                   >
-                    {processing === `normalize-${chapter.chapter_number}` ? '...' : 'Normalize'}
-                  </button>
+                    <ButtonText>{processing === `normalize-${chapter.chapter_number}` ? '...' : 'Normalize'}</ButtonText>
+                  </Button>
                 )}
               </div>
             </div>
