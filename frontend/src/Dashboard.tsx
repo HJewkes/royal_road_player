@@ -339,12 +339,12 @@ function Dashboard({ onSelectBook }: DashboardProps) {
   }
 
   return (
-    <div className="dashboard">
+    <div className="animate-[fadeIn_var(--duration-slow)_var(--ease-out)]">
       {/* Add Series Header */}
-      <div className="dashboard-header">
-        <h2 className="dashboard-title">Library</h2>
+      <div className="flex justify-between items-center mb-6">
+        <h2 className="font-body text-sm font-medium text-text-tertiary uppercase tracking-[0.2em]">Library</h2>
         <button
-          className="btn btn-add-series"
+          className="bg-interactive-hover text-text-secondary border border-border py-3 px-5 text-sm font-body font-medium cursor-pointer rounded-md transition-all duration-normal ease-out tracking-[0.02em] hover:border-brand-primary-light hover:text-brand-primary-light hover:bg-brand-primary-subtle"
           onClick={() => setShowAddSeries(!showAddSeries)}
         >
           {showAddSeries ? 'Cancel' : '+ Add Series'}
@@ -353,8 +353,8 @@ function Dashboard({ onSelectBook }: DashboardProps) {
 
       {/* Add Series Panel */}
       {showAddSeries && (
-        <div className="add-series-panel">
-          <div className="add-series-input-group">
+        <div className="bg-gradient-to-br from-surface-elevated to-surface-base border border-border rounded-xl p-8 mb-8 shadow-lg animate-[slideDown_var(--duration-normal)_var(--ease-out)]">
+          <div className="flex gap-4 mb-5">
             <input
               type="text"
               placeholder="Royal Road or Patreon URL"
@@ -374,27 +374,27 @@ function Dashboard({ onSelectBook }: DashboardProps) {
           </div>
 
           {addingError && (
-            <p className="add-series-error">{addingError}</p>
+            <p className="text-status-error text-sm m-0 py-3 flex items-center gap-2">{addingError}</p>
           )}
 
           {preview && (
-            <div className="series-preview">
-              <div className="preview-header">
-                <h3>{preview.title}</h3>
-                {preview.author && <span className="preview-author">by {preview.author}</span>}
+            <div className="bg-black/20 border border-border-subtle rounded-lg p-6 mt-5 animate-[fadeIn_var(--duration-fast)_var(--ease-out)]">
+              <div className="mb-4">
+                <h3 className="font-heading text-xl font-semibold text-text-primary m-0 mb-1">{preview.title}</h3>
+                {preview.author && <span className="text-sm text-text-tertiary italic">by {preview.author}</span>}
               </div>
-              <div className="preview-stats">
+              <div className="flex gap-4 text-sm text-text-secondary mb-5 font-mono">
                 <span>{selectedBooks.size}/{preview.book_count} book{preview.book_count !== 1 ? 's' : ''} selected</span>
                 <span>•</span>
                 <span>{preview.books.filter(b => selectedBooks.has(b.book_number)).reduce((sum, b) => sum + b.chapter_count, 0)} chapters</span>
               </div>
-              <div className="preview-books">
+              <div className="flex flex-wrap gap-2 mb-6">
                 {preview.books.map(book => {
                   const isSelected = selectedBooks.has(book.book_number)
                   return (
                     <span
                       key={book.book_number}
-                      className={`preview-book-badge ${isSelected ? '' : 'deselected'}`}
+                      className="bg-interactive-hover border border-border-subtle rounded-full py-2 px-4 font-mono text-xs text-text-secondary font-medium"
                       onClick={() => {
                         setSelectedBooks(prev => {
                           const next = new Set(prev)
@@ -449,7 +449,7 @@ function Dashboard({ onSelectBook }: DashboardProps) {
                 </div>
               )}
 
-              <div className="preview-actions">
+              <div className="flex gap-4 justify-end pt-5 border-t border-border-subtle">
                 <button
                   className="btn btn-secondary"
                   onClick={handleCancelAdd}
@@ -468,7 +468,7 @@ function Dashboard({ onSelectBook }: DashboardProps) {
           )}
 
           {!preview && !previewLoading && (
-            <p className="add-series-hint">
+            <p className="text-text-tertiary text-sm m-0 italic">
               Paste a Royal Road or Patreon URL to preview and add a series
             </p>
           )}
@@ -486,24 +486,24 @@ function Dashboard({ onSelectBook }: DashboardProps) {
         const isCollapsed = collapsedSections.has(fiction.fiction_id)
 
         return (
-          <div 
-            key={fiction.fiction_id} 
+          <div
+            key={fiction.fiction_id}
             className={`series-card ${isCollapsed ? 'collapsed' : ''}`}
             style={{ animationDelay: `${fictionIndex * 100}ms` }}
           >
             {/* Series Header */}
-            <div 
+            <div
               className="series-header"
               onClick={() => toggleSection(fiction.fiction_id)}
             >
               <div className="series-header-left">
                 <span className="collapse-icon">▼</span>
-                <div className="series-info">
-                  <h2 className="series-title">{fiction.name}</h2>
-                  <div className="series-meta">
-                    <span className="series-stat">{downloadedBooks.length}/{books.length} books</span>
-                    <span className="series-stat-divider">·</span>
-                    <span className="series-stat">{totalChapters} chapters</span>
+                <div className="min-w-0">
+                  <h2 className="font-heading text-lg font-medium italic text-text-primary m-0 whitespace-nowrap overflow-hidden text-ellipsis">{fiction.name}</h2>
+                  <div className="flex items-center gap-2 mt-[2px]">
+                    <span className="font-mono text-xs text-text-tertiary">{downloadedBooks.length}/{books.length} books</span>
+                    <span className="text-text-tertiary opacity-50">·</span>
+                    <span className="font-mono text-xs text-text-tertiary">{totalChapters} chapters</span>
                   </div>
                 </div>
               </div>
@@ -516,7 +516,7 @@ function Dashboard({ onSelectBook }: DashboardProps) {
               >
                 {refreshingFiction === fiction.fiction_id ? '...' : '↻ Check'}
               </button>
-              
+
               {totalChapters > 0 && (
                 <PipelineStages
                   normalized={totalNormalized}
@@ -536,15 +536,15 @@ function Dashboard({ onSelectBook }: DashboardProps) {
                 const isDownloading = downloading === downloadKey
 
                 return (
-                  <div 
-                    key={downloadKey} 
+                  <div
+                    key={downloadKey}
                     className={`book-row-unified ${!book.is_downloaded ? 'not-downloaded' : ''}`}
                     onClick={() => book.is_downloaded && onSelectBook(fiction.fiction_id, book.book_number)}
                     style={{ animationDelay: `${(fictionIndex * 3 + bookIndex) * 50}ms` }}
                   >
-                    <div className="book-row-info">
-                      <span className="book-number-badge">Book {book.book_number}</span>
-                      <span className="book-chapter-count">{book.chapter_count} chapters</span>
+                    <div className="flex items-center gap-3">
+                      <span className="font-mono text-sm font-semibold text-brand-primary-light">Book {book.book_number}</span>
+                      <span className="font-mono text-xs text-text-tertiary">{book.chapter_count} chapters</span>
                     </div>
 
                     <PipelineStages
@@ -573,8 +573,8 @@ function Dashboard({ onSelectBook }: DashboardProps) {
             <div className="empty-book" />
             <div className="empty-book" />
           </div>
-          <h3>Your library awaits</h3>
-          <p>Add a Royal Road or Patreon URL to begin building your audiobook collection</p>
+          <h3 className="font-heading text-text-primary m-0 mb-3 text-2xl font-medium">Your library awaits</h3>
+          <p className="m-0 mb-8 text-base max-w-[340px] mx-auto leading-relaxed">Add a Royal Road or Patreon URL to begin building your audiobook collection</p>
           <button
             className="btn btn-primary btn-lg"
             onClick={() => setShowAddSeries(true)}

@@ -15,7 +15,7 @@ export function Skeleton({ className = '', width, height, style }: SkeletonProps
       variant="rounded"
       width={width}
       height={height}
-      style={style}
+      style={style as any}
     />
   )
 }
