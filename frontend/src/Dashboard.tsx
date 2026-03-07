@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Button, ButtonText } from '@titan-design/react-ui'
+import { Button, ButtonText, Input, EmptyState } from '@titan-design/react-ui'
 import { useToastContext } from './App'
 import { DashboardSkeleton } from './Skeleton'
 import { PipelineStages } from './CircularProgress'
@@ -356,13 +356,15 @@ function Dashboard({ onSelectBook }: DashboardProps) {
       {showAddSeries && (
         <div className="bg-gradient-to-br from-surface-elevated to-surface-base border border-border rounded-xl p-8 mb-8 shadow-lg animate-[slideDown_var(--duration-normal)_var(--ease-out)]">
           <div className="flex gap-4 mb-5">
-            <input
-              type="text"
+            <Input
               placeholder="Royal Road or Patreon URL"
               value={newSeriesUrl}
-              onChange={(e) => setNewSeriesUrl(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') void handlePreviewSeries() }}
-              className="add-series-input"
+              onChangeText={(text) => setNewSeriesUrl(text)}
+              onSubmitEditing={() => void handlePreviewSeries()}
+              isInvalid={!!addingError}
+              errorMessage={addingError || undefined}
+              className="flex-1"
+              inputClassName="bg-black/30"
               autoFocus
             />
             <Button
@@ -374,10 +376,6 @@ function Dashboard({ onSelectBook }: DashboardProps) {
               <ButtonText>{previewLoading ? '...' : '→ Preview'}</ButtonText>
             </Button>
           </div>
-
-          {addingError && (
-            <p className="text-status-error text-sm m-0 py-3 flex items-center gap-2">{addingError}</p>
-          )}
 
           {preview && (
             <div className="bg-black/20 border border-border-subtle rounded-lg p-6 mt-5 animate-[fadeIn_var(--duration-fast)_var(--ease-out)]">
@@ -429,7 +427,7 @@ function Dashboard({ onSelectBook }: DashboardProps) {
                   <select
                     value={targetFictionId}
                     onChange={(e) => setTargetFictionId(e.target.value)}
-                    className="add-series-input"
+                    className="flex-1 bg-black/30 border border-border-subtle rounded-md px-2 py-1.5 text-text-primary text-base font-body transition-all duration-150 focus:outline-none focus:border-brand-primary focus:shadow-[0_0_0_3px_rgba(212,120,42,0.12)]"
                     style={{ width: '100%', padding: '6px 8px' }}
                   >
                     <option value="">— Select fiction —</option>
@@ -439,13 +437,12 @@ function Dashboard({ onSelectBook }: DashboardProps) {
                     <option value="__new__">+ New fiction...</option>
                   </select>
                   {targetFictionId === '__new__' && (
-                    <input
-                      type="text"
+                    <Input
                       placeholder="Fiction name (e.g., Soccer Supremo)"
                       value={newFictionName}
-                      onChange={(e) => setNewFictionName(e.target.value)}
-                      className="add-series-input"
-                      style={{ width: '100%', marginTop: '6px' }}
+                      onChangeText={(text) => setNewFictionName(text)}
+                      className="w-full mt-1.5"
+                      inputClassName="bg-black/30"
                     />
                   )}
                 </div>
@@ -573,23 +570,21 @@ function Dashboard({ onSelectBook }: DashboardProps) {
       })}
 
       {fictions.length === 0 && !showAddSeries && (
-        <div className="empty-state">
-          <div className="empty-icon-stack">
-            <div className="empty-book" />
-            <div className="empty-book" />
-            <div className="empty-book" />
-          </div>
-          <h3 className="font-heading text-text-primary m-0 mb-3 text-2xl font-medium">Your library awaits</h3>
-          <p className="m-0 mb-8 text-base max-w-[340px] mx-auto leading-relaxed">Add a Royal Road or Patreon URL to begin building your audiobook collection</p>
-          <Button
-            variant="solid"
-            color="primary"
-            size="lg"
-            onPress={() => setShowAddSeries(true)}
-          >
-            <ButtonText>+ Add Your First Series</ButtonText>
-          </Button>
-        </div>
+        <EmptyState
+          title="Your library awaits"
+          description="Add a Royal Road or Patreon URL to begin building your audiobook collection"
+          action={
+            <Button
+              variant="solid"
+              color="primary"
+              size="lg"
+              onPress={() => setShowAddSeries(true)}
+            >
+              <ButtonText>+ Add Your First Series</ButtonText>
+            </Button>
+          }
+          className="py-12 px-8"
+        />
       )}
     </div>
   )
