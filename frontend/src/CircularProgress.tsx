@@ -1,8 +1,10 @@
 import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
+import { CircularProgress as TitanCircularProgress, cn } from '@titan-design/react-ui'
+import type { ProgressColor } from '@titan-design/react-ui'
 
-interface CircularProgressProps {
-  value: number  // 0-100
+interface AppCircularProgressProps {
+  value: number
   size?: number
   strokeWidth?: number
   label?: string
@@ -13,7 +15,7 @@ interface CircularProgressProps {
   disabled?: boolean
 }
 
-export function CircularProgress({
+function AppCircularProgress({
   value,
   size = 36,
   strokeWidth = 3,
@@ -23,73 +25,64 @@ export function CircularProgress({
   isComplete = false,
   onClick,
   disabled = false,
-}: CircularProgressProps) {
+}: AppCircularProgressProps) {
   const [showTooltip, setShowTooltip] = useState(false)
   const [tooltipPos, setTooltipPos] = useState({ top: 0, left: 0 })
   const wrapperRef = useRef<HTMLDivElement>(null)
-  
-  const radius = (size - strokeWidth) / 2
-  const circumference = radius * 2 * Math.PI
-  const offset = circumference - (value / 100) * circumference
-  
+
+  const color: ProgressColor = isComplete ? 'success' : isActive ? 'primary' : 'secondary'
+  const pct = Math.min(100, Math.max(0, value))
   const isClickable = onClick && !disabled
-  
-  // Calculate tooltip position when showing
+
   useEffect(() => {
     if (showTooltip && wrapperRef.current) {
       const rect = wrapperRef.current.getBoundingClientRect()
       setTooltipPos({
-        top: rect.top - 8, // 8px above the element
+        top: rect.top - 8,
         left: rect.left + rect.width / 2,
       })
     }
   }, [showTooltip])
-  
+
   return (
-    <div 
+    <div
       ref={wrapperRef}
-      className={`circular-progress-wrapper ${isClickable ? 'clickable' : ''}`}
+      className={cn('relative inline-flex', isClickable && 'cursor-pointer')}
       onMouseEnter={() => setShowTooltip(true)}
       onMouseLeave={() => setShowTooltip(false)}
+      onClick={!disabled ? onClick : undefined}
     >
-      <button
-        className={`circular-progress ${isActive ? 'active' : ''} ${isComplete ? 'complete' : ''}`}
-        style={{ width: size, height: size }}
-        onClick={onClick}
-        disabled={disabled || !onClick}
-        type="button"
-      >
-        <svg width={size} height={size}>
-          {/* Background circle */}
-          <circle
-            className="circular-progress-bg"
-            cx={size / 2}
-            cy={size / 2}
-            r={radius}
-            strokeWidth={strokeWidth}
-          />
-          {/* Progress circle */}
-          <circle
-            className="circular-progress-fill"
-            cx={size / 2}
-            cy={size / 2}
-            r={radius}
-            strokeWidth={strokeWidth}
-            strokeDasharray={circumference}
-            strokeDashoffset={offset}
-            transform={`rotate(-90 ${size / 2} ${size / 2})`}
-          />
-        </svg>
-        {/* Center content */}
-        <span className="circular-progress-label">
-          {isComplete ? '✓' : label}
+      <TitanCircularProgress
+        value={pct}
+        size={size}
+        strokeWidth={strokeWidth}
+        color={color}
+        showValue={false}
+        className={cn(
+          'transition-transform',
+          isClickable && 'hover:scale-110',
+          disabled && 'opacity-50 cursor-not-allowed',
+        )}
+      />
+      {label && (
+        <span
+          className={cn(
+            'absolute inset-0 flex items-center justify-center font-mono text-xs font-semibold transition-colors',
+            isComplete
+              ? 'text-status-success text-sm'
+              : isActive
+                ? 'text-brand-primary'
+                : 'text-text-tertiary',
+          )}
+        >
+          {isComplete ? '\u2713' : label}
         </span>
-      </button>
-      
+      )}
+
       {/* Tooltip - rendered via portal to escape overflow containers */}
       {showTooltip && tooltip && createPortal(
-        <div 
-          className="circular-progress-tooltip-fixed"
+        <div
+          className="rounded bg-surface-elevated border border-border-subtle px-3 py-1 font-mono text-xs text-text-secondary whitespace-nowrap pointer-events-none animate-in fade-in z-[10000]"
           style={{
             position: 'fixed',
             top: tooltipPos.top,
@@ -99,13 +92,12 @@ export function CircularProgress({
         >
           {tooltip}
         </div>,
-        document.body
+        document.body,
       )}
     </div>
   )
 }
 
-// Compact version for dashboard rows
 interface PipelineStagesProps {
   normalized: number
   chunked: number
@@ -118,7 +110,6 @@ interface PipelineStagesProps {
   onGenerate?: () => void
   onExport?: () => void
   disabled?: boolean
-  // For non-downloaded books
   needsDownload?: boolean
   onDownload?: () => void
   isDownloading?: boolean
@@ -142,26 +133,28 @@ export function PipelineStages({
 }: PipelineStagesProps) {
   const size = compact ? 28 : 40
   const strokeWidth = compact ? 2.5 : 3
-  
-  // If needs download, show download-required state
+  const connectorClass = cn('h-[2px] rounded-[1px] bg-border-default', compact ? 'w-2' : 'w-3')
+
   if (needsDownload) {
+    const lockedConnectorClass = cn(connectorClass, 'opacity-20')
+
     return (
-      <div className={`pipeline-stages ${compact ? 'compact' : ''} needs-download`}>
-        <CircularProgress
+      <div className={cn('flex items-center', compact ? 'gap-[2px]' : 'gap-1')}>
+        <AppCircularProgress
           value={0}
           size={size}
           strokeWidth={strokeWidth}
-          label={isDownloading ? '...' : '↓'}
+          label={isDownloading ? '...' : '\u2193'}
           tooltip="Download chapters"
           isComplete={false}
           isActive={true}
           onClick={onDownload}
           disabled={isDownloading}
         />
-        
-        <div className="pipeline-connector-mini locked" />
-        
-        <CircularProgress
+
+        <div className={lockedConnectorClass} />
+
+        <AppCircularProgress
           value={0}
           size={size}
           strokeWidth={strokeWidth}
@@ -171,10 +164,10 @@ export function PipelineStages({
           isActive={false}
           disabled={true}
         />
-        
-        <div className="pipeline-connector-mini locked" />
-        
-        <CircularProgress
+
+        <div className={lockedConnectorClass} />
+
+        <AppCircularProgress
           value={0}
           size={size}
           strokeWidth={strokeWidth}
@@ -184,10 +177,10 @@ export function PipelineStages({
           isActive={false}
           disabled={true}
         />
-        
-        <div className="pipeline-connector-mini locked" />
-        
-        <CircularProgress
+
+        <div className={lockedConnectorClass} />
+
+        <AppCircularProgress
           value={0}
           size={size}
           strokeWidth={strokeWidth}
@@ -197,10 +190,10 @@ export function PipelineStages({
           isActive={false}
           disabled={true}
         />
-        
-        <div className="pipeline-connector-mini locked" />
-        
-        <CircularProgress
+
+        <div className={lockedConnectorClass} />
+
+        <AppCircularProgress
           value={0}
           size={size}
           strokeWidth={strokeWidth}
@@ -213,26 +206,25 @@ export function PipelineStages({
       </div>
     )
   }
-  
+
   const normPercent = totalChapters > 0 ? (normalized / totalChapters) * 100 : 0
   const chunkPercent = totalChapters > 0 ? (chunked / totalChapters) * 100 : 0
   const audioPercent = totalChapters > 0 ? (audioComplete / totalChapters) * 100 : 0
   const exportPercent = totalChapters > 0 ? (exported / totalChapters) * 100 : 0
-  
-  // Determine which stage is complete (must have chapters to be complete)
+
   const normComplete = totalChapters > 0 && normalized === totalChapters
   const chunkComplete = totalChapters > 0 && chunked === totalChapters
   const audioCompleteFlag = totalChapters > 0 && audioComplete === totalChapters
   const exportComplete = totalChapters > 0 && exported === totalChapters
-  
+
   const normActive = !normComplete && normalized < totalChapters
   const chunkActive = normComplete && !chunkComplete
   const audioActiveFlag = chunkComplete && !audioCompleteFlag
   const exportActive = audioCompleteFlag && !exportComplete
 
   return (
-    <div className={`pipeline-stages ${compact ? 'compact' : ''}`}>
-      <CircularProgress
+    <div className={cn('flex items-center', compact ? 'gap-[2px]' : 'gap-1')}>
+      <AppCircularProgress
         value={normPercent}
         size={size}
         strokeWidth={strokeWidth}
@@ -243,10 +235,10 @@ export function PipelineStages({
         onClick={onNormalize}
         disabled={disabled || normComplete}
       />
-      
-      <div className="pipeline-connector-mini" />
-      
-      <CircularProgress
+
+      <div className={connectorClass} />
+
+      <AppCircularProgress
         value={chunkPercent}
         size={size}
         strokeWidth={strokeWidth}
@@ -257,10 +249,10 @@ export function PipelineStages({
         onClick={onChunk}
         disabled={disabled || chunkComplete || !normComplete}
       />
-      
-      <div className="pipeline-connector-mini" />
-      
-      <CircularProgress
+
+      <div className={connectorClass} />
+
+      <AppCircularProgress
         value={audioPercent}
         size={size}
         strokeWidth={strokeWidth}
@@ -271,10 +263,10 @@ export function PipelineStages({
         onClick={onGenerate}
         disabled={disabled || audioCompleteFlag || !chunkComplete}
       />
-      
-      <div className="pipeline-connector-mini" />
-      
-      <CircularProgress
+
+      <div className={connectorClass} />
+
+      <AppCircularProgress
         value={exportPercent}
         size={size}
         strokeWidth={strokeWidth}
@@ -288,4 +280,3 @@ export function PipelineStages({
     </div>
   )
 }
-
