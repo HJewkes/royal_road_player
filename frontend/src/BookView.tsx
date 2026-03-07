@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
-import { Button, ButtonText } from '@titan-design/react-ui'
+import { Button, ButtonText, Badge, BadgeText, Progress } from '@titan-design/react-ui'
 import { useToastContext, useAudioContext } from './App'
 import { BookViewSkeleton } from './Skeleton'
 import { Tooltip } from './Tooltip'
@@ -473,31 +473,20 @@ function BookView({ fictionId, bookNumber, onHeaderUpdate }: BookViewProps) {
               {/* Status Column - Shows progress or completion state */}
               <div className="col-status">
                 {chapter.is_exported ? (
-                  <span className="status-badge exported">
-                    <span className="text-xs">✓</span>
-                    Exported
-                  </span>
+                  <Badge color="success" variant="subtle"><BadgeText>✓ Exported</BadgeText></Badge>
                 ) : chapter.is_audio_complete ? (
-                  <span className="status-badge complete">
-                    <span className="text-xs">✓</span>
-                    {chapter.chunk_count} chunks
-                  </span>
+                  <Badge color="info" variant="subtle"><BadgeText>✓ {chapter.chunk_count} chunks</BadgeText></Badge>
                 ) : chapter.is_chunked ? (
                   <div className="flex items-center gap-2 w-full">
-                    <div className="progress-bar-slim">
-                      <div
-                        className="progress-fill"
-                        style={{ width: `${chapter.progress_percent}%` }}
-                      />
-                    </div>
+                    <Progress value={chapter.progress_percent} size="sm" color="primary" className="max-w-[60px]" />
                     <span className="font-mono text-xs text-brand-primary-light min-w-[5ch]">
                       {chapter.chunks_completed}/{chapter.chunk_count}
                     </span>
                   </div>
                 ) : chapter.is_normalized ? (
-                  <span className="status-badge pending">Ready to chunk</span>
+                  <Badge color="default" variant="subtle"><BadgeText>Ready to chunk</BadgeText></Badge>
                 ) : (
-                  <span className="status-badge pending">Not processed</span>
+                  <Badge color="default" variant="subtle"><BadgeText>Not processed</BadgeText></Badge>
                 )}
               </div>
 
@@ -531,12 +520,13 @@ function BookView({ fictionId, bookNumber, onHeaderUpdate }: BookViewProps) {
                       </button>
                     )}
                     {validation && (
-                      <span
-                        className={`validation-badge ${validation.pass_rate >= 90 ? 'good' : validation.pass_rate >= 70 ? 'ok' : 'bad'}`}
-                        title={`${validation.passed_chunks}/${validation.total_chunks} passed`}
+                      <Badge
+                        color={validation.pass_rate >= 90 ? 'success' : validation.pass_rate >= 70 ? 'warning' : 'error'}
+                        variant="subtle"
+                        size="sm"
                       >
-                        {validation.pass_rate.toFixed(0)}%
-                      </span>
+                        <BadgeText>{validation.pass_rate.toFixed(0)}%</BadgeText>
+                      </Badge>
                     )}
                     <button
                       className="action-btn export"
