@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
+import { Button, ButtonText } from '@titan-design/react-ui'
 import { useToastContext, useAudioContext } from './App'
 import { BookViewSkeleton } from './Skeleton'
 import { Tooltip } from './Tooltip'
@@ -413,23 +414,26 @@ function BookView({ fictionId, bookNumber, onHeaderUpdate }: BookViewProps) {
         {hasGenericTitles && (
           <div className="flex items-center gap-3 py-3 px-4 bg-interactive-hover border border-border-subtle rounded-md text-sm text-text-secondary">
             <span>Some chapters have generic titles.</span>
-            <button
-              className="btn btn-sm"
-              onClick={backfillTitles}
-              disabled={processing === 'backfill'}
+            <Button
+              variant="solid"
+              color="secondary"
+              size="sm"
+              onPress={backfillTitles}
+              isDisabled={processing === 'backfill'}
             >
-              {processing === 'backfill' ? 'Updating...' : '↻ Refresh Titles'}
-            </button>
+              <ButtonText>{processing === 'backfill' ? 'Updating...' : '↻ Refresh Titles'}</ButtonText>
+            </Button>
           </div>
         )}
-        <button
-          className="btn btn-sm btn-check-rr"
-          onClick={() => void checkRoyalRoad()}
-          disabled={processing === 'check-rr'}
-          title="Check Royal Road for new chapters"
+        <Button
+          variant="outline"
+          color="secondary"
+          size="sm"
+          onPress={() => void checkRoyalRoad()}
+          isDisabled={processing === 'check-rr'}
         >
-          {processing === 'check-rr' ? '...' : '↻ Check Royal Road'}
-        </button>
+          <ButtonText>{processing === 'check-rr' ? '...' : '↻ Check Royal Road'}</ButtonText>
+        </Button>
       </div>
 
       {/* Chapter table */}

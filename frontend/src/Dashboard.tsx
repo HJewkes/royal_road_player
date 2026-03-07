@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { Button, ButtonText } from '@titan-design/react-ui'
 import { useToastContext } from './App'
 import { DashboardSkeleton } from './Skeleton'
 import { PipelineStages } from './CircularProgress'
@@ -364,13 +365,14 @@ function Dashboard({ onSelectBook }: DashboardProps) {
               className="add-series-input"
               autoFocus
             />
-            <button
-              className="btn btn-preview"
-              onClick={() => void handlePreviewSeries()}
-              disabled={!newSeriesUrl.trim() || previewLoading}
+            <Button
+              variant="solid"
+              color="primary"
+              onPress={() => void handlePreviewSeries()}
+              isDisabled={!newSeriesUrl.trim() || previewLoading}
             >
-              {previewLoading ? '...' : '→ Preview'}
-            </button>
+              <ButtonText>{previewLoading ? '...' : '→ Preview'}</ButtonText>
+            </Button>
           </div>
 
           {addingError && (
@@ -450,19 +452,21 @@ function Dashboard({ onSelectBook }: DashboardProps) {
               )}
 
               <div className="flex gap-4 justify-end pt-5 border-t border-border-subtle">
-                <button
-                  className="btn btn-secondary"
-                  onClick={handleCancelAdd}
+                <Button
+                  variant="ghost"
+                  color="primary"
+                  onPress={handleCancelAdd}
                 >
-                  Cancel
-                </button>
-                <button
-                  className="btn btn-primary"
-                  onClick={() => void handleAddSeries()}
-                  disabled={selectedBooks.size === 0 || (preview.source === 'patreon' && !targetFictionId) || (targetFictionId === '__new__' && !newFictionName.trim())}
+                  <ButtonText>Cancel</ButtonText>
+                </Button>
+                <Button
+                  variant="solid"
+                  color="primary"
+                  onPress={() => void handleAddSeries()}
+                  isDisabled={selectedBooks.size === 0 || (preview.source === 'patreon' && !targetFictionId) || (targetFictionId === '__new__' && !newFictionName.trim())}
                 >
-                  {preview.source === 'patreon' ? `Import ${selectedBooks.size} Book(s)` : 'Add to Library'}
-                </button>
+                  <ButtonText>{preview.source === 'patreon' ? `Import ${selectedBooks.size} Book(s)` : 'Add to Library'}</ButtonText>
+                </Button>
               </div>
             </div>
           )}
@@ -508,14 +512,16 @@ function Dashboard({ onSelectBook }: DashboardProps) {
                 </div>
               </div>
 
-              <button
-                className="btn btn-sm btn-check-rr"
-                onClick={(e) => void checkSource(fiction.fiction_id, e)}
-                disabled={refreshingFiction === fiction.fiction_id}
-                title="Check for new chapters"
+              <Button
+                variant="outline"
+                color="secondary"
+                size="sm"
+                onPress={() => void checkSource(fiction.fiction_id)}
+                isDisabled={refreshingFiction === fiction.fiction_id}
+                className="shrink-0"
               >
-                {refreshingFiction === fiction.fiction_id ? '...' : '↻ Check'}
-              </button>
+                <ButtonText>{refreshingFiction === fiction.fiction_id ? '...' : '↻ Check'}</ButtonText>
+              </Button>
 
               {totalChapters > 0 && (
                 <PipelineStages
@@ -575,12 +581,14 @@ function Dashboard({ onSelectBook }: DashboardProps) {
           </div>
           <h3 className="font-heading text-text-primary m-0 mb-3 text-2xl font-medium">Your library awaits</h3>
           <p className="m-0 mb-8 text-base max-w-[340px] mx-auto leading-relaxed">Add a Royal Road or Patreon URL to begin building your audiobook collection</p>
-          <button
-            className="btn btn-primary btn-lg"
-            onClick={() => setShowAddSeries(true)}
+          <Button
+            variant="solid"
+            color="primary"
+            size="lg"
+            onPress={() => setShowAddSeries(true)}
           >
-            + Add Your First Series
-          </button>
+            <ButtonText>+ Add Your First Series</ButtonText>
+          </Button>
         </div>
       )}
     </div>
