@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Button, ButtonText, Input, EmptyState } from '@titan-design/react-ui'
+import { Button, ButtonText, Input, EmptyState, Card, Collapse, CollapseButton, CollapseContent, cn } from '@titan-design/react-ui'
 import { useToastContext } from './App'
 import { DashboardSkeleton } from './Skeleton'
 import { PipelineStages } from './CircularProgress'
@@ -323,18 +323,6 @@ function Dashboard({ onSelectBook }: DashboardProps) {
     setNewFictionName('')
   }
 
-  const toggleSection = (fictionId: string) => {
-    setCollapsedSections(prev => {
-      const next = new Set(prev)
-      if (next.has(fictionId)) {
-        next.delete(fictionId)
-      } else {
-        next.add(fictionId)
-      }
-      return next
-    })
-  }
-
   if (loading) {
     return <DashboardSkeleton />
   }
@@ -487,84 +475,91 @@ function Dashboard({ onSelectBook }: DashboardProps) {
         const isCollapsed = collapsedSections.has(fiction.fiction_id)
 
         return (
-          <div
-            key={fiction.fiction_id}
-            className={`series-card ${isCollapsed ? 'collapsed' : ''}`}
-            style={{ animationDelay: `${fictionIndex * 100}ms` }}
-          >
-            {/* Series Header */}
-            <div
-              className="series-header"
-              onClick={() => toggleSection(fiction.fiction_id)}
+          <div key={fiction.fiction_id} style={{ animationDelay: `${fictionIndex * 100}ms` }}>
+          <Card variant="outline" className="mb-5 shadow-lg animate-fade-in">
+            <Collapse
+              isOpen={!isCollapsed}
+              onToggle={(isOpen) => {
+                setCollapsedSections(prev => {
+                  const next = new Set(prev)
+                  isOpen ? next.delete(fiction.fiction_id) : next.add(fiction.fiction_id)
+                  return next
+                })
+              }}
             >
-              <div className="series-header-left">
-                <span className="collapse-icon">▼</span>
-                <div className="min-w-0">
-                  <h2 className="font-heading text-lg font-medium italic text-text-primary m-0 whitespace-nowrap overflow-hidden text-ellipsis">{fiction.name}</h2>
-                  <div className="flex items-center gap-2 mt-[2px]">
-                    <span className="font-mono text-xs text-text-tertiary">{downloadedBooks.length}/{books.length} books</span>
-                    <span className="text-text-tertiary opacity-50">·</span>
-                    <span className="font-mono text-xs text-text-tertiary">{totalChapters} chapters</span>
+              <CollapseButton className="flex items-center justify-between gap-4 px-5 py-4 cursor-pointer transition-colors duration-fast bg-surface-base hover:bg-surface-elevated rounded-t-lg w-full">
+                <div className="flex items-center gap-3 min-w-0 flex-1">
+                  <div className="min-w-0">
+                    <h2 className="font-heading text-lg font-medium italic text-text-primary m-0 whitespace-nowrap overflow-hidden text-ellipsis">{fiction.name}</h2>
+                    <div className="flex items-center gap-2 mt-[2px]">
+                      <span className="font-mono text-xs text-text-tertiary">{downloadedBooks.length}/{books.length} books</span>
+                      <span className="text-text-tertiary opacity-50">·</span>
+                      <span className="font-mono text-xs text-text-tertiary">{totalChapters} chapters</span>
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              <Button
-                variant="outline"
-                color="secondary"
-                size="sm"
-                onPress={() => void checkSource(fiction.fiction_id)}
-                isDisabled={refreshingFiction === fiction.fiction_id}
-                className="shrink-0"
-              >
-                <ButtonText>{refreshingFiction === fiction.fiction_id ? '...' : '↻ Check'}</ButtonText>
-              </Button>
+                <Button
+                  variant="outline"
+                  color="secondary"
+                  size="sm"
+                  onPress={() => void checkSource(fiction.fiction_id)}
+                  isDisabled={refreshingFiction === fiction.fiction_id}
+                  className="shrink-0"
+                >
+                  <ButtonText>{refreshingFiction === fiction.fiction_id ? '...' : '↻ Check'}</ButtonText>
+                </Button>
 
-              {totalChapters > 0 && (
-                <PipelineStages
-                  normalized={totalNormalized}
-                  chunked={totalChunked}
-                  audioComplete={totalComplete}
-                  exported={totalExported}
-                  totalChapters={totalChapters}
-                  compact
-                />
-              )}
-            </div>
+                {totalChapters > 0 && (
+                  <PipelineStages
+                    normalized={totalNormalized}
+                    chunked={totalChunked}
+                    audioComplete={totalComplete}
+                    exported={totalExported}
+                    totalChapters={totalChapters}
+                    compact
+                  />
+                )}
+              </CollapseButton>
+              <CollapseContent>
+                <div className="flex flex-col bg-background-base rounded-b-lg">
+                  {books.map((book, bookIndex) => {
+                    const downloadKey = `${fiction.fiction_id}_${book.book_number}`
+                    const isDownloading = downloading === downloadKey
 
-            {/* Book List */}
-            <div className="series-books">
-              {books.map((book, bookIndex) => {
-                const downloadKey = `${fiction.fiction_id}_${book.book_number}`
-                const isDownloading = downloading === downloadKey
+                    return (
+                      <div
+                        key={downloadKey}
+                        className={cn(
+                          "flex items-center justify-between py-3 pl-[calc(1.25rem+20px+0.75rem)] pr-5 border-b border-border-subtle last:border-b-0 cursor-pointer transition-all duration-fast hover:bg-white/[0.015]",
+                          !book.is_downloaded && "opacity-70 cursor-default hover:bg-transparent"
+                        )}
+                        onClick={() => book.is_downloaded && onSelectBook(fiction.fiction_id, book.book_number)}
+                        style={{ animationDelay: `${(fictionIndex * 3 + bookIndex) * 50}ms` }}
+                      >
+                        <div className="flex items-center gap-3">
+                          <span className="font-mono text-sm font-semibold text-brand-primary-light">Book {book.book_number}</span>
+                          <span className="font-mono text-xs text-text-tertiary">{book.chapter_count} chapters</span>
+                        </div>
 
-                return (
-                  <div
-                    key={downloadKey}
-                    className={`book-row-unified ${!book.is_downloaded ? 'not-downloaded' : ''}`}
-                    onClick={() => book.is_downloaded && onSelectBook(fiction.fiction_id, book.book_number)}
-                    style={{ animationDelay: `${(fictionIndex * 3 + bookIndex) * 50}ms` }}
-                  >
-                    <div className="flex items-center gap-3">
-                      <span className="font-mono text-sm font-semibold text-brand-primary-light">Book {book.book_number}</span>
-                      <span className="font-mono text-xs text-text-tertiary">{book.chapter_count} chapters</span>
-                    </div>
-
-                    <PipelineStages
-                      normalized={book.is_downloaded ? book.chapters_normalized : 0}
-                      chunked={book.is_downloaded ? book.chapters_chunked : 0}
-                      audioComplete={book.is_downloaded ? book.chapters_complete : 0}
-                      exported={book.is_downloaded && book.status === 'exported' ? book.chapter_count : 0}
-                      totalChapters={book.chapter_count}
-                      compact
-                      needsDownload={!book.is_downloaded}
-                      onDownload={() => downloadBook(fiction.fiction_id, book.book_number)}
-                      isDownloading={isDownloading}
-                    />
-                  </div>
-                )
-              })}
-            </div>
+                        <PipelineStages
+                          normalized={book.is_downloaded ? book.chapters_normalized : 0}
+                          chunked={book.is_downloaded ? book.chapters_chunked : 0}
+                          audioComplete={book.is_downloaded ? book.chapters_complete : 0}
+                          exported={book.is_downloaded && book.status === 'exported' ? book.chapter_count : 0}
+                          totalChapters={book.chapter_count}
+                          compact
+                          needsDownload={!book.is_downloaded}
+                          onDownload={() => downloadBook(fiction.fiction_id, book.book_number)}
+                          isDownloading={isDownloading}
+                        />
+                      </div>
+                    )
+                  })}
+                </div>
+              </CollapseContent>
+            </Collapse>
+          </Card>
           </div>
         )
       })}
