@@ -80,7 +80,7 @@ function useETA(chapters: ChapterSummary[]) {
   }, [chapters])
 }
 
-function BookView({ fictionId, bookNumber, onBack, onHeaderUpdate }: BookViewProps) {
+function BookView({ fictionId, bookNumber, onHeaderUpdate }: BookViewProps) {
   const toast = useToastContext()
   const { playAudio } = useAudioContext()
   const [chapters, setChapters] = useState<ChapterSummary[]>([])
