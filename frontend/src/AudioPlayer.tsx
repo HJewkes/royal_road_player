@@ -80,35 +80,35 @@ export function AudioPlayer({ src, onClose, title }: AudioPlayerProps) {
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0
 
   return (
-    <div className="audio-player-overlay" onClick={onClose}>
-      <div className="audio-player" onClick={e => e.stopPropagation()}>
+    <div className="fixed inset-0 bg-surface-overlay backdrop-blur-[4px] z-[200] flex items-center justify-center animate-[fadeIn_var(--duration-fast)_var(--ease-out)]" onClick={onClose}>
+      <div className="bg-gradient-to-br from-surface-elevated to-surface-base border border-border rounded-xl p-6 w-[90%] max-w-[480px] shadow-xl animate-[slideUp_var(--duration-normal)_var(--ease-spring)]" onClick={e => e.stopPropagation()}>
         <audio ref={audioRef} src={src} preload="metadata" />
-        
-        <div className="audio-player-header">
-          <div className="audio-player-title">
+
+        <div className="flex justify-between items-center mb-5 pb-4 border-b border-border-subtle">
+          <div className="font-heading text-lg font-semibold text-text-primary">
             {title || 'Audio Preview'}
           </div>
-          <button className="audio-player-close" onClick={onClose}>×</button>
+          <button className="bg-transparent border-none text-text-tertiary text-2xl cursor-pointer p-1 leading-none transition-colors duration-fast ease-out hover:text-text-primary" onClick={onClose}>×</button>
         </div>
 
         {error ? (
-          <div className="audio-player-error">{error}</div>
+          <div className="flex items-center justify-center gap-3 p-6 text-status-error text-sm">{error}</div>
         ) : isLoading ? (
-          <div className="audio-player-loading">
+          <div className="flex items-center justify-center gap-3 p-6 text-text-tertiary text-sm">
             <div className="spinner" />
             Loading audio...
           </div>
         ) : (
-          <div className="audio-player-controls">
-            <button 
+          <div className="flex items-center gap-4">
+            <button
               className={`audio-play-btn ${isPlaying ? 'playing' : ''}`}
               onClick={togglePlay}
             >
               {isPlaying ? '❚❚' : '▶'}
             </button>
-            
-            <div className="audio-progress-container">
-              <span className="audio-time">{formatTime(currentTime)}</span>
+
+            <div className="flex-1 flex items-center gap-3">
+              <span className="font-mono text-xs text-text-tertiary min-w-[40px]">{formatTime(currentTime)}</span>
               <div className="audio-progress-wrapper">
                 <input
                   type="range"
@@ -118,12 +118,12 @@ export function AudioPlayer({ src, onClose, title }: AudioPlayerProps) {
                   onChange={handleSeek}
                   className="audio-progress-slider"
                 />
-                <div 
+                <div
                   className="audio-progress-fill"
                   style={{ width: `${progress}%` }}
                 />
               </div>
-              <span className="audio-time">{formatTime(duration)}</span>
+              <span className="font-mono text-xs text-text-tertiary min-w-[40px]">{formatTime(duration)}</span>
             </div>
           </div>
         )}

@@ -407,13 +407,13 @@ function BookView({ fictionId, bookNumber, onBack, onHeaderUpdate }: BookViewPro
   }
 
   return (
-    <div className="book-view">
+    <div className="max-w-[1100px] mx-auto animate-[fadeIn_var(--duration-slow)_var(--ease-out)]">
       {/* Action bar: backfill titles + check Royal Road */}
-      <div className="book-view-actions">
+      <div className="flex items-center gap-4 flex-wrap mb-4">
         {hasGenericTitles && (
-          <div className="backfill-notice">
+          <div className="flex items-center gap-3 py-3 px-4 bg-interactive-hover border border-border-subtle rounded-md text-sm text-text-secondary">
             <span>Some chapters have generic titles.</span>
-            <button 
+            <button
               className="btn btn-sm"
               onClick={backfillTitles}
               disabled={processing === 'backfill'}
@@ -443,26 +443,26 @@ function BookView({ fictionId, bookNumber, onBack, onHeaderUpdate }: BookViewPro
         {chapters.map((chapter, index) => {
           const validation = validationResults[chapter.chapter_number]
           const isProcessingThis = processing?.includes(`-${chapter.chapter_number}`)
-          
+
           // Determine row state for styling
-          const rowState = chapter.is_exported ? 'exported' 
+          const rowState = chapter.is_exported ? 'exported'
             : chapter.is_audio_complete ? 'audio-complete'
             : (chapter.is_chunked && chapter.chunks_completed > 0) ? 'generating'
             : chapter.is_chunked ? 'ready'
             : chapter.is_normalized ? 'chunked'
             : 'pending'
-          
+
           return (
-            <div 
-              key={chapter.chapter_number} 
+            <div
+              key={chapter.chapter_number}
               className={`chapter-row state-${rowState} ${isProcessingThis ? 'processing' : ''}`}
               style={{ animationDelay: `${index * 30}ms` }}
             >
               {/* Chapter Info */}
               <div className="col-chapter">
-                <span className="chapter-num">{chapter.chapter_number}</span>
+                <span className="font-mono font-medium text-sm text-text-tertiary min-w-[2.5ch] text-right shrink-0">{chapter.chapter_number}</span>
                 <Tooltip content={cleanChapterTitle(chapter.title)} position="right" delay={500}>
-                  <span className="chapter-title">{cleanChapterTitle(chapter.title)}</span>
+                  <span className="text-sm text-text-primary whitespace-nowrap overflow-hidden text-ellipsis">{cleanChapterTitle(chapter.title)}</span>
                 </Tooltip>
               </div>
 
@@ -470,23 +470,23 @@ function BookView({ fictionId, bookNumber, onBack, onHeaderUpdate }: BookViewPro
               <div className="col-status">
                 {chapter.is_exported ? (
                   <span className="status-badge exported">
-                    <span className="status-icon">✓</span>
+                    <span className="text-xs">✓</span>
                     Exported
                   </span>
                 ) : chapter.is_audio_complete ? (
                   <span className="status-badge complete">
-                    <span className="status-icon">✓</span>
+                    <span className="text-xs">✓</span>
                     {chapter.chunk_count} chunks
                   </span>
                 ) : chapter.is_chunked ? (
-                  <div className="status-progress">
+                  <div className="flex items-center gap-2 w-full">
                     <div className="progress-bar-slim">
-                      <div 
+                      <div
                         className="progress-fill"
                         style={{ width: `${chapter.progress_percent}%` }}
                       />
                     </div>
-                    <span className="progress-text">
+                    <span className="font-mono text-xs text-brand-primary-light min-w-[5ch]">
                       {chapter.chunks_completed}/{chapter.chunk_count}
                     </span>
                   </div>
@@ -500,8 +500,7 @@ function BookView({ fictionId, bookNumber, onBack, onHeaderUpdate }: BookViewPro
               {/* Actions Column - Contextual actions */}
               <div className="col-actions">
                 {chapter.is_exported ? (
-                  // Exported: Just show play button
-                  <button 
+                  <button
                     className="action-btn play"
                     onClick={() => handlePlayAudio(chapter.chapter_number, cleanChapterTitle(chapter.title))}
                     title="Preview audio"
@@ -509,9 +508,8 @@ function BookView({ fictionId, bookNumber, onBack, onHeaderUpdate }: BookViewPro
                     ▶
                   </button>
                 ) : chapter.is_audio_complete ? (
-                  // Audio complete: Play, Validate, Export
-                  <div className="action-group">
-                    <button 
+                  <div className="flex items-center gap-2">
+                    <button
                       className="action-btn play"
                       onClick={() => handlePlayAudio(chapter.chapter_number, cleanChapterTitle(chapter.title))}
                       title="Preview audio"
@@ -519,7 +517,7 @@ function BookView({ fictionId, bookNumber, onBack, onHeaderUpdate }: BookViewPro
                       ▶
                     </button>
                     {!validation && (
-                      <button 
+                      <button
                         className="action-btn"
                         onClick={() => validateChapter(chapter.chapter_number)}
                         disabled={processing === `validate-${chapter.chapter_number}`}
@@ -529,14 +527,14 @@ function BookView({ fictionId, bookNumber, onBack, onHeaderUpdate }: BookViewPro
                       </button>
                     )}
                     {validation && (
-                      <span 
+                      <span
                         className={`validation-badge ${validation.pass_rate >= 90 ? 'good' : validation.pass_rate >= 70 ? 'ok' : 'bad'}`}
                         title={`${validation.passed_chunks}/${validation.total_chunks} passed`}
                       >
                         {validation.pass_rate.toFixed(0)}%
                       </span>
                     )}
-                    <button 
+                    <button
                       className="action-btn export"
                       onClick={() => exportChapter(chapter.chapter_number)}
                       disabled={processing === `export-${chapter.chapter_number}`}
@@ -546,9 +544,8 @@ function BookView({ fictionId, bookNumber, onBack, onHeaderUpdate }: BookViewPro
                     </button>
                   </div>
                 ) : chapter.is_chunked ? (
-                  // Chunked but not complete: Show generate button only if not already running
                   chapter.chunks_completed === 0 ? (
-                    <button 
+                    <button
                       className="action-btn generate"
                       onClick={() => generateChapter(chapter.chapter_number)}
                       disabled={processing === `generate-${chapter.chapter_number}`}
@@ -557,11 +554,10 @@ function BookView({ fictionId, bookNumber, onBack, onHeaderUpdate }: BookViewPro
                       {processing === `generate-${chapter.chapter_number}` ? '...' : 'Generate'}
                     </button>
                   ) : (
-                    <span className="action-status">Generating...</span>
+                    <span className="font-mono text-xs text-brand-primary-light animate-[statusPulse_1.5s_ease-in-out_infinite]">Generating...</span>
                   )
                 ) : chapter.is_normalized ? (
-                  // Normalized: Show chunk button
-                  <button 
+                  <button
                     className="action-btn"
                     onClick={() => chunkChapter(chapter.chapter_number)}
                     disabled={processing === `chunk-${chapter.chapter_number}`}
@@ -570,8 +566,7 @@ function BookView({ fictionId, bookNumber, onBack, onHeaderUpdate }: BookViewPro
                     {processing === `chunk-${chapter.chapter_number}` ? '...' : 'Chunk'}
                   </button>
                 ) : (
-                  // Not normalized: Show normalize button
-                  <button 
+                  <button
                     className="action-btn"
                     onClick={() => normalizeChapter(chapter.chapter_number)}
                     disabled={processing === `normalize-${chapter.chapter_number}`}

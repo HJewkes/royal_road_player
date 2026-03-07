@@ -83,7 +83,7 @@ export function Tooltip({
       {isVisible && (
         <div
           ref={tooltipRef}
-          className="bg-surface-elevated border border-border-default rounded-md px-3 py-2 text-xs text-text-primary shadow-lg z-[300] max-w-[280px] pointer-events-none animate-[tooltipFadeIn_0.15s_ease-out]"
+          className="bg-surface-elevated border border-border rounded-md px-3 py-2 text-xs text-text-primary shadow-lg z-[300] max-w-[280px] pointer-events-none animate-[tooltipFadeIn_0.15s_ease-out]"
           style={{
             position: 'fixed',
             top: coords.top,
@@ -106,7 +106,7 @@ interface HelpTooltipProps {
 export function HelpTooltip({ content, position = 'top' }: HelpTooltipProps) {
   return (
     <Tooltip content={content} position={position} className="inline-flex flex-shrink-0">
-      <span className="inline-flex items-center justify-center w-3 h-3 rounded-full border border-border-default text-[8px] font-semibold text-text-tertiary cursor-help opacity-60 transition-all duration-150 hover:border-brand-primary hover:text-brand-primary hover:opacity-100">?</span>
+      <span className="inline-flex items-center justify-center w-3 h-3 rounded-full border border-border text-[8px] font-semibold text-text-tertiary cursor-help opacity-60 transition-all duration-150 hover:border-brand-primary hover:text-brand-primary hover:opacity-100">?</span>
     </Tooltip>
   )
 }
