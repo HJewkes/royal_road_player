@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Button, ButtonText, Input, EmptyState, Card, Collapse, CollapseButton, CollapseContent, cn } from '@titan-design/react-ui'
+import { Button, ButtonText, Input, EmptyState, Card, Collapse, CollapseContent, Select, Chip, cn } from '@titan-design/react-ui'
 import { useToastContext } from './App'
 import { DashboardSkeleton } from './Skeleton'
 import { PipelineStages } from './CircularProgress'
@@ -332,12 +332,14 @@ function Dashboard({ onSelectBook }: DashboardProps) {
       {/* Add Series Header */}
       <div className="flex justify-between items-center mb-6">
         <h2 className="font-body text-sm font-medium text-text-tertiary uppercase tracking-[0.2em]">Library</h2>
-        <button
-          className="bg-interactive-hover text-text-secondary border border-border py-3 px-5 text-sm font-body font-medium cursor-pointer rounded-md transition-all duration-normal ease-out tracking-[0.02em] hover:border-brand-primary-light hover:text-brand-primary-light hover:bg-brand-primary-subtle"
-          onClick={() => setShowAddSeries(!showAddSeries)}
+        <Button
+          variant="outline"
+          color={showAddSeries ? 'secondary' : 'primary'}
+          size="md"
+          onPress={() => setShowAddSeries(!showAddSeries)}
         >
-          {showAddSeries ? 'Cancel' : '+ Add Series'}
-        </button>
+          <ButtonText>{showAddSeries ? 'Cancel' : '+ Add Series'}</ButtonText>
+        </Button>
       </div>
 
       {/* Add Series Panel */}
@@ -380,10 +382,12 @@ function Dashboard({ onSelectBook }: DashboardProps) {
                 {preview.books.map(book => {
                   const isSelected = selectedBooks.has(book.book_number)
                   return (
-                    <span
+                    <Chip
                       key={book.book_number}
-                      className="bg-interactive-hover border border-border-subtle rounded-full py-2 px-4 font-mono text-xs text-text-secondary font-medium"
-                      onClick={() => {
+                      variant="outline"
+                      color={isSelected ? 'primary' : 'default'}
+                      size="sm"
+                      onPress={() => {
                         setSelectedBooks(prev => {
                           const next = new Set(prev)
                           if (next.has(book.book_number)) {
@@ -394,36 +398,29 @@ function Dashboard({ onSelectBook }: DashboardProps) {
                           return next
                         })
                       }}
-                      style={{
-                        cursor: 'pointer',
-                        opacity: isSelected ? 1 : 0.4,
-                        textDecoration: isSelected ? 'none' : 'line-through',
-                      }}
-                      title={isSelected ? 'Click to exclude' : 'Click to include'}
+                      className={cn("font-mono", !isSelected && "opacity-40 line-through")}
                     >
                       Book {book.book_number}: {book.chapter_count} ch
-                    </span>
+                    </Chip>
                   )
                 })}
               </div>
               {/* Patreon: target fiction selector */}
               {preview.source === 'patreon' && (
-                <div style={{ margin: '10px 0' }}>
-                  <label style={{ fontSize: '0.85em', opacity: 0.7, display: 'block', marginBottom: '4px' }}>
+                <div className="my-2.5">
+                  <label className="text-sm text-text-tertiary block mb-1">
                     Add books to:
                   </label>
-                  <select
-                    value={targetFictionId}
-                    onChange={(e) => setTargetFictionId(e.target.value)}
-                    className="flex-1 bg-black/30 border border-border-subtle rounded-md px-2 py-1.5 text-text-primary text-base font-body transition-all duration-150 focus:outline-none focus:border-brand-primary focus:shadow-[0_0_0_3px_rgba(212,120,42,0.12)]"
-                    style={{ width: '100%', padding: '6px 8px' }}
-                  >
-                    <option value="">— Select fiction —</option>
-                    {fictions.map(f => (
-                      <option key={f.fiction_id} value={f.fiction_id}>{f.name}</option>
-                    ))}
-                    <option value="__new__">+ New fiction...</option>
-                  </select>
+                  <Select
+                    value={targetFictionId || null}
+                    onChange={(val) => setTargetFictionId(val ?? '')}
+                    placeholder="— Select fiction —"
+                    options={[
+                      ...fictions.map(f => ({ value: f.fiction_id, label: f.name })),
+                      { value: '__new__', label: '+ New fiction...' },
+                    ]}
+                    className="w-full"
+                  />
                   {targetFictionId === '__new__' && (
                     <Input
                       placeholder="Fiction name (e.g., Soccer Supremo)"
@@ -476,7 +473,7 @@ function Dashboard({ onSelectBook }: DashboardProps) {
 
         return (
           <div key={fiction.fiction_id} style={{ animationDelay: `${fictionIndex * 100}ms` }}>
-          <Card variant="outline" className="mb-5 shadow-lg animate-fade-in">
+          <Card variant="elevated" elevation={2} className="mb-8 animate-fade-in">
             <Collapse
               isOpen={!isCollapsed}
               onToggle={(isOpen) => {
@@ -487,7 +484,16 @@ function Dashboard({ onSelectBook }: DashboardProps) {
                 })
               }}
             >
-              <CollapseButton className="flex items-center justify-between gap-4 px-5 py-4 cursor-pointer transition-colors duration-fast bg-surface-base hover:bg-surface-elevated rounded-t-lg w-full">
+              <div
+                className="flex items-center justify-between gap-4 px-5 py-4 cursor-pointer transition-colors duration-fast bg-surface-base hover:bg-surface-elevated rounded-t-lg w-full"
+                onClick={() => {
+                  setCollapsedSections(prev => {
+                    const next = new Set(prev)
+                    isCollapsed ? next.delete(fiction.fiction_id) : next.add(fiction.fiction_id)
+                    return next
+                  })
+                }}
+              >
                 <div className="flex items-center gap-3 min-w-0 flex-1">
                   <div className="min-w-0">
                     <h2 className="font-heading text-lg font-medium italic text-text-primary m-0 whitespace-nowrap overflow-hidden text-ellipsis">{fiction.name}</h2>
@@ -501,7 +507,7 @@ function Dashboard({ onSelectBook }: DashboardProps) {
 
                 <Button
                   variant="outline"
-                  color="secondary"
+                  color="primary"
                   size="sm"
                   onPress={() => void checkSource(fiction.fiction_id)}
                   isDisabled={refreshingFiction === fiction.fiction_id}
@@ -520,9 +526,10 @@ function Dashboard({ onSelectBook }: DashboardProps) {
                     compact
                   />
                 )}
-              </CollapseButton>
+                <span className={cn("text-text-tertiary text-xs transition-transform duration-normal", isCollapsed && "-rotate-90")}>▼</span>
+              </div>
               <CollapseContent>
-                <div className="flex flex-col bg-background-base rounded-b-lg">
+                <div className="flex flex-col gap-px bg-border-subtle/30 rounded-b-lg">
                   {books.map((book, bookIndex) => {
                     const downloadKey = `${fiction.fiction_id}_${book.book_number}`
                     const isDownloading = downloading === downloadKey
@@ -531,7 +538,7 @@ function Dashboard({ onSelectBook }: DashboardProps) {
                       <div
                         key={downloadKey}
                         className={cn(
-                          "flex items-center justify-between py-3 pl-[calc(1.25rem+20px+0.75rem)] pr-5 border-b border-border-subtle last:border-b-0 cursor-pointer transition-all duration-fast hover:bg-white/[0.015]",
+                          "flex items-center justify-between py-3.5 pl-[calc(1.25rem+20px+0.75rem)] pr-5 bg-background-base cursor-pointer transition-all duration-fast hover:bg-white/[0.025] last:rounded-b-lg",
                           !book.is_downloaded && "opacity-70 cursor-default hover:bg-transparent"
                         )}
                         onClick={() => book.is_downloaded && onSelectBook(fiction.fiction_id, book.book_number)}

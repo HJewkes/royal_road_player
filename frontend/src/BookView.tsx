@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react'
 import { Button, ButtonText, Badge, BadgeText, Progress, cn } from '@titan-design/react-ui'
 import { useToastContext, useAudioContext } from './App'
 import { BookViewSkeleton } from './Skeleton'
-import { Tooltip } from './Tooltip'
+import { Tooltip } from '@titan-design/react-ui'
 import { ChapterSummary, ChapterValidationResult } from './types'
 
 // Header info passed up to App for unified header
@@ -477,7 +477,7 @@ function BookView({ fictionId, bookNumber, onHeaderUpdate }: BookViewProps) {
               {/* Chapter Info */}
               <div className="flex items-center gap-3 min-w-0">
                 <span className="font-mono font-medium text-sm text-text-tertiary min-w-[2.5ch] text-right shrink-0">{chapter.chapter_number}</span>
-                <Tooltip content={cleanChapterTitle(chapter.title)} position="right" delay={500}>
+                <Tooltip label={cleanChapterTitle(chapter.title)} placement="right" openDelay={500}>
                   <span className="text-sm text-text-primary whitespace-nowrap overflow-hidden text-ellipsis">{cleanChapterTitle(chapter.title)}</span>
                 </Tooltip>
               </div>

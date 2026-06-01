@@ -1,28 +1,28 @@
 import { useState, useEffect, createContext, useContext } from 'react'
 import Dashboard from './Dashboard'
 import BookView, { BookHeaderInfo } from './BookView'
-import { Toast, useToast } from './Toast'
+import { ToastProviderV2, useToastV2 } from '@titan-design/react-ui'
 import { AudioPlayer } from './AudioPlayer'
 import { QueueIndicator } from './QueueIndicator'
 import { PipelineStages } from './CircularProgress'
 import { QueueStatus } from './types'
 
-// Toast context for global access
-interface ToastContextType {
-  success: (title: string, message?: string) => void
-  error: (title: string, message?: string) => void
-  info: (title: string, message?: string) => void
-  warning: (title: string, message?: string) => void
-}
-
-const ToastContext = createContext<ToastContextType | null>(null)
-
+/**
+ * Thin wrapper around useToastV2 that provides convenience methods
+ * matching the old toast API: toast.success(title, message?)
+ */
 export function useToastContext() {
-  const context = useContext(ToastContext)
-  if (!context) {
-    throw new Error('useToastContext must be used within ToastProvider')
+  const toast = useToastV2()
+  return {
+    success: (title: string, message?: string) =>
+      toast.show({ title, description: message, variant: 'success' }),
+    error: (title: string, message?: string) =>
+      toast.show({ title, description: message, variant: 'error', duration: 6000 }),
+    info: (title: string, message?: string) =>
+      toast.show({ title, description: message, variant: 'info' }),
+    warning: (title: string, message?: string) =>
+      toast.show({ title, description: message, variant: 'warning' }),
   }
-  return context
 }
 
 // Audio player context
@@ -48,8 +48,7 @@ function App() {
   const [bookHeaderInfo, setBookHeaderInfo] = useState<BookHeaderInfo | null>(null)
   const [queueStatus, setQueueStatus] = useState<QueueStatus | null>(null)
   
-  // Toast system
-  const { toasts, dismissToast, success, error, info, warning } = useToast()
+  // Toast system provided by ToastProviderV2 wrapper above
 
   // Atmosphere/grain toggle
   const [atmosphereOn, setAtmosphereOn] = useState(true)
@@ -112,7 +111,7 @@ function App() {
   }, [])
 
   return (
-    <ToastContext.Provider value={{ success, error, info, warning }}>
+    <ToastProviderV2 position="top-right">
       <AudioContext.Provider value={{ playAudio }}>
         <div className="min-h-screen flex flex-col">
           <header className="sticky top-0 z-[100] flex justify-between items-center px-8 py-5 h-[73px] box-border bg-gradient-to-b from-background-base/98 to-background-base/92 border-b border-border-subtle backdrop-blur-[20px] backdrop-saturate-[180%] shadow-[inset_0_1px_0_rgba(255,255,255,0.03),0_1px_0_rgba(255,255,255,0.02)]">
@@ -125,7 +124,7 @@ function App() {
             </h1>
             <div className="flex items-center gap-3">
               <button
-                className={`text-xs font-mono px-3 py-1.5 rounded-full border transition-all duration-fast ease-out ${atmosphereOn ? 'border-brand-primary/30 text-brand-primary-light bg-brand-primary/10' : 'border-border-subtle text-text-tertiary bg-transparent hover:border-border-strong hover:text-text-secondary'}`}
+                className={`text-xs font-mono px-3 py-1.5 rounded-full transition-all duration-fast ease-out ${atmosphereOn ? 'border border-brand-primary/50 text-brand-primary-light bg-brand-primary/10' : 'border border-transparent text-text-tertiary bg-interactive-hover hover:bg-interactive-disabled hover:text-text-secondary'}`}
                 onClick={toggleAtmosphere}
                 title={atmosphereOn ? 'Disable atmosphere effects' : 'Enable atmosphere effects'}
               >
@@ -193,9 +192,6 @@ function App() {
             )}
           </main>
 
-          {/* Toast notifications */}
-          <Toast toasts={toasts} onDismiss={dismissToast} />
-
           {/* Audio player modal */}
           {audioPlayer && (
             <AudioPlayer
@@ -206,7 +202,7 @@ function App() {
           )}
         </div>
       </AudioContext.Provider>
-    </ToastContext.Provider>
+    </ToastProviderV2>
   )
 }
 
