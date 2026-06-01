@@ -382,6 +382,33 @@ class PatreonScraper:
         chapters = self._filter_chapter_posts(posts)
         return self._detect_series_from_posts(chapters)
 
+    def _resolve_series_title(
+        self, fiction_id: str, source_fid: str, series_index: int | None
+    ) -> str | None:
+        """Resolve the series title by checking existing local book metadata.
+
+        Strips the "- Book N" suffix from an existing book's title so the
+        Patreon books match the Royal Road naming convention.
+        """
+        existing = self.book_discovery.list_books(fiction_id)
+        for book in existing:
+            if book.title:
+                # Strip "- Book N" suffix to get base title
+                base = re.sub(r'\s*-\s*Book\s+\d+\s*$', '', book.title)
+                if base and base != book.title:
+                    return base
+
+        # Fall back to series detection name
+        if series_index is not None:
+            campaign_id = self._resolve_campaign_id_from_fiction(source_fid)
+            posts = self._fetch_all_posts(campaign_id)
+            chapters = self._filter_chapter_posts(posts)
+            series_list = self._detect_series_from_posts(chapters)
+            if 0 <= series_index < len(series_list):
+                return series_list[series_index]["name"]
+
+        return None
+
     def _extract_series_index(self, fiction_id: str) -> int | None:
         """Extract series index from fiction_id like patreon_tedsteel_s1."""
         m = re.search(r'_s(\d+)$', fiction_id)
@@ -467,7 +494,12 @@ class PatreonScraper:
         """
         source_fid = fetch_fiction_id or fiction_id
         info = self.get_fiction_info(source_fid)
-        title = info["title"]
+
+        series_index = self._extract_series_index(source_fid)
+
+        # Derive title from existing local books (matches RR naming)
+        # Falls back to series name, then campaign title
+        title = self._resolve_series_title(fiction_id, source_fid, series_index) or info["title"]
 
         logger.info(f"Downloading: {title} - Book {book_number}")
         if on_progress:
@@ -483,8 +515,6 @@ class PatreonScraper:
         )
 
         book = self.book_discovery.create_book(metadata)
-
-        series_index = self._extract_series_index(source_fid)
         chapters = self.get_chapter_list(source_fid, book_number, series_index=series_index)
         logger.info(f"Found {len(chapters)} chapters")
         if on_progress:
@@ -493,6 +523,16 @@ class PatreonScraper:
         metadata.chapter_count = len(chapters)
 
         for i, chapter_info in enumerate(chapters, 1):
+            # Skip chapters that already have raw text
+            existing_text = self.chapter_discovery.get_raw_text(
+                fiction_id, book_number, i
+            )
+            if existing_text:
+                logger.info(f"Skipping chapter {i}/{len(chapters)} (already downloaded)")
+                if on_progress:
+                    on_progress(i, f"Skipped chapter {i}/{len(chapters)} (exists)")
+                continue
+
             logger.info(f"Downloading chapter {i}/{len(chapters)}: {chapter_info['title']}")
             if on_progress:
                 on_progress(i - 1, f"Downloading chapter {i}/{len(chapters)}: {chapter_info['title']}")
