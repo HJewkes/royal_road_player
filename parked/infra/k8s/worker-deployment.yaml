@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: audiobook-worker
+  namespace: audiobook
+  labels:
+    app: audiobook
+    component: worker
+spec:
+  replicas: 2  # Scale workers based on load
+  selector:
+    matchLabels:
+      app: audiobook
+      component: worker
+  template:
+    metadata:
+      labels:
+        app: audiobook
+        component: worker
+    spec:
+      containers:
+      - name: worker
+        image: audiobook:latest  # Change to your image registry
+        imagePullPolicy: Always
+        command: ["python", "-m", "src.web.worker"]
+        envFrom:
+        - configMapRef:
+            name: audiobook-config
+        - secretRef:
+            name: audiobook-secrets
+        env:
+        - name: DATABASE_URL
+          value: "postgresql://audiobook:$(POSTGRES_PASSWORD)@audiobook-db:5432/audiobook"
+        - name: WORKER_MODE
+          value: "true"
+        - name: ENABLE_BACKGROUND_PROCESSOR
+          value: "true"
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "500m"
+          limits:
+            memory: "8Gi"
+            cpu: "4000m"
+        # GPU support (uncomment if using GPU nodes)
+        # resources:
+        #   limits:
+        #     nvidia.com/gpu: 1

@@ -1,0 +1,86 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: localstack
+  namespace: audiobook
+  labels:
+    app: audiobook
+    component: localstack
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: audiobook
+      component: localstack
+  template:
+    metadata:
+      labels:
+        app: audiobook
+        component: localstack
+    spec:
+      containers:
+      - name: localstack
+        image: localstack/localstack:latest
+        ports:
+        - containerPort: 4566
+          name: edge
+        env:
+        - name: SERVICES
+          value: "s3,sqs,logs,sns,secretsmanager"
+        - name: DEBUG
+          value: "1"
+        - name: DATA_DIR
+          value: "/tmp/localstack/data"
+        - name: PERSISTENCE
+          value: "1"
+        - name: AWS_DEFAULT_REGION
+          value: "us-east-1"
+        - name: AWS_ACCESS_KEY_ID
+          value: "test"
+        - name: AWS_SECRET_ACCESS_KEY
+          value: "test"
+        volumeMounts:
+        - name: localstack-data
+          mountPath: /var/lib/localstack
+        livenessProbe:
+          httpGet:
+            path: /_localstack/health
+            port: 4566
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /_localstack/health
+            port: 4566
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+      volumes:
+      - name: localstack-data
+        persistentVolumeClaim:
+          claimName: localstack-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: localstack
+  namespace: audiobook
+  labels:
+    app: audiobook
+    component: localstack
+spec:
+  type: ClusterIP
+  ports:
+  - port: 4566
+    targetPort: 4566
+    protocol: TCP
+    name: edge
+  selector:
+    app: audiobook
+    component: localstack

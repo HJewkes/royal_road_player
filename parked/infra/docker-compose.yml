@@ -1,0 +1,153 @@
+version: '3.8'
+
+# Full stack with database, web, and worker services
+# Usage: docker-compose up -d
+
+services:
+  # LocalStack (S3-compatible storage)
+  localstack:
+    image: localstack/localstack:latest
+    container_name: audiobook-localstack
+    ports:
+      - "4566:4566"  # LocalStack edge port
+      - "4510-4559:4510-4559"  # External services port range
+    environment:
+      - SERVICES=s3,sqs,logs,sns,secretsmanager  # Enable multiple AWS services
+      - DEBUG=1
+      - DATA_DIR=/tmp/localstack/data
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - PERSISTENCE=1
+      - AWS_DEFAULT_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+    volumes:
+      - localstack_data:/var/lib/localstack
+      - "/var/run/docker.sock:/var/run/docker.sock"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - audiobook-network
+
+  # PostgreSQL Database
+  db:
+    image: postgres:15-alpine
+    container_name: audiobook-db
+    environment:
+      POSTGRES_USER: audiobook
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-audiobook_password}
+      POSTGRES_DB: audiobook
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U audiobook"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - audiobook-network
+
+  # Web Service (FastAPI)
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        TORCH_VERSION: ${TORCH_VERSION:-cpu}
+    container_name: audiobook-web
+    ports:
+      - "${WEB_PORT:-8000}:8000"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - DATABASE_URL=postgresql://audiobook:${POSTGRES_PASSWORD:-audiobook_password}@db:5432/audiobook
+      - TTS_GPU=${TTS_GPU:-false}
+      - WEB_HOST=0.0.0.0
+      - WEB_PORT=8000
+      - ENABLE_BACKGROUND_PROCESSOR=false  # Worker handles this
+      - WORKER_MODE=false
+      - AUDIO_OUTPUT_FORMAT=${AUDIO_OUTPUT_FORMAT:-m4b}
+      - AUDIO_BITRATE=${AUDIO_BITRATE:-128k}
+      - TTS_FINE_TUNED_MODEL=${TTS_FINE_TUNED_MODEL:-}
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME:-audiobook-data}
+      - S3_ENDPOINT_URL=http://localstack:4566
+      - S3_USE_STORAGE=true
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+    depends_on:
+      localstack:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - audiobook-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Worker Service (Background Job Processor)
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        TORCH_VERSION: ${TORCH_VERSION:-cpu}
+    container_name: audiobook-worker
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - DATABASE_URL=postgresql://audiobook:${POSTGRES_PASSWORD:-audiobook_password}@db:5432/audiobook
+      - TTS_GPU=${TTS_GPU:-false}
+      - WORKER_MODE=true
+      - ENABLE_BACKGROUND_PROCESSOR=true
+      - AUDIO_OUTPUT_FORMAT=${AUDIO_OUTPUT_FORMAT:-m4b}
+      - AUDIO_BITRATE=${AUDIO_BITRATE:-128k}
+      - TTS_FINE_TUNED_MODEL=${TTS_FINE_TUNED_MODEL:-}
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME:-audiobook-data}
+      - S3_ENDPOINT_URL=http://localstack:4566
+      - S3_USE_STORAGE=true
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+    depends_on:
+      localstack:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - audiobook-network
+    command: python -m src.web.worker
+    deploy:
+      resources:
+        limits:
+          cpus: '${WORKER_CPUS:-2}'
+          memory: ${WORKER_MEMORY:-4G}
+        reservations:
+          cpus: '1'
+          memory: 2G
+
+volumes:
+  postgres_data:
+    driver: local
+  localstack_data:
+    driver: local
+
+networks:
+  audiobook-network:
+    driver: bridge

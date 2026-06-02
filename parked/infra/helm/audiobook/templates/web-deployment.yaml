@@ -1,0 +1,85 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "audiobook.fullname" . }}-web
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "audiobook.labels" . | nindent 4 }}
+    component: web
+spec:
+  replicas: {{ .Values.replicaCount.web }}
+  selector:
+    matchLabels:
+      {{- include "audiobook.selectorLabels" . | nindent 6 }}
+      component: web
+  template:
+    metadata:
+      labels:
+        {{- include "audiobook.selectorLabels" . | nindent 8 }}
+        component: web
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+      - name: web
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        ports:
+        - name: http
+          containerPort: {{ .Values.service.webPort }}
+          protocol: TCP
+        envFrom:
+        - configMapRef:
+            name: {{ include "audiobook.fullname" . }}-config
+        - secretRef:
+            name: {{ include "audiobook.fullname" . }}-secrets
+        env:
+        - name: DATABASE_URL
+          value: "{{ .Values.config.databaseUrl }}"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        resources:
+          {{- toYaml .Values.resources.web | nindent 10 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "audiobook.fullname" . }}-web
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "audiobook.labels" . | nindent 4 }}
+    component: web
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.webPort }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "audiobook.selectorLabels" . | nindent 4 }}
+    component: web
