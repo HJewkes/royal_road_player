@@ -3,10 +3,12 @@
 Simplified version focused on XTTS v2 only.
 """
 
+import array
 import gc
 import logging
 import os
 import time
+import wave
 from pathlib import Path
 from typing import Optional
 
@@ -157,6 +159,9 @@ class XTTSEngine:
             if self._chunks_generated % 10 == 0:
                 self._clear_cache()
 
+            # Pad the WAV to prevent XTTS v2 clipping word-final "s" sounds
+            self._add_trailing_silence(output_path)
+
             logger.info(f"✅ Generated in {elapsed:.2f}s")
             return output_path, elapsed
 
@@ -183,6 +188,40 @@ class XTTSEngine:
             text = text[:-1] + ' ' + text[-1]
 
         return text
+
+    def _add_trailing_silence(
+        self, audio_path: Path, silence_duration_ms: int = 100
+    ) -> None:
+        """Append trailing silence to fix XTTS v2 fricative ("s") cutoff.
+
+        XTTS v2 can clip word-final fricatives at the end of a chunk. Padding
+        the WAV with a short silence gives the audio room and avoids the
+        artifact. Best-effort: a failure here never fails synthesis.
+        """
+        silence_fmt = {1: ("B", 128), 2: ("h", 0), 4: ("i", 0)}
+        try:
+            with wave.open(str(audio_path), "rb") as wav_in:
+                params = wav_in.getparams()
+                frames = wav_in.readframes(params.nframes)
+
+            fmt = silence_fmt.get(params.sampwidth)
+            if fmt is None:
+                logger.warning(
+                    f"Unsupported sample width {params.sampwidth}; skipping trailing silence"
+                )
+                return
+
+            typecode, fill = fmt
+            n_silence = int(params.framerate * silence_duration_ms / 1000) * params.nchannels
+            silence = array.array(typecode, [fill] * n_silence)
+
+            with wave.open(str(audio_path), "wb") as wav_out:
+                wav_out.setparams(params)
+                wav_out.writeframes(frames + silence.tobytes())
+
+            logger.debug(f"Added {silence_duration_ms}ms trailing silence to {audio_path.name}")
+        except Exception as e:
+            logger.warning(f"Failed to add trailing silence to {audio_path}: {e}")
 
     def _is_mps_error(self, error_msg: str) -> bool:
         """Check if error is a known MPS limitation."""
