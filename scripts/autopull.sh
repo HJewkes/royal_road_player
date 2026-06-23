@@ -13,9 +13,53 @@ API="http://localhost:8000"
 LOG_FILE="$PROJECT_DIR/logs/autopull.log"
 VENV="$PROJECT_DIR/venv311/bin/activate"
 
+LOCK_DIR="$PROJECT_DIR/.autopull.lock"
+
 mkdir -p "$(dirname "$LOG_FILE")"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"; }
+
+# Post a macOS notification (best-effort; works from a user LaunchAgent).
+notify() {
+  local title=$1 msg=$2
+  osascript -e "display notification \"${msg}\" with title \"${title}\"" 2>/dev/null || true
+}
+
+# Runs on every exit AFTER the lock is acquired: release the lock and, on a
+# non-zero exit, surface the failure (the script otherwise dies silently under
+# `set -e`, which is exactly what we're fixing).
+cleanup() {
+  local code=$?
+  rmdir "$LOCK_DIR" 2>/dev/null || true
+  if [ "$code" -ne 0 ]; then
+    log "ERROR: Autopull exited with code $code"
+    notify "Audiobook autopull failed" "Exit $code — see logs/autopull.log"
+  fi
+}
+
+# Single-instance guard. A TTS generation can run ~1hr/chapter and exceed the
+# launchd poll interval, so overlapping runs must be prevented. launchd already
+# treats the job as a singleton, but this also covers manual `bash autopull.sh`
+# invocations racing a scheduled run. mkdir is atomic; a dead holder's lock is
+# reclaimed.
+acquire_lock() {
+  if mkdir "$LOCK_DIR" 2>/dev/null; then
+    echo $$ > "$LOCK_DIR/pid"
+    trap cleanup EXIT
+    return 0
+  fi
+  local holder
+  holder=$(cat "$LOCK_DIR/pid" 2>/dev/null || echo "")
+  if [ -n "$holder" ] && kill -0 "$holder" 2>/dev/null; then
+    log "Another autopull run is active (PID $holder); exiting without action"
+    exit 0
+  fi
+  log "Reclaiming stale lock (holder PID ${holder:-unknown} not running)"
+  rm -rf "$LOCK_DIR"
+  mkdir "$LOCK_DIR"
+  echo $$ > "$LOCK_DIR/pid"
+  trap cleanup EXIT
+}
 
 # Strip markdown code fences from Claude output. Claude sometimes wraps its
 # JSON in ```json ... ``` fences, which breaks the json.load() parsers in
@@ -399,6 +443,8 @@ export_chapter() {
 # Main
 # ============================================================
 
+acquire_lock
+
 log "=== Autopull started ==="
 
 ensure_backend
@@ -428,4 +474,6 @@ for ch in $NEW_CHAPTERS; do
   log "--- Chapter $ch complete ---"
 done
 
+PROCESSED_COUNT=$(echo "$NEW_CHAPTERS" | wc -w | tr -d ' ')
 log "=== Autopull complete ==="
+notify "Audiobook autopull complete" "Book $BOOK: processed $PROCESSED_COUNT chapter(s): $NEW_CHAPTERS"
