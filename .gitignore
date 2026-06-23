@@ -212,10 +212,18 @@ data/**/*
 !data/**/.gitkeep
 logs/*
 !logs/.gitkeep
+.autopull.lock/
 backend/data/
 backend/logs/
 *.log
 *.log.*
+
+# Local agent/tooling state and second TTS venv
+venv311/
+.brain/
+.claude/
+# Root-level dev screenshots (verification captures)
+/*.png
 
 # Databases
 *.db
