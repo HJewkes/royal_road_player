@@ -97,13 +97,6 @@ get_latest_book() {
   ls "$PROJECT_DIR/data/books/$FICTION_ID/" | grep book_ | sort -V | tail -1 | sed 's/book_//'
 }
 
-# --- Step 3: Count existing chapters (those with normalized.txt) ---
-count_processed_chapters() {
-  local book=$1
-  find "$PROJECT_DIR/data/books/$FICTION_ID/book_$book/chapters" \
-    -name "normalized.txt" 2>/dev/null | wc -l | tr -d ' '
-}
-
 # --- Step 4: Download new chapters ---
 download_chapters() {
   local book=$1
@@ -458,7 +451,6 @@ ensure_backend
 BOOK=$(get_latest_book)
 log "Latest book: $BOOK"
 
-BEFORE=$(count_processed_chapters "$BOOK")
 download_chapters "$BOOK" > /dev/null
 NEW_CHAPTERS=$(find_new_chapters "$BOOK")
 
