@@ -146,7 +146,13 @@ find_new_chapters() {
       new_chapters+=("$ch")
     fi
   done
-  echo "${new_chapters[*]:-}"
+  [ ${#new_chapters[@]} -eq 0 ] && return 0
+  # Emit in numeric order. The glob above expands lexicographically
+  # (chapter_10 before chapter_2/chapter_9), which would otherwise process
+  # chapter 10 before chapter 9. echo is unquoted so newlines collapse to spaces.
+  local sorted
+  sorted=$(printf '%s\n' "${new_chapters[@]}" | sort -n)
+  echo $sorted
 }
 
 # --- Step 6: Normalize and chunk (NEW CHAPTERS ONLY) ---
