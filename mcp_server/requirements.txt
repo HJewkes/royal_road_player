@@ -1,0 +1,3 @@
+# Audiobook MCP server deps (installed into ./venv)
+mcp>=1.0
+httpx>=0.27

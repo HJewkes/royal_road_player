@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "audiobook": {
+      "command": "venv/bin/python",
+      "args": ["mcp_server/audiobook_mcp.py"],
+      "env": {
+        "AUDIOBOOK_API": "http://localhost:8000",
+        "AUDIOBOOK_FICTION_ID": "124774"
+      }
+    }
+  }
+}

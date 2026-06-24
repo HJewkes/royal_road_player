@@ -144,3 +144,18 @@ class BackfillResult(BaseModel):
     skipped: int
     errors: list[str]
 
+
+# ============================================================================
+# Event Request Models
+# ============================================================================
+
+
+class EmitEventRequest(BaseModel):
+    """Request to emit a pipeline event (used by external producers like autopull)."""
+    type: str
+    fiction_id: Optional[str] = None
+    book: Optional[int] = None
+    chapter: Optional[int] = None
+    severity: str = "info"
+    detail: Optional[dict] = None
+

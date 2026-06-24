@@ -34,6 +34,11 @@ cleanup() {
   if [ "$code" -ne 0 ]; then
     log "ERROR: Autopull exited with code $code"
     notify "Audiobook autopull failed" "Exit $code — see logs/autopull.log"
+    # Best-effort run.error event for pollers; never mask the original exit code.
+    curl -sf -X POST "$API/api/events" \
+      -H 'Content-Type: application/json' \
+      -d "{\"type\": \"run.error\", \"fiction_id\": \"${FICTION_ID}\", \"book\": ${BOOK:-null}, \"severity\": \"error\", \"detail\": {\"exit_code\": $code}}" \
+      >/dev/null 2>&1 || true
   fi
 }
 
