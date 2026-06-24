@@ -18,6 +18,7 @@ from src.api.requests import (
     BackfillTitlesRequest,
     ChunkRequest,
     DownloadRequest,
+    EmitEventRequest,
     ExportRequest,
     FictionInfo,
     FictionPreview,
@@ -36,6 +37,7 @@ from src.discovery import (
     get_chapter_discovery,
     get_chunk_discovery,
 )
+from src.events import get_event_store
 from src.export import get_exporter
 from src.models import BookStatus, BookSummary, ChapterSummary, OperationResult, QueueStatus
 from src.queue import Job, get_job_queue, get_download_queue
@@ -119,7 +121,15 @@ async def start_processor():
     async def on_chapter_complete(fiction_id: str, book_number: int, chapter_number: int):
         """Export chapter when all chunks complete."""
         logger.info(f"Auto-exporting chapter {chapter_number}")
-        exporter.export_chapter(fiction_id, book_number, chapter_number)
+        path = exporter.export_chapter(fiction_id, book_number, chapter_number)
+        if path:
+            get_event_store().emit(
+                "chapter.completed",
+                fiction_id=fiction_id,
+                book=book_number,
+                chapter=chapter_number,
+                detail={"export_path": str(path)},
+            )
 
     await queue.start_processing(
         process_fn=process_job,
@@ -923,6 +933,14 @@ async def export_chapter(request: ExportRequest):
     if not path:
         raise HTTPException(status_code=400, detail="Export failed")
 
+    get_event_store().emit(
+        "chapter.completed",
+        fiction_id=request.fiction_id,
+        book=request.book_number,
+        chapter=request.chapter_number,
+        detail={"export_path": str(path), "format": request.format},
+    )
+
     return OperationResult(
         success=True,
         message=f"Exported to {path}",
@@ -934,6 +952,32 @@ async def export_chapter(request: ExportRequest):
 async def get_export_status(fiction_id: FictionIdPath, book_number: BookNumberPath):
     """Get export status for all chapters in a book."""
     return get_exporter().get_export_status(fiction_id, book_number)
+
+
+# ============================================================================
+# Event Routes
+# ============================================================================
+
+
+@app.get("/api/events")
+async def get_events(since: int = 0, type: Optional[str] = None, limit: int = 200):
+    """Return pipeline events with id > since (the poll surface for agents)."""
+    events = get_event_store().read(since=since, type=type, limit=limit)
+    cursor = events[-1]["id"] if events else since
+    return {"events": events, "cursor": cursor}
+
+
+@app.post("/api/events")
+async def post_event(request: EmitEventRequest):
+    """Emit a pipeline event. Used by external producers such as autopull.sh."""
+    return get_event_store().emit(
+        request.type,
+        fiction_id=request.fiction_id,
+        book=request.book,
+        chapter=request.chapter,
+        severity=request.severity,
+        detail=request.detail,
+    )
 
 
 # ============================================================================

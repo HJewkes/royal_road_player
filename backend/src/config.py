@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     books_dir: Path = Path(__file__).parent.parent.parent / "data" / "books"
     exports_dir: Path = Path(__file__).parent.parent.parent / "exports"
     cache_dir: Path = Path(__file__).parent.parent.parent / "data" / "cache"
+    events_log: Path = Path(__file__).parent.parent.parent / "logs" / "events.jsonl"
 
     # TTS settings
     tts_model: str = "tts_models/multilingual/multi-dataset/xtts_v2"
