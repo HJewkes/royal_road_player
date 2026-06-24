@@ -140,6 +140,29 @@ Open http://localhost:5173 to access the web UI.
 - `POST /api/export` - Export chapter to audio file
 - `GET /api/export/status/{fiction_id}/{book_number}` - Get export status
 
+### Events
+
+- `GET /api/events?since=<id>&type=<type>&limit=<n>` - Poll pipeline events (append-only
+  log at `logs/events.jsonl`; integer `id` is the cursor). Emitted: `chapter.completed`,
+  `run.error`.
+- `POST /api/events` - Emit an event (used by `autopull.sh` for `run.error`)
+
+## MCP Server
+
+`mcp_server/audiobook_mcp.py` is a thin FastMCP adapter over the API so a Claude agent can
+observe and drive the pipeline (tools: `audiobook_status`, `audiobook_pending`,
+`audiobook_events`, `audiobook_queue`, `audiobook_process`, `audiobook_retry`,
+`audiobook_books`). It holds no logic of its own — every tool is an HTTP call to the
+running backend.
+
+```bash
+./venv/bin/pip install -r mcp_server/requirements.txt   # one-time: mcp + httpx into venv
+```
+
+It is registered in `.mcp.json`, so Claude Code launches it automatically (`venv/bin/python
+mcp_server/audiobook_mcp.py`). The backend must be running (`make dev`). Config via env:
+`AUDIOBOOK_API` (default `http://localhost:8000`), `AUDIOBOOK_FICTION_ID` (default `124774`).
+
 ## Dependencies
 
 The project uses two Python virtual environments:

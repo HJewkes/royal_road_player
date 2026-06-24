@@ -91,7 +91,8 @@ cheap to add from autopull if useful.)
 ## Phase 2 — MCP server
 
 ### Design
-- **Thin** Python **FastMCP** server (`mcp/audiobook_mcp.py` or a new `mcp/` dir) that
+- **Thin** Python **FastMCP** server (`mcp_server/audiobook_mcp.py` — the dir is
+  `mcp_server/`, NOT `mcp/`, to avoid shadowing the installed `mcp` package) that
   forwards to `http://localhost:8000`. **No business logic duplicated** — every tool is an
   HTTP call to an existing endpoint (or a small compose of 2–3).
 - Runs in `venv` (general deps); add `mcp`/`fastmcp` + `httpx` to that venv's requirements.
