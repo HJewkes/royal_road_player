@@ -31,7 +31,10 @@ notify() {
 # `set -e`, which is exactly what we're fixing).
 cleanup() {
   local code=$?
-  rmdir "$LOCK_DIR" 2>/dev/null || true
+  # rm -rf, not rmdir: the lock dir always holds a `pid` file, so rmdir would
+  # fail on the non-empty dir and leak the lock — forcing every subsequent run
+  # down the stale-reclaim path. Remove the dir and its contents outright.
+  rm -rf "$LOCK_DIR" 2>/dev/null || true
   if [ "$code" -ne 0 ]; then
     log "ERROR: Autopull exited with code $code"
     notify "Audiobook autopull failed" "Exit $code — see logs/autopull.log"
