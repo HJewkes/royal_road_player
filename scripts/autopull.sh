@@ -12,6 +12,7 @@ FICTION_ID="${FICTION_ID:-124774}"
 API="http://localhost:8000"
 LOG_FILE="$PROJECT_DIR/logs/autopull.log"
 VENV="$PROJECT_DIR/venv311/bin/activate"
+PYTHON="$PROJECT_DIR/venv311/bin/python"
 
 LOCK_DIR="$PROJECT_DIR/.autopull.lock"
 
@@ -97,9 +98,33 @@ ensure_backend() {
   exit 1
 }
 
-# --- Step 2: Determine latest book ---
+# --- Step 2: Determine latest book ON DISK ---
 get_latest_book() {
   ls "$PROJECT_DIR/data/books/$FICTION_ID/" | grep book_ | sort -V | tail -1 | sed 's/book_//'
+}
+
+# --- Step 3: Discover books available AT THE SOURCE ---
+# Prints the book numbers the upstream source currently offers (honoring the
+# patreon_meta.json bridge). Empty on any failure (network/cookie), so the
+# caller can fall back to the on-disk view instead of skipping the run.
+get_source_books() {
+  "$PYTHON" "$SCRIPT_DIR/source_books.py" "$FICTION_ID" 2>/dev/null | grep -E '^[0-9]+$' || true
+}
+
+# Books worth checking this run: every source book at or beyond the highest book
+# already on disk. This re-checks the latest on-disk book for new chapters AND
+# picks up a freshly started book (e.g. Book 8) that has no directory yet, while
+# leaving older, completed books untouched. Falls back to the on-disk book alone
+# when source discovery yields nothing.
+books_to_process() {
+  local on_disk=${1:-0}
+  local source_books
+  source_books=$(get_source_books)
+  if [ -z "$source_books" ]; then
+    echo "$on_disk"
+    return 0
+  fi
+  echo "$source_books" | awk -v floor="${on_disk:-0}" '$1 >= floor'
 }
 
 # --- Step 4: Download new chapters ---
@@ -443,6 +468,33 @@ export_chapter() {
   log "Exported: $path"
 }
 
+# --- Process one book end-to-end: download, then process each new chapter ---
+# Appends a one-line summary to SUMMARY for any book that had new chapters.
+process_book() {
+  local book=$1
+  download_chapters "$book" > /dev/null
+  local new_chapters
+  new_chapters=$(find_new_chapters "$book")
+
+  if [ -z "$new_chapters" ]; then
+    log "Book $book: no new chapters"
+    return 0
+  fi
+
+  log "Book $book new chapters: $new_chapters"
+  normalize_and_chunk "$book" $new_chapters
+
+  for ch in $new_chapters; do
+    log "--- Processing book $book chapter $ch ---"
+    detect_commentary "$book" "$ch"
+    generate_audio "$book" "$ch"
+    export_chapter "$book" "$ch"
+    log "--- Book $book chapter $ch complete ---"
+  done
+
+  SUMMARY+="Book $book: $new_chapters"$'\n'
+}
+
 # ============================================================
 # Main
 # ============================================================
@@ -453,30 +505,23 @@ log "=== Autopull started ==="
 
 ensure_backend
 
-BOOK=$(get_latest_book)
-log "Latest book: $BOOK"
+ON_DISK_BOOK=$(get_latest_book)
+log "Latest book on disk: $ON_DISK_BOOK"
 
-download_chapters "$BOOK" > /dev/null
-NEW_CHAPTERS=$(find_new_chapters "$BOOK")
+BOOKS=$(books_to_process "$ON_DISK_BOOK")
+log "Books to check this run: $(echo $BOOKS | tr '\n' ' ')"
 
-if [ -z "$NEW_CHAPTERS" ]; then
-  log "No new chapters found"
-  log "=== Autopull complete (no changes) ==="
-  exit 0
-fi
-
-log "New chapters: $NEW_CHAPTERS"
-
-normalize_and_chunk "$BOOK" $NEW_CHAPTERS
-
-for ch in $NEW_CHAPTERS; do
-  log "--- Processing chapter $ch ---"
-  detect_commentary "$BOOK" "$ch"
-  generate_audio "$BOOK" "$ch"
-  export_chapter "$BOOK" "$ch"
-  log "--- Chapter $ch complete ---"
+# BOOK stays in scope for the cleanup trap's run.error event. SUMMARY collects
+# per-book results across the loop for the final notification.
+BOOK=$ON_DISK_BOOK
+SUMMARY=""
+for BOOK in $BOOKS; do
+  process_book "$BOOK"
 done
 
-PROCESSED_COUNT=$(echo "$NEW_CHAPTERS" | wc -w | tr -d ' ')
-log "=== Autopull complete ==="
-notify "Audiobook autopull complete" "Book $BOOK: processed $PROCESSED_COUNT chapter(s): $NEW_CHAPTERS"
+if [ -n "$SUMMARY" ]; then
+  log "=== Autopull complete ==="
+  notify "Audiobook autopull complete" "$SUMMARY"
+else
+  log "=== Autopull complete (no changes) ==="
+fi
