@@ -130,6 +130,16 @@ books_to_process() {
   echo "$source_books" | awk -v floor="${on_disk:-0}" '$1 >= floor'
 }
 
+# --- Precheck: books with pending work, WITHOUT booting the backend ---
+# Prints book numbers that either have a newly published source chapter or a
+# half-processed chapter still on disk. Runs the scraper only — no FastAPI, no
+# torch, no TTS model — so idle 15-minute polls stay cheap. Exit 0 means it ran
+# cleanly (empty stdout == nothing to do); a non-zero exit means the source fetch
+# failed and the caller should fall back rather than skip real work.
+run_precheck() {
+  "$PYTHON" "$SCRIPT_DIR/pending_work.py" "$FICTION_ID" 2>/dev/null
+}
+
 # --- Step 4: Download new chapters ---
 download_chapters() {
   local book=$1
@@ -506,13 +516,26 @@ acquire_lock
 
 log "=== Autopull started ==="
 
-ensure_backend
-
 ON_DISK_BOOK=$(get_latest_book)
-log "Latest book on disk: $ON_DISK_BOOK"
 
-BOOKS=$(books_to_process "$ON_DISK_BOOK")
-log "Books to check this run: $(echo $BOOKS | tr '\n' ' ')"
+# Cheap precheck BEFORE any backend/TTS startup: is there a new source chapter or
+# a half-processed chapter on disk? Only boot the backend (and eventually the TTS
+# model, which loads lazily on first generation) when there is confirmed work.
+if BOOKS=$(run_precheck); then
+  if [ -z "$BOOKS" ]; then
+    log "Precheck: no new chapters — skipping backend startup"
+    log "=== Autopull complete (no changes) ==="
+    exit 0
+  fi
+  log "Precheck: books with pending work: $(echo $BOOKS | tr '\n' ' ')"
+else
+  # Source fetch failed (network/cookie/parse). Don't skip on a transient blip —
+  # fall back to full discovery, which itself degrades to the on-disk book.
+  log "Precheck failed; falling back to full discovery"
+  BOOKS=$(books_to_process "$ON_DISK_BOOK")
+fi
+
+ensure_backend
 
 # BOOK stays in scope for the cleanup trap's run.error event. SUMMARY collects
 # per-book results across the loop for the final notification.
