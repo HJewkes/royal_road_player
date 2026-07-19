@@ -38,6 +38,23 @@ class Settings(BaseSettings):
     patreon_session_id: str = ""
     patreon_chapter_pattern: str = r"^(\d+)\.(\d+)\s*-\s*(.+?)(?:\s*\[.*\])?$"
 
+    # Delivery / podcast feed settings
+    # Public base URL under which the feed + mp3s are served (include any secret
+    # path token here so URLs are unguessable). Empty disables upload — the feed
+    # is still built locally. e.g. "https://pub-xxxx.r2.dev/ab-<token>"
+    delivery_base_url: str = ""
+    delivery_author: str = "Audiobook Pipeline"
+    # Unguessable path segment prefixed to every object key so the (public)
+    # bucket's feed + mp3 URLs can't be guessed — the content is the author's
+    # paid work, space-shifted for personal use. Empty = no prefix.
+    delivery_path_prefix: str = ""
+    # R2 bucket for uploads + the S3-compatible endpoint/creds (R2 API token).
+    # All four must be set to enable upload; otherwise the feed is local-only.
+    r2_bucket: str = ""
+    r2_endpoint_url: str = ""
+    r2_access_key_id: str = ""
+    r2_secret_access_key: str = ""
+
     class Config:
         env_prefix = "AUDIOBOOK_"
         env_file = str(Path(__file__).parent.parent.parent / ".env")

@@ -245,6 +245,8 @@ class ChapterDiscovery:
         source_url = None
         scraped_at = None
         audio_duration_seconds = None
+        completed_at = None
+        export_path = None
 
         if metadata_path.exists():
             try:
@@ -255,6 +257,8 @@ class ChapterDiscovery:
                     source_url = meta.source_url
                     scraped_at = meta.scraped_at
                     audio_duration_seconds = meta.audio_duration_seconds
+                    completed_at = meta.completed_at
+                    export_path = meta.export_path
             except Exception as e:
                 logger.warning(f"Error loading chapter metadata {metadata_path}: {e}")
 
@@ -298,8 +302,12 @@ class ChapterDiscovery:
             except Exception:
                 pass
 
-        # Check export - look for actual export file in exports directory
-        is_exported = self._check_export_exists(fiction_id, book_number, chapter_number)
+        # Check export - the durable completion marker (metadata.completed_at)
+        # is authoritative and survives pruning; fall back to the export file on
+        # disk for chapters completed before the marker existed.
+        is_exported = completed_at is not None or self._check_export_exists(
+            fiction_id, book_number, chapter_number
+        )
 
         return Chapter(
             chapter_number=chapter_number,
@@ -308,6 +316,8 @@ class ChapterDiscovery:
             scraped_at=scraped_at,
             chunk_count=chunk_count,
             audio_duration_seconds=audio_duration_seconds,
+            completed_at=completed_at,
+            export_path=export_path,
             path=chapter_dir,
             is_downloaded=is_downloaded,
             is_normalized=is_normalized,
@@ -340,6 +350,56 @@ class ChapterDiscovery:
             **metadata.model_dump(),
             path=chapter_dir,
         )
+
+    def mark_chapter_completed(
+        self,
+        fiction_id: str,
+        book_number: int,
+        chapter_number: int,
+        export_path: Path,
+    ) -> None:
+        """Record a durable completion marker in the chapter's metadata.json.
+
+        Written at export time. Because it lives in metadata.json — which
+        disk-cleanup leaves in place — a completed chapter stays distinguishable
+        from a genuinely interrupted one even after audio.wav and chunk wavs are
+        pruned. Existing metadata fields are preserved (read-merge-write).
+        """
+        chapter_dir = self.get_chapter_path(fiction_id, book_number, chapter_number)
+        metadata_path = chapter_dir / "metadata.json"
+
+        data = {}
+        if metadata_path.exists():
+            try:
+                with open(metadata_path) as f:
+                    data = json.load(f)
+            except Exception as e:
+                logger.warning(f"Error reading metadata to mark completed {metadata_path}: {e}")
+
+        data.setdefault("chapter_number", chapter_number)
+        data.setdefault("title", f"Chapter {chapter_number}")
+        data["completed_at"] = datetime.now().isoformat()
+        data["export_path"] = str(export_path)
+
+        chapter_dir.mkdir(parents=True, exist_ok=True)
+        with open(metadata_path, "w") as f:
+            json.dump(data, f, indent=2, default=str)
+
+    def is_chapter_completed(self, fiction_id: str, book_number: int, chapter_number: int) -> bool:
+        """True if the chapter carries a durable completion marker.
+
+        Survives pruning, so callers (partial-generation recovery, disk audits)
+        can tell a finished-then-pruned chapter from one interrupted mid-TTS
+        without trusting audio.wav to still be on disk.
+        """
+        metadata_path = self.get_chapter_path(fiction_id, book_number, chapter_number) / "metadata.json"
+        if not metadata_path.exists():
+            return False
+        try:
+            with open(metadata_path) as f:
+                return json.load(f).get("completed_at") is not None
+        except Exception:
+            return False
 
     def save_raw_text(self, fiction_id: str, book_number: int, chapter_number: int, text: str):
         """Save raw scraped text for a chapter."""

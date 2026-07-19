@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 from src.config import get_settings
-from src.discovery import BookDiscovery, ChunkDiscovery
+from src.discovery import BookDiscovery, ChapterDiscovery, ChunkDiscovery
 from src.utils import sanitize_filename
 
 logger = logging.getLogger(__name__)
@@ -152,6 +152,7 @@ class AudioExporter:
         self.settings = get_settings()
         self.concatenator = AudioConcatenator()
         self.book_discovery = BookDiscovery()
+        self.chapter_discovery = ChapterDiscovery()
 
     def export_chapter(
         self,
@@ -209,10 +210,18 @@ class AudioExporter:
             # Just copy the WAV
             shutil.copy(wav_path, output_path)
             logger.info(f"✅ Exported: {output_path}")
-            return output_path
+            result_path = output_path
+        else:
+            # Convert using ffmpeg
+            result_path = self._convert_audio(wav_path, output_path, format)
 
-        # Convert using ffmpeg
-        return self._convert_audio(wav_path, output_path, format)
+        if result_path:
+            # Durable completion marker so a finished chapter stays recognizable
+            # after audio.wav / chunk wavs are pruned.
+            self.chapter_discovery.mark_chapter_completed(
+                fiction_id, book_number, chapter_number, result_path
+            )
+        return result_path
 
     def _convert_audio(
         self,

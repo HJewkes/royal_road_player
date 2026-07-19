@@ -213,6 +213,8 @@ data/**/*
 logs/*
 !logs/.gitkeep
 .autopull.lock/
+# Generated podcast feed staging output
+feeds/
 backend/data/
 backend/logs/
 *.log

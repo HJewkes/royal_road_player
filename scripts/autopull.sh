@@ -481,6 +481,18 @@ export_chapter() {
   log "Exported: $path"
 }
 
+# --- Step 11: Publish to podcast feed ---
+# Rebuild the RSS feed(s) and push the new mp3 + feed to R2 so the phone's
+# podcast app auto-downloads it. Never fails the run: if delivery isn't
+# configured it just rebuilds the feed locally; any upload error is logged.
+publish_feed() {
+  if "$PYTHON" "$SCRIPT_DIR/publish_feed.py" >> "$LOG_FILE" 2>&1; then
+    log "Feed published"
+  else
+    log "WARNING: feed publish failed (non-fatal)"
+  fi
+}
+
 # --- Process one book end-to-end: download, then process each new chapter ---
 # Appends a one-line summary to SUMMARY for any book that had new chapters.
 process_book() {
@@ -502,6 +514,7 @@ process_book() {
     detect_commentary "$book" "$ch"
     generate_audio "$book" "$ch"
     export_chapter "$book" "$ch"
+    publish_feed
     log "--- Book $book chapter $ch complete ---"
   done
 

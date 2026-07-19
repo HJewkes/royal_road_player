@@ -135,6 +135,11 @@ class ChapterMetadata(BaseModel):
     scraped_at: Optional[datetime] = None
     chunk_count: int = 0
     audio_duration_seconds: Optional[float] = None
+    # Durable completion marker, written at export time. Survives pruning of
+    # audio.wav / chunk wavs, so "was this chapter finished?" can be answered
+    # without depending on files that disk-cleanup removes.
+    completed_at: Optional[datetime] = None
+    export_path: Optional[str] = None
 
 
 class Chapter(BaseModel):
@@ -145,6 +150,8 @@ class Chapter(BaseModel):
     scraped_at: Optional[datetime] = None
     chunk_count: int = 0
     audio_duration_seconds: Optional[float] = None
+    completed_at: Optional[datetime] = None
+    export_path: Optional[str] = None
 
     # Computed from filesystem
     path: Path

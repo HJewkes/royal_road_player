@@ -37,6 +37,7 @@ class TextNormalizer:
             Normalized text ready for chunking
         """
         # Apply normalization steps in order
+        text = self.strip_leading_notes(text)
         text = self.normalize_scene_breaks(text)
         text = self.remove_drm_warnings(text)
         text = self.normalize_punctuation(text)
@@ -47,6 +48,29 @@ class TextNormalizer:
         text = self.normalize_whitespace(text)
 
         return text
+
+    # A leading author aside wrapped in square brackets, e.g.
+    # "[This is long. Get coffee. Thanks for your support!]"
+    _LEADING_NOTE = re.compile(r'^\s*\[[^\]]*\]\s*')
+    # A leading bare chapter-number heading on its own line, e.g. "14." or "14"
+    _LEADING_NUMBER = re.compile(r'^\s*\d+\.?[ \t]*(?:\n|$)')
+
+    def strip_leading_notes(self, text: str) -> str:
+        """Strip non-story preamble that leads a chapter before the prose begins.
+
+        Removes author asides in [square brackets] and a bare chapter-number
+        heading line (e.g. "14."). Only strips such blocks at the very start and
+        stops at the first line of real prose, so brackets and numbers appearing
+        mid-story are left untouched. Deterministic backstop for the LLM preamble
+        check, which is non-deterministic and has let these through.
+        """
+        while True:
+            stripped = self._LEADING_NOTE.sub('', text, count=1)
+            stripped = self._LEADING_NUMBER.sub('', stripped, count=1)
+            if stripped == text:
+                break
+            text = stripped
+        return text.lstrip('\n')
 
     def normalize_scene_breaks(self, text: str) -> str:
         """Normalize scene break markers to paragraph breaks."""

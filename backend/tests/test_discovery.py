@@ -146,6 +146,69 @@ class TestChapterDiscovery:
         assert retrieved_norm == normalized
 
 
+class TestChapterCompletionMarker:
+    """Tests for the durable completion marker that survives pruning."""
+
+    def _make_chapter(self, temp_books_dir):
+        BookDiscovery(books_dir=temp_books_dir).create_book(
+            BookMetadata(
+                fiction_id="12345",
+                book_number=1,
+                title="Test Book",
+                author=None,
+                source_url="https://example.com",
+                scraped_at=datetime.utcnow(),
+            )
+        )
+        chapter_discovery = ChapterDiscovery(books_dir=temp_books_dir)
+        chapter_discovery.create_chapter(
+            "12345",
+            1,
+            ChapterMetadata(
+                chapter_number=1,
+                title="Real Title",
+                source_url="https://example.com/chapter/1",
+                scraped_at=datetime.utcnow(),
+            ),
+        )
+        return chapter_discovery
+
+    def test_mark_sets_marker_and_preserves_existing_fields(self, temp_books_dir):
+        chapter_discovery = self._make_chapter(temp_books_dir)
+
+        chapter_discovery.mark_chapter_completed("12345", 1, 1, Path("/exports/ch1.mp3"))
+
+        metadata_path = chapter_discovery.get_chapter_path("12345", 1, 1) / "metadata.json"
+        data = json.loads(metadata_path.read_text())
+        assert data["completed_at"] is not None
+        assert data["export_path"] == "/exports/ch1.mp3"
+        # Read-merge-write must not clobber the fields written at scrape time.
+        assert data["title"] == "Real Title"
+        assert data["source_url"] == "https://example.com/chapter/1"
+
+    def test_is_chapter_completed_reflects_marker(self, temp_books_dir):
+        chapter_discovery = self._make_chapter(temp_books_dir)
+
+        assert chapter_discovery.is_chapter_completed("12345", 1, 1) is False
+        chapter_discovery.mark_chapter_completed("12345", 1, 1, Path("/exports/ch1.mp3"))
+        assert chapter_discovery.is_chapter_completed("12345", 1, 1) is True
+
+    def test_marker_makes_chapter_exported_without_files_on_disk(self, temp_books_dir):
+        """A completed-then-pruned chapter (no audio.wav, no export file) must
+        still read as exported so recovery/audits don't treat it as unfinished."""
+        chapter_discovery = self._make_chapter(temp_books_dir)
+
+        before = chapter_discovery.get_chapter("12345", 1, 1)
+        assert before.is_exported is False
+
+        chapter_discovery.mark_chapter_completed("12345", 1, 1, Path("/exports/ch1.mp3"))
+
+        after = chapter_discovery.get_chapter("12345", 1, 1)
+        assert after.is_exported is True
+        assert after.completed_at is not None
+        assert after.export_path == "/exports/ch1.mp3"
+
+
 class TestChunkDiscovery:
     """Tests for ChunkDiscovery."""
 
