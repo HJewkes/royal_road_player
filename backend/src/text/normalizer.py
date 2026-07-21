@@ -6,6 +6,8 @@ Simplified version that applies all normalization steps for clean TTS output.
 import re
 from typing import Optional
 
+from src.text.lexicon import get_lexicon
+
 
 class TextNormalizer:
     """Normalizes text for optimal TTS generation."""
@@ -40,6 +42,7 @@ class TextNormalizer:
         text = self.strip_leading_notes(text)
         text = self.normalize_scene_breaks(text)
         text = self.remove_drm_warnings(text)
+        text = self.apply_lexicon(text)
         text = self.normalize_punctuation(text)
         text = self.normalize_acronyms(text)
         text = self.normalize_time_formats(text)
@@ -71,6 +74,11 @@ class TextNormalizer:
                 break
             text = stripped
         return text.lstrip('\n')
+
+    def apply_lexicon(self, text: str) -> str:
+        """Respell hard-to-pronounce words (proper nouns, coined slang) so XTTS
+        says them correctly. Driven by the configured pronunciation lexicon."""
+        return get_lexicon().apply(text)
 
     def normalize_scene_breaks(self, text: str) -> str:
         """Normalize scene break markers to paragraph breaks."""
@@ -136,6 +144,22 @@ class TextNormalizer:
         text = re.sub(r'__([^_]+)__', r'\1', text)
         text = re.sub(r'\b_([^_]+)_\b', r'\1', text)
 
+        # Numeric progression arrows: "£1,054 > £6,079" / "11,256>11,406" read as a
+        # rising sequence rather than "greater than". Constrained to value contexts so
+        # a stray ">" in prose is untouched. Runs before number/currency expansion, so
+        # the flanks are still digits/currency symbols.
+        text = re.sub(r'(?<=[\d%)])\s*>\s*(?=[£$€\d])', ', rising to ', text)
+
+        # Slashes: "/week" -> " per week"; other word/value slashes read as a space
+        # (compound/list separator) instead of the literal "slash".
+        text = re.sub(r'/\s*(week|year|day|month|match|game)\b', r' per \1', text,
+                      flags=re.IGNORECASE)
+        text = re.sub(r'(?<=\w)\s*/\s*(?=\w)', ' ', text)
+
+        # Drop orphan footnote asterisks (paired *emphasis* already removed above);
+        # a bare "*" otherwise gets voiced as "asterisk" or glitches.
+        text = text.replace('*', '')
+
         return text
 
     def normalize_acronyms(self, text: str) -> str:
@@ -182,17 +206,53 @@ class TextNormalizer:
                 return match.group(0)
         text = re.sub(r'\b(\d{1,2})(st|nd|rd|th)\b', ordinal_replacer, text)
 
-        # Currency
+        # Currency + decimals share one amount speller. A magnitude suffix (k/m/bn)
+        # places the unit word last ("£1.4m" -> "one point four million pounds"). A
+        # MULTI-digit fraction with a suffix is multiplied out to an exact integer
+        # instead of read digit-by-digit, because XTTS slurs digit runs ("one seven
+        # six" -> "seventeen six"); so "£0.176m" -> "one hundred seventy-six thousand
+        # pounds". Single-digit fractions ("point four") read fine and stay as-is.
+        suffix_words = {'k': 'thousand', 'm': 'million', 'bn': 'billion', 'b': 'billion',
+                        'thousand': 'thousand', 'million': 'million', 'billion': 'billion'}
+        suffix_mult = {'k': 1000, 'm': 10**6, 'bn': 10**9, 'b': 10**9,
+                       'thousand': 1000, 'million': 10**6, 'billion': 10**9}
+
+        def amount_words(int_part, dec_part, suffix):
+            suffix = (suffix or '').lower()
+            if dec_part:
+                mult = suffix_mult.get(suffix)
+                pow10 = 10 ** len(dec_part)
+                if mult and len(dec_part) >= 2 and (int(dec_part) * mult) % pow10 == 0:
+                    scaled = int(int_part) * mult + int(dec_part) * mult // pow10
+                    return self._number_to_words(scaled)
+                words = self._number_to_words(int(int_part)) + ' point ' + self._spell_decimal(dec_part)
+            else:
+                words = self._number_to_words(int(int_part))
+            if suffix in suffix_words:
+                words += ' ' + suffix_words[suffix]
+            return words
+
         def currency_replacer(match):
-            symbol = match.group(1)
-            amount = match.group(2).replace(',', '')
+            currency_name = {'£': 'pounds', '$': 'dollars', '€': 'euros'}.get(match.group(1), 'units')
             try:
-                words = self._number_to_words(int(amount))
-                currency_name = {'£': 'pounds', '$': 'dollars', '€': 'euros'}.get(symbol, 'units')
-                return f"{words} {currency_name}"
+                words = amount_words(match.group(2).replace(',', ''), match.group(3), match.group(4))
             except ValueError:
                 return match.group(0)
-        text = re.sub(r'([£$€])([\d,]+)', currency_replacer, text)
+            return f"{words} {currency_name}"
+        text = re.sub(
+            r'([£$€])\s?(\d+(?:,\d{3})*)(?:\.(\d+))?(?:\s*(k|m|bn|thousand|million|billion))?\b',
+            currency_replacer, text)
+
+        # Decimals (non-currency): expand the whole value so the integer part isn't
+        # left orphaned from its fraction. "147.8" -> "one hundred forty-seven point
+        # eight". Runs after currency and before the large-integer rule (which would
+        # otherwise grab just the "147").
+        def decimal_replacer(match):
+            try:
+                return amount_words(match.group(1), match.group(2), match.group(3))
+            except ValueError:
+                return match.group(0)
+        text = re.sub(r'\b(\d+)\.(\d+)(k|m|bn)?\b', decimal_replacer, text)
 
         # Large standalone numbers
         def number_replacer(match):
@@ -262,7 +322,19 @@ class TextNormalizer:
             thousands = self._number_to_words(n // 1000) + ' thousand'
             remainder = n % 1000
             return thousands + (' ' + self._number_to_words(remainder) if remainder else '')
+        if n < 1000000000:
+            millions = self._number_to_words(n // 1000000) + ' million'
+            remainder = n % 1000000
+            return millions + (' ' + self._number_to_words(remainder) if remainder else '')
+        if n < 1000000000000:
+            billions = self._number_to_words(n // 1000000000) + ' billion'
+            remainder = n % 1000000000
+            return billions + (' ' + self._number_to_words(remainder) if remainder else '')
         return str(n)
+
+    def _spell_decimal(self, digits: str) -> str:
+        """Read a decimal fraction digit by digit: '176' -> 'one seven six'."""
+        return ' '.join(self._number_to_words(int(d)) for d in digits)
 
     def _number_to_ordinal(self, n: int) -> str:
         """Convert number to ordinal."""
