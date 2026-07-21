@@ -48,8 +48,15 @@ class TextChunker:
         if not text or not text.strip():
             return []
 
-        # Split text into raw chunks
-        raw_chunks = self._split_text(text, max_chars)
+        # Split at paragraph breaks first so no chunk spans a paragraph boundary.
+        # An internal `."\n\n` (dialogue close + new paragraph) makes XTTS emit a
+        # phantom babble outburst at that junction; giving each paragraph its own
+        # chunk removes the trigger and yields a natural paragraph pause on concat.
+        raw_chunks = []
+        for paragraph in re.split(r'\n\s*\n', text):
+            paragraph = paragraph.strip()
+            if paragraph:
+                raw_chunks.extend(self._split_text(paragraph, max_chars))
 
         # Filter out punctuation-only chunks
         filtered = self._filter_meaningless_chunks(raw_chunks)
@@ -58,16 +65,27 @@ class TextChunker:
         results = []
         pos = 0
 
-        for i, chunk_text in enumerate(filtered, 1):
+        for chunk_text in filtered:
+            clean = self._clean_chunk_end(chunk_text)
+            if not clean:
+                continue
             results.append(ChunkResult(
-                index=i,
-                text=chunk_text,
+                index=len(results) + 1,
+                text=clean,
                 text_start=pos,
-                text_end=pos + len(chunk_text),
+                text_end=pos + len(clean),
             ))
-            pos += len(chunk_text)
+            pos += len(clean)
 
         return results
+
+    # A trailing quotation mark is never pronounced, yet it triggers a hallucinated
+    # outburst at the end of a chunk in XTTS (validated: 3/9 -> 0/9 with it removed).
+    _TRAILING_QUOTES = re.compile(r'["“”\'‘’]+\s*$')
+
+    def _clean_chunk_end(self, text: str) -> str:
+        """Drop a trailing quotation mark so XTTS doesn't babble at the chunk end."""
+        return self._TRAILING_QUOTES.sub('', text.rstrip()).rstrip()
 
     def _split_text(self, text: str, max_chars: int) -> List[str]:
         """Split text into chunks at natural boundaries."""
