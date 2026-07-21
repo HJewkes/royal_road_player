@@ -99,6 +99,7 @@ class XTTSEngine:
         text: str,
         output_path: Path,
         speed: float = 1.0,
+        **inference_kwargs,
     ) -> tuple[Path, float]:
         """
         Synthesize text to speech.
@@ -107,6 +108,10 @@ class XTTSEngine:
             text: Text to synthesize (max 250 chars for XTTS v2)
             output_path: Path to save audio file
             speed: Speech speed multiplier
+            **inference_kwargs: XTTS decoder params forwarded to tts_to_file
+                (e.g. temperature, repetition_penalty, top_k, top_p). Omitted →
+                the checkpoint defaults. Used by the regenerate-and-pick fix pass
+                to perturb re-rolls off a bad take.
 
         Returns:
             Tuple of (output_path, generation_time_seconds)
@@ -136,6 +141,7 @@ class XTTSEngine:
                     language="en",
                     speaker_wav=self.voice_sample,
                     speed=speed,
+                    **inference_kwargs,
                 )
             except Exception as e:
                 if self._device == "mps" and self._is_mps_error(str(e)):
@@ -148,6 +154,7 @@ class XTTSEngine:
                         language="en",
                         speaker_wav=self.voice_sample,
                         speed=speed,
+                        **inference_kwargs,
                     )
                 else:
                     raise

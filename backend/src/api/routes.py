@@ -42,8 +42,10 @@ from src.export import get_exporter
 from src.models import BookStatus, BookSummary, ChapterSummary, OperationResult, QueueStatus
 from src.queue import Job, get_job_queue, get_download_queue
 from src.scraper import get_scraper
-from src.text import TextChunker, TextNormalizer, TableConverter
+from src.text import TextChunker, TextNormalizer, TableConverter, StatBlockConverter
 from src.tts import get_tts_engine
+from src.tts.verified import synthesize_verified
+from src.validation.phonemes import get_phoneme_recognizer
 from src.utils import (
     extract_series_name,
     FictionIdPath,
@@ -104,19 +106,33 @@ app.add_middleware(
 
 async def start_processor():
     """Start the background job processor."""
+    settings = get_settings()
     queue = get_job_queue()
     tts = get_tts_engine()
     exporter = get_exporter()
 
+    # Load the phoneme recognizer once so self-healing synthesis doesn't reload it
+    # per chunk. If verification is off (or the model is unavailable) this is skipped.
+    recognizer = None
+    if settings.verify_synthesis:
+        try:
+            recognizer = get_phoneme_recognizer()
+        except Exception as exc:
+            logger.warning(f"Self-healing synthesis disabled — recognizer load failed: {exc}")
+
     def process_job(job: Job) -> tuple[Path, float]:
-        """Process a single chunk job."""
+        """Process a single chunk job, self-healing hallucinated takes."""
         chunks_dir = get_chunk_discovery().get_chunks_dir(
             job.fiction_id, job.book_number, job.chapter_number
         )
         output_path = chunks_dir / f"{job.chunk_index:03d}.wav"
 
-        path, duration = tts.synthesize(job.text, output_path)
-        return path, duration
+        if recognizer is not None:
+            return synthesize_verified(
+                tts, job.text, output_path,
+                recognizer=recognizer, retries=settings.verify_max_retries,
+            )
+        return tts.synthesize(job.text, output_path)
 
     async def on_chapter_complete(fiction_id: str, book_number: int, chapter_number: int):
         """Export chapter when all chunks complete."""
@@ -756,6 +772,7 @@ async def normalize_chapters(request: NormalizeRequest):
     chapter_discovery = get_chapter_discovery()
     normalizer = TextNormalizer()
     table_converter = TableConverter()
+    stat_block_converter = StatBlockConverter()
 
     chapters = chapter_discovery.list_chapters(request.fiction_id, request.book_number)
     if request.chapter_numbers:
@@ -769,8 +786,10 @@ async def normalize_chapters(request: NormalizeRequest):
         if not raw_text:
             continue
 
-        # Apply table conversion first
+        # Rephrase stats tables first: pipe tables (TableConverter) and whitespace
+        # roster/record blocks (StatBlockConverter) — disjoint, order-independent.
         text = table_converter.convert(raw_text)
+        text = stat_block_converter.convert(text)
         # Then normalize
         text = normalizer.normalize(text)
 
