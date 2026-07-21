@@ -429,3 +429,6 @@ local_config.py
 # System files
 .Spotlight-V100
 .Trashes
+
+# Generated review demos (large base64-embedded audio; rebuild from scripts)
+demo/
