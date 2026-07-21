@@ -57,10 +57,10 @@ class STTService:
         with open(audio_path, "rb") as f:
             return hashlib.sha256(f.read()).hexdigest()[:16]
 
-    def _get_cache_path(self, audio_path: Path) -> Path:
+    def _get_cache_path(self, audio_path: Path, suffix: str = "") -> Path:
         """Get cache file path for audio file."""
         audio_hash = self._get_audio_hash(audio_path)
-        return self.cache_dir / f"{audio_hash}_{self.model_size}.json"
+        return self.cache_dir / f"{audio_hash}_{self.model_size}{suffix}.json"
 
     def transcribe(
         self,
@@ -122,17 +122,85 @@ class STTService:
             logger.error(f"Transcription failed: {e}")
             return None
 
+    def transcribe_rich(
+        self,
+        audio_path: Path,
+        use_cache: bool = True,
+    ) -> Optional[dict]:
+        """
+        Transcribe with word timestamps and per-segment confidence signals.
 
-# Singleton instance
-_stt: Optional[STTService] = None
+        Returns a dict {text, segments[], words[]} where each segment carries
+        avg_logprob / compression_ratio / no_speech_prob (Whisper's own measure
+        of how speech-like the audio was) and each word carries start/end/probability.
+        Returns None on failure. Cached separately from the plain transcript.
+        """
+        if not audio_path.exists():
+            logger.error(f"Audio file not found: {audio_path}")
+            return None
+
+        cache_path = self._get_cache_path(audio_path, suffix="_rich")
+        if use_cache and cache_path.exists():
+            try:
+                with open(cache_path) as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.warning(f"Rich cache read failed: {e}")
+
+        try:
+            model = self._load_model()
+            result = model.transcribe(
+                str(audio_path),
+                language="en",
+                task="transcribe",
+                verbose=False,
+                word_timestamps=True,
+            )
+            rich = self._pack_rich(result)
+        except Exception as e:
+            logger.error(f"Rich transcription failed: {e}")
+            return None
+
+        if use_cache:
+            try:
+                with open(cache_path, "w") as f:
+                    json.dump(rich, f)
+            except Exception as e:
+                logger.warning(f"Rich cache write failed: {e}")
+        return rich
+
+    @staticmethod
+    def _pack_rich(result: dict) -> dict:
+        """Flatten a Whisper result into our compact rich schema."""
+        segments, words = [], []
+        for seg in result.get("segments", []):
+            segments.append({
+                "start": seg.get("start"),
+                "end": seg.get("end"),
+                "text": seg.get("text", "").strip(),
+                "avg_logprob": seg.get("avg_logprob"),
+                "compression_ratio": seg.get("compression_ratio"),
+                "no_speech_prob": seg.get("no_speech_prob"),
+            })
+            for w in seg.get("words", []) or []:
+                words.append({
+                    "word": w.get("word", "").strip(),
+                    "start": w.get("start"),
+                    "end": w.get("end"),
+                    "probability": w.get("probability"),
+                })
+        return {"text": result.get("text", "").strip(), "segments": segments, "words": words}
 
 
-def get_stt_service() -> STTService:
-    """Get STT service singleton."""
-    global _stt
-    if _stt is None:
-        settings = get_settings()
-        _stt = STTService(model_size=settings.whisper_model)
-    return _stt
+# One cached service per model size (a two-stage scan uses base + a larger model).
+_stt: dict = {}
+
+
+def get_stt_service(model_size: Optional[str] = None) -> STTService:
+    """Get an STT service singleton for the given model size (default from config)."""
+    size = model_size or get_settings().whisper_model
+    if size not in _stt:
+        _stt[size] = STTService(model_size=size)
+    return _stt[size]
 
 

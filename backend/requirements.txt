@@ -22,5 +22,13 @@ aiofiles>=23.2.0
 # Delivery — upload exported chapters + feed to R2 (S3-compatible)
 boto3>=1.34.0
 
+# Validation — phonetic matching to tell TTS mangles from benign STT homophones
+jellyfish>=1.0.0
+
+# Validation — phoneme-level fidelity check (XTTS-fault vs Whisper-fault).
+# phonemizer wraps the espeak-ng system binary (brew install espeak-ng); the
+# wav2vec2 phoneme model is pulled from Hugging Face on first use.
+phonemizer>=3.2.0
+
 # Testing
 pytest>=7.4.0

@@ -21,9 +21,22 @@ class Settings(BaseSettings):
     voice_sample_path: str = str(Path(__file__).parent.parent.parent / "data" / "voice_samples" / "british_male_p241.wav")
     tts_language: str = "en"
 
+    # Self-healing synthesis: after each chunk, a vocab-free phoneme model checks for
+    # a hallucinated outburst (phantom audio with no matching text) and re-rolls the
+    # stochastic take until clean. Adds a phoneme pass per chunk (+~1s) and re-rolls
+    # only the ~5-7% that babble. Disable to fall back to a single take.
+    verify_synthesis: bool = True
+    verify_max_retries: int = 5
+
     # STT Validation settings
-    whisper_model: str = "base"
+    whisper_model: str = "base"  # cheap first-pass model for defect pre-filtering
+    whisper_confirm_model: str = "small"  # stronger model that confirms flagged chunks
     validation_threshold: float = 0.90
+
+    # Pronunciation lexicon: respell hard words so XTTS says them correctly
+    pronunciation_lexicon_path: str = str(
+        Path(__file__).parent.parent.parent / "data" / "pronunciation_lexicon.json"
+    )
 
     # Server settings
     host: str = "0.0.0.0"
