@@ -6,6 +6,13 @@
 
 set -euo pipefail
 
+# launchd hands its jobs a 256-descriptor soft limit, which a long chapter can
+# exhaust mid-generation: the backend then dies with EMFILE, and because the
+# chapter already has normalized.txt the precheck can't see the half-finished
+# work, so no later run picks it up. Raise the soft limit (the hard limit is
+# unlimited) so a single chapter can't run the process out of descriptors.
+ulimit -n 8192 2>/dev/null || true
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 FICTION_ID="${FICTION_ID:-124774}"

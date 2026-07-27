@@ -11,6 +11,7 @@ self-heals without a separate clean pass.
 """
 
 import logging
+import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -23,6 +24,19 @@ from src.validation.phonemes import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _new_take_path() -> Path:
+    """A path for one synthesis take.
+
+    mkstemp hands back an ALREADY-OPEN descriptor alongside the path. Keeping
+    only the path leaks that descriptor once per take, which is invisible until
+    a long chapter exhausts the process limit mid-generation — so close it here
+    and let the caller delete the file.
+    """
+    fd, name = tempfile.mkstemp(suffix=".wav")
+    os.close(fd)
+    return Path(name)
 
 
 def synthesize_verified(
@@ -51,25 +65,33 @@ def synthesize_verified(
     best_path: Optional[Path] = None
     best_sev = float("inf")
     best_duration = 0.0
+    takes: list[Path] = []
 
-    for attempt in range(retries + 1):
-        tmp = Path(tempfile.mkstemp(suffix=".wav")[1])
-        _, duration = tts.synthesize(text, tmp, **inference_kwargs)
-        halluc = detect_hallucinations(
-            text, recognizer.recognize(load_slice(tmp, None, None)), min_run=min_run
+    try:
+        for attempt in range(retries + 1):
+            tmp = _new_take_path()
+            takes.append(tmp)
+            _, duration = tts.synthesize(text, tmp, **inference_kwargs)
+            halluc = detect_hallucinations(
+                text, recognizer.recognize(load_slice(tmp, None, None)), min_run=min_run
+            )
+            if not halluc:
+                shutil.copy(tmp, output_path)
+                if attempt:
+                    logger.info(f"Verified-clean after {attempt} re-roll(s): {output_path.name}")
+                return output_path, duration
+            sev = max(h["severity"] for h in halluc)
+            if sev < best_sev:
+                best_path, best_sev, best_duration = tmp, sev, duration
+
+        shutil.copy(best_path, output_path)
+        logger.warning(
+            f"Still babbling after {retries} re-rolls (severity {best_sev:.2f}); "
+            f"kept least-bad take: {output_path.name}"
         )
-        if not halluc:
-            shutil.copy(tmp, output_path)
-            if attempt:
-                logger.info(f"Verified-clean after {attempt} re-roll(s): {output_path.name}")
-            return output_path, duration
-        sev = max(h["severity"] for h in halluc)
-        if sev < best_sev:
-            best_path, best_sev, best_duration = tmp, sev, duration
-
-    shutil.copy(best_path, output_path)
-    logger.warning(
-        f"Still babbling after {retries} re-rolls (severity {best_sev:.2f}); "
-        f"kept least-bad take: {output_path.name}"
-    )
-    return output_path, best_duration
+        return output_path, best_duration
+    finally:
+        # Every take has been copied out by now; leaving them behind fills the
+        # temp dir with one wav per chunk for the life of the machine.
+        for take in takes:
+            take.unlink(missing_ok=True)

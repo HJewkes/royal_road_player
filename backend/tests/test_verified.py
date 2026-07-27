@@ -4,6 +4,7 @@ Uses fakes for the TTS engine and phoneme recognizer and stubs the hallucination
 detector, so the re-roll behaviour is tested without loading any models.
 """
 
+import os
 from pathlib import Path
 
 import pytest
@@ -78,3 +79,40 @@ def test_falls_back_to_single_take_without_recognizer(monkeypatch, tmp_path):
     path, dur = synthesize_verified(tts, "hi", out, recognizer=None, retries=5)
     assert out.exists() and dur == 1.5
     assert tts.calls == 1
+
+
+def _open_fd_count() -> int:
+    """Descriptors held by this process (/dev/fd works on macOS and Linux)."""
+    return len(os.listdir("/dev/fd"))
+
+
+def test_takes_do_not_leak_descriptors_across_chunks(monkeypatch, tmp_path):
+    """A chapter is hundreds of chunks; one leaked descriptor per take exhausts
+    the process limit mid-generation and kills the run."""
+    tmpdir = tmp_path / "tmp"
+    tmpdir.mkdir()
+    monkeypatch.setattr(verified.tempfile, "tempdir", str(tmpdir))
+    _stub_detect(monkeypatch, [[]] * 25)
+
+    before = _open_fd_count()
+    for i in range(25):
+        synthesize_verified(FakeTTS(), "hi", tmp_path / f"o{i}.wav",
+                            recognizer=FakeRecog(), retries=5)
+    assert _open_fd_count() == before
+
+
+def test_takes_are_deleted_after_the_winner_is_copied_out(monkeypatch, tmp_path):
+    """Including the re-rolls — otherwise the temp dir grows without bound."""
+    tmpdir = tmp_path / "tmp"
+    tmpdir.mkdir()
+    monkeypatch.setattr(verified.tempfile, "tempdir", str(tmpdir))
+    _stub_detect(monkeypatch, [
+        [{"severity": 0.6, "length": 8}],
+        [{"severity": 0.3, "length": 6}],
+        [],
+    ])
+    out = tmp_path / "o.wav"
+    synthesize_verified(FakeTTS(), "hi", out, recognizer=FakeRecog(), retries=5)
+
+    assert out.exists()
+    assert list(tmpdir.iterdir()) == []
