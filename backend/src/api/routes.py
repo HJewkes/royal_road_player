@@ -43,6 +43,7 @@ from src.models import BookStatus, BookSummary, ChapterSummary, OperationResult,
 from src.queue import Job, get_job_queue, get_download_queue
 from src.scraper import get_scraper
 from src.text import TextChunker, TextNormalizer, TableConverter, StatBlockConverter
+from src.text.renderings import UnrenderedSpecBlockError, render_or_raise
 from src.tts import get_tts_engine
 from src.tts.verified import synthesize_verified
 from src.validation.phonemes import get_phoneme_recognizer
@@ -790,6 +791,19 @@ async def normalize_chapters(request: NormalizeRequest):
         # roster/record blocks (StatBlockConverter) — disjoint, order-independent.
         text = table_converter.convert(raw_text)
         text = stat_block_converter.convert(text)
+        # Then substitute pinned renderings for tables no converter claimed. This
+        # raises rather than passing an unrendered table through: spoken verbatim
+        # it becomes a minute of "Acceleration ex-ex", and the audio would sound
+        # fine to STT validation because it faithfully renders unspeakable text.
+        try:
+            text = render_or_raise(
+                text,
+                chapter_discovery.get_chapter_path(
+                    request.fiction_id, request.book_number, chapter_sum.chapter_number
+                ),
+            )
+        except UnrenderedSpecBlockError as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
         # Then normalize
         text = normalizer.normalize(text)
 

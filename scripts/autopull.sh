@@ -198,6 +198,23 @@ find_new_chapters() {
   echo $sorted
 }
 
+# --- Step 5b: Pin spoken renderings for any table we can't convert ---
+# Runs BEFORE normalize, which refuses to pass an unrendered table to TTS. On
+# failure we deliberately continue: the guardrail then stops the chapter with a
+# clear error rather than this step guessing at narration.
+render_tables() {
+  local book=$1
+  shift
+  for ch in "$@"; do
+    if "$PYTHON" "$SCRIPT_DIR/render_spec_blocks.py" "$FICTION_ID" "$book" "$ch" \
+        >> "$LOG_FILE" 2>&1; then
+      log "Table renderings up to date for chapter $ch"
+    else
+      log "WARNING: table rendering failed for chapter $ch (normalize will catch it)"
+    fi
+  done
+}
+
 # --- Step 6: Normalize and chunk (NEW CHAPTERS ONLY) ---
 # IMPORTANT: Operating on the full book is destructive — re-chunking deletes
 # existing chunk wavs for previously-processed chapters. Always pass the
@@ -514,6 +531,7 @@ process_book() {
   fi
 
   log "Book $book new chapters: $new_chapters"
+  render_tables "$book" $new_chapters
   normalize_and_chunk "$book" $new_chapters
 
   for ch in $new_chapters; do
