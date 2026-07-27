@@ -65,8 +65,8 @@ def test_build_feed_has_enclosures_and_valid_urls(tmp_path):
 
     assert xml.startswith("<?xml")
     assert xml.count("<item>") == 2
-    assert f'url="{BASE}/test-series/book-07/chapter-001.mp3"' in xml
-    assert f'url="{BASE}/test-series/book-07/chapter-002.mp3"' in xml
+    assert f'url="{BASE}/test-series/book-07/chapter-001.mp3?v=' in xml
+    assert f'url="{BASE}/test-series/book-07/chapter-002.mp3?v=' in xml
     # enclosure length must be the real byte size
     assert 'length="1001"' in xml and 'length="1002"' in xml
 
@@ -113,7 +113,7 @@ def test_secret_prefix_applied_to_feed_and_enclosure_urls(tmp_path):
     xml = build_feed("Test Series", eps, BASE, prefix="ab-s3cr3t")
 
     # both the mp3 enclosure and the feed self-link live under the secret prefix
-    assert f'url="{BASE}/ab-s3cr3t/test-series/book-07/chapter-001.mp3"' in xml
+    assert f'url="{BASE}/ab-s3cr3t/test-series/book-07/chapter-001.mp3?v=' in xml
     assert f'href="{BASE}/ab-s3cr3t/test-series/feed.xml"' in xml
     # guid stays the stable relative key (not prefixed) so it never churns
     assert "<guid isPermaLink=\"false\">test-series/book-07/chapter-001.mp3</guid>" in xml
@@ -168,7 +168,7 @@ def test_collection_keeps_per_series_guids_and_object_keys(tmp_path):
     xml = build_collection_feed(_make_universe(tmp_path), "Max Best Universe",
                                 UNIVERSE, BASE)
     assert '<guid isPermaLink="false">dof/book-01/chapter-001.mp3</guid>' in xml
-    assert f'url="{BASE}/second-series/book-02/chapter-001.mp3"' in xml
+    assert f'url="{BASE}/second-series/book-02/chapter-001.mp3?v=' in xml
     assert "max-best-universe/book" not in xml
 
 
@@ -211,3 +211,32 @@ def test_build_all_feeds_one_per_series(tmp_path):
     feeds = build_all_feeds(exports, BASE)
     assert set(feeds) == {"test-series", "demo-books"}
     assert all(x.startswith("<?xml") for x in feeds.values())
+
+
+def test_enclosure_url_carries_a_version_token(tmp_path):
+    """The CDN caches mp3s for hours and replacing an object does not purge it,
+    so a corrected episode must be fetched under a different URL."""
+    exports = _make_exports(tmp_path, {"Test Series - Book 7": [1]})
+    eps = discover_episodes(exports)["test-series"]
+    xml = build_feed("Test Series", eps, BASE)
+    assert re.search(r'url="[^"]+/test-series/book-07/chapter-001\.mp3\?v=[0-9a-f]{8}"', xml)
+
+
+def test_version_changes_when_the_episode_is_re_exported(tmp_path):
+    """A re-export must bust the cache; an untouched file must not."""
+    exports = _make_exports(tmp_path, {"Test Series - Book 7": [1]})
+    mp3 = exports / "Test Series - Book 7" / "Test Series - Book 7 - Chapter 1.mp3"
+    before = discover_episodes(exports)["test-series"][0].version
+    assert discover_episodes(exports)["test-series"][0].version == before  # stable
+
+    mp3.write_bytes(b"y" * 4321)
+    assert discover_episodes(exports)["test-series"][0].version != before
+
+
+def test_guid_is_unversioned_so_old_episodes_do_not_re_download(tmp_path):
+    """166 episodes re-downloading because a URL gained a query string would be
+    a far worse bug than the one this fixes."""
+    exports = _make_exports(tmp_path, {"Test Series - Book 7": [1]})
+    ep = discover_episodes(exports)["test-series"][0]
+    assert ep.guid == "test-series/book-07/chapter-001.mp3"
+    assert "?" not in ep.guid

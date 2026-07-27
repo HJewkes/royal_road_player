@@ -9,6 +9,7 @@ live in always-on object storage.
 """
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -55,6 +56,20 @@ class Episode:
     @property
     def object_key(self) -> str:
         return object_key_for(self.series_slug, self.book, self.chapter)
+
+    @property
+    def version(self) -> str:
+        """Short token identifying this exact build of the episode.
+
+        Appended to the enclosure URL so a re-exported chapter is fetched fresh:
+        the CDN caches mp3s for hours and replacing the object does not purge
+        it, so without this a corrected episode keeps serving the old audio.
+        Derived from size and mtime rather than the file's bytes — hashing every
+        episode on every publish would read gigabytes to answer a question that
+        only changes when the file does.
+        """
+        stamp = f"{self.size}:{int(self.mtime)}".encode("utf-8")
+        return hashlib.sha1(stamp).hexdigest()[:8]
 
     @property
     def title(self) -> str:
@@ -172,7 +187,7 @@ def build_feed(
 
     items = []
     for ep, dt, season in zip(episodes, dates, seasons):
-        url = f"{base}/{prefixed(ep.object_key, prefix)}"
+        url = f"{base}/{prefixed(ep.object_key, prefix)}?v={ep.version}"
         title = ep.qualified_title if span_series else ep.title
         items.append(
             "    <item>\n"
