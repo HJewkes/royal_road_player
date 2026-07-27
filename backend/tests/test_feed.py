@@ -9,7 +9,9 @@ import pytest
 
 from src.delivery.feed import (
     build_all_feeds,
+    build_collection_feed,
     build_feed,
+    collection_episodes,
     discover_episodes,
     object_key_for,
     slugify,
@@ -115,6 +117,90 @@ def test_secret_prefix_applied_to_feed_and_enclosure_urls(tmp_path):
     assert f'href="{BASE}/ab-s3cr3t/test-series/feed.xml"' in xml
     # guid stays the stable relative key (not prefixed) so it never churns
     assert "<guid isPermaLink=\"false\">test-series/book-07/chapter-001.mp3</guid>" in xml
+
+
+def _make_universe(tmp_path: Path) -> Path:
+    """Three series that are really one story, exported out of reading order."""
+    return _make_exports(tmp_path, {
+        "Second Series - Book 1": [1, 2],
+        "Second Series - Book 2": [1],
+        "First Series - Book 4": [1],
+        "DoF - Book 1": [1],
+    })
+
+
+UNIVERSE = ["first-series", "second-series", "dof"]
+
+
+def test_collection_orders_series_then_book_then_chapter(tmp_path):
+    """Reading order comes from the configured series list, not the filesystem."""
+    eps = collection_episodes(_make_universe(tmp_path), UNIVERSE)
+    assert [(e.series_slug, e.book, e.chapter) for e in eps] == [
+        ("first-series", 4, 1),
+        ("second-series", 1, 1),
+        ("second-series", 1, 2),
+        ("second-series", 2, 1),
+        ("dof", 1, 1),
+    ]
+
+
+def test_collection_skips_series_with_nothing_exported(tmp_path):
+    """A series can be listed before its first chapter exists."""
+    exports = _make_exports(tmp_path, {"First Series - Book 4": [1]})
+    eps = collection_episodes(exports, [*UNIVERSE, "not-started-yet"])
+    assert [e.series_slug for e in eps] == ["first-series"]
+
+
+def test_collection_qualifies_titles_and_renumbers_seasons(tmp_path):
+    """Book numbers repeat across series, so seasons run over the whole story."""
+    xml = build_collection_feed(_make_universe(tmp_path), "Max Best Universe",
+                                UNIVERSE, BASE)
+    assert "<title>Max Best Universe</title>" in xml
+    assert "<title>DoF — Book 1, Chapter 1</title>" in xml
+    assert "<title>First Series — Book 4, Chapter 1</title>" in xml
+    # 4 distinct (series, book) pairs -> seasons 1..4, DoF last
+    seasons = re.findall(r"<itunes:season>(\d+)</itunes:season>", xml)
+    assert seasons == ["1", "2", "2", "3", "4"]
+
+
+def test_collection_keeps_per_series_guids_and_object_keys(tmp_path):
+    """Grouping must not churn guids, or every episode re-downloads."""
+    xml = build_collection_feed(_make_universe(tmp_path), "Max Best Universe",
+                                UNIVERSE, BASE)
+    assert '<guid isPermaLink="false">dof/book-01/chapter-001.mp3</guid>' in xml
+    assert f'url="{BASE}/second-series/book-02/chapter-001.mp3"' in xml
+    assert "max-best-universe/book" not in xml
+
+
+def test_collection_feed_can_be_published_at_an_existing_series_key(tmp_path):
+    """Serving the collection at an old subscription's URL avoids re-subscribing."""
+    xml = build_collection_feed(_make_universe(tmp_path), "Max Best Universe",
+                                UNIVERSE, BASE, feed_slug="second-series")
+    assert f'href="{BASE}/second-series/feed.xml"' in xml
+
+
+def test_collection_newest_chapter_stays_newest(tmp_path):
+    """The last episode in reading order must still carry a near-now pubDate."""
+    xml = build_collection_feed(_make_universe(tmp_path), "Max Best Universe",
+                                UNIVERSE, BASE)
+    dates = [parsedate_to_datetime(m) for m in re.findall(r"<pubDate>(.*?)</pubDate>", xml)]
+    assert dates == sorted(dates)
+    assert (datetime.now(timezone.utc) - dates[-1]).total_seconds() < 300
+
+
+def test_collection_item_titles_drop_the_series_subtitle(tmp_path):
+    """"Soccer Supremo — Book 7, Chapter 1", not the full shelf title."""
+    exports = _make_exports(tmp_path, {
+        "Soccer Supremo - A Sports Progression Fantasy - Book 7": [1],
+    })
+    xml = build_collection_feed(exports, "Max Best Universe",
+                                ["soccer-supremo-a-sports-progression-fantasy"], BASE)
+    assert "<title>Soccer Supremo — Book 7, Chapter 1</title>" in xml
+
+
+def test_collection_feed_is_none_when_nothing_exported(tmp_path):
+    assert build_collection_feed(tmp_path / "exports", "Max Best Universe",
+                                 UNIVERSE, BASE) is None
 
 
 def test_build_all_feeds_one_per_series(tmp_path):

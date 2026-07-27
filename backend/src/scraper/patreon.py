@@ -10,7 +10,7 @@ from typing import Callable, Optional
 import requests
 from bs4 import BeautifulSoup
 
-from src.config import get_settings
+from src.config import PatreonSeries, get_settings
 from src.discovery import BookDiscovery, ChapterDiscovery
 from src.models import BookMetadata, ChapterMetadata
 from src.utils import retry_http
@@ -33,6 +33,7 @@ class PatreonScraper:
         })
         self._set_auth_cookie()
         self._chapter_pattern = re.compile(self.settings.patreon_chapter_pattern)
+        self._series = dict(self.settings.patreon_series)
 
     def _set_auth_cookie(self):
         """Set session cookie for authenticated requests."""
@@ -130,16 +131,46 @@ class PatreonScraper:
     def _parse_chapter_title(self, title: str) -> tuple[int, int, str] | None:
         """Parse a post title into (book_number, chapter_number, clean_title).
 
+        A leading series tag ("DoF 1.1 - ...") shifts the book number by that
+        tag's configured offset so a renamed, renumbered series continues the
+        local book sequence instead of colliding with book 1.
+
         Returns None if the title doesn't match the chapter pattern.
         """
         match = self._chapter_pattern.match(title.strip())
         if not match:
             return None
 
-        book_num = int(match.group(1))
-        chapter_num = int(match.group(2))
-        clean_title = match.group(3).strip()
+        parts = match.groupdict()
+        series_tag = parts.get("series")
+        series = self._series.get(series_tag) if series_tag else None
+        if series_tag and series is None:
+            # An unmapped tag lands on the author's own book 1, which sits below
+            # autopull's discovery floor and would silently never be picked up.
+            logger.warning(
+                "Unmapped series tag %r in post title %r — add it to "
+                "AUDIOBOOK_PATREON_SERIES or its chapters will be skipped",
+                series_tag, title,
+            )
+        book_num = int(parts["book"]) + (series.offset if series else 0)
+        chapter_num = int(parts["chapter"])
+        clean_title = parts["title"].strip()
         return book_num, chapter_num, clean_title
+
+    def _series_for_book(self, book_number: int) -> PatreonSeries | None:
+        """The configured series that owns a local book number, if any.
+
+        Each series owns every local book above its offset, up to the next
+        (higher-offset) series. Books at or below the lowest offset predate any
+        rename and keep the fiction's own title.
+        """
+        owner = None
+        for series in self._series.values():
+            if book_number > series.offset and (
+                owner is None or series.offset > owner.offset
+            ):
+                owner = series
+        return owner
 
     def _filter_chapter_posts(
         self, posts: list[dict], book_number: int | None = None
@@ -497,18 +528,29 @@ class PatreonScraper:
 
         series_index = self._extract_series_index(source_fid)
 
-        # Derive title from existing local books (matches RR naming)
-        # Falls back to series name, then campaign title
-        title = self._resolve_series_title(fiction_id, source_fid, series_index) or info["title"]
+        # A renamed continuation is published under its own title and its own
+        # restarted book number ("DoF - Book 1"), even though it is stored at the
+        # shifted local book number that keeps the data layout monotonic.
+        # Everything before the rename derives its title from existing local
+        # books (matches RR naming), falling back to series name then campaign.
+        series = self._series_for_book(book_number)
+        if series:
+            title = series.title
+            display_book = book_number - series.offset
+        else:
+            title = self._resolve_series_title(
+                fiction_id, source_fid, series_index
+            ) or info["title"]
+            display_book = book_number
 
-        logger.info(f"Downloading: {title} - Book {book_number}")
+        logger.info(f"Downloading: {title} - Book {display_book} (local book {book_number})")
         if on_progress:
             on_progress(0, f"Starting download: {title}")
 
         metadata = BookMetadata(
             fiction_id=fiction_id,
             book_number=book_number,
-            title=f"{title} - Book {book_number}",
+            title=f"{title} - Book {display_book}",
             author=info["author"],
             source_url=info["url"],
             scraped_at=datetime.utcnow(),

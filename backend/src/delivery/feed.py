@@ -61,6 +61,18 @@ class Episode:
         return f"Book {self.book}, Chapter {self.chapter}"
 
     @property
+    def short_series(self) -> str:
+        """Series name without its subtitle — "Soccer Supremo", not the full
+        "Soccer Supremo - A Sports Progression Fantasy", which is too long to
+        read on a phone once it's prefixed to every episode title."""
+        return self.series.split(" - ", 1)[0].strip()
+
+    @property
+    def qualified_title(self) -> str:
+        """Title for a feed spanning several series, where "Book 7" is ambiguous."""
+        return f"{self.short_series} — {self.title}"
+
+    @property
     def guid(self) -> str:
         return self.object_key
 
@@ -119,30 +131,57 @@ def _monotonic_dates(episodes: list[Episode]) -> list[datetime]:
     return dates
 
 
+def _seasons_for(episodes: list[Episode], span_series: bool) -> list[int]:
+    """One iTunes season number per episode.
+
+    Within a single series the book number is the season. A collection feed
+    spans several series whose book numbers overlap (Player Manager 7 and
+    Soccer Supremo 7 both exist), so each distinct (series, book) instead gets
+    the next season number in reading order.
+    """
+    if not span_series:
+        return [ep.book for ep in episodes]
+
+    seasons: dict[tuple[str, int], int] = {}
+    for ep in episodes:
+        seasons.setdefault((ep.series_slug, ep.book), len(seasons) + 1)
+    return [seasons[(ep.series_slug, ep.book)] for ep in episodes]
+
+
 def build_feed(
     series_name: str,
     episodes: list[Episode],
     base_url: str,
     author: str = "Audiobook Pipeline",
     prefix: str = "",
+    feed_slug: str | None = None,
+    span_series: bool = False,
 ) -> str:
-    """Render a podcast RSS 2.0 feed for one series' chapters."""
+    """Render a podcast RSS 2.0 feed for a series — or, when span_series is set,
+    for a collection of series presented as one continuous story.
+
+    feed_slug overrides where the feed's self-link points, which lets a
+    collection feed be published at an existing series' key so a phone that
+    already subscribed there keeps working without re-subscribing.
+    """
     base = base_url.rstrip("/")
-    slug = slugify(series_name)
+    slug = feed_slug or slugify(series_name)
     feed_url = f"{base}/{prefixed(feed_key_for(slug), prefix)}"
     dates = _monotonic_dates(episodes)
+    seasons = _seasons_for(episodes, span_series)
 
     items = []
-    for ep, dt in zip(episodes, dates):
+    for ep, dt, season in zip(episodes, dates, seasons):
         url = f"{base}/{prefixed(ep.object_key, prefix)}"
+        title = ep.qualified_title if span_series else ep.title
         items.append(
             "    <item>\n"
-            f"      <title>{escape(ep.title)}</title>\n"
+            f"      <title>{escape(title)}</title>\n"
             f"      <guid isPermaLink=\"false\">{escape(ep.guid)}</guid>\n"
             f"      <pubDate>{format_datetime(dt)}</pubDate>\n"
             f"      <enclosure url={quoteattr(url)} length=\"{ep.size}\" type=\"audio/mpeg\"/>\n"
-            f"      <itunes:title>{escape(ep.title)}</itunes:title>\n"
-            f"      <itunes:season>{ep.book}</itunes:season>\n"
+            f"      <itunes:title>{escape(title)}</itunes:title>\n"
+            f"      <itunes:season>{season}</itunes:season>\n"
             f"      <itunes:episode>{ep.chapter}</itunes:episode>\n"
             f"      <itunes:order>{ep.chapter}</itunes:order>\n"
             "    </item>"
@@ -168,6 +207,42 @@ def build_feed(
         f"{items_xml}\n"
         "  </channel>\n"
         "</rss>\n"
+    )
+
+
+def collection_episodes(
+    exports_dir: Path, series_slugs: list[str]
+) -> list[Episode]:
+    """Every episode of the named series, in reading order.
+
+    Series order follows series_slugs (the story's chronology, which no
+    filesystem ordering recovers); within a series, (book, chapter). Slugs with
+    nothing exported yet are skipped, so a not-yet-started series can be listed
+    ahead of time.
+    """
+    by_series = discover_episodes(exports_dir)
+    ordered: list[Episode] = []
+    for slug in series_slugs:
+        ordered.extend(by_series.get(slug, []))
+    return ordered
+
+
+def build_collection_feed(
+    exports_dir: Path,
+    title: str,
+    series_slugs: list[str],
+    base_url: str,
+    author: str = "Audiobook Pipeline",
+    prefix: str = "",
+    feed_slug: str | None = None,
+) -> str | None:
+    """Render one feed spanning several series. None when nothing is exported."""
+    episodes = collection_episodes(exports_dir, series_slugs)
+    if not episodes:
+        return None
+    return build_feed(
+        title, episodes, base_url, author, prefix,
+        feed_slug=feed_slug or slugify(title), span_series=True,
     )
 
 

@@ -22,14 +22,52 @@ sys.path.insert(0, str(BACKEND))
 from src.config import get_settings  # noqa: E402
 from src.delivery.feed import (  # noqa: E402
     build_all_feeds,
+    build_collection_feed,
     discover_episodes,
     feed_key_for,
     prefixed,
+    slugify,
 )
 
 
 def _local_feed_dir(settings) -> Path:
     return settings.exports_dir.parent / "feeds"
+
+
+def _build_feeds(settings, base_url: str, prefix: str) -> dict[str, str]:
+    """Map every feed key to its XML.
+
+    With a collection configured, its member series do not get standalone feeds
+    — they ARE the collection. The collection feed is published at its own key
+    and at each configured alias (an existing subscription URL), so the same XML
+    can appear more than once by design.
+    """
+    members = settings.delivery_collection_series
+    feeds = {
+        slug: xml
+        for slug, xml in build_all_feeds(
+            settings.exports_dir, base_url, settings.delivery_author, prefix
+        ).items()
+        if slug not in members
+    }
+
+    if not members:
+        return feeds
+
+    collection_slug = slugify(settings.delivery_collection_title)
+    xml = build_collection_feed(
+        settings.exports_dir,
+        settings.delivery_collection_title,
+        members,
+        base_url,
+        settings.delivery_author,
+        prefix,
+        feed_slug=collection_slug,
+    )
+    if xml:
+        for key in [collection_slug, *settings.delivery_collection_aliases]:
+            feeds[key] = xml
+    return feeds
 
 
 def _upload_configured(settings) -> bool:
@@ -75,7 +113,7 @@ def main() -> int:
 
     base_url = settings.delivery_base_url or "https://REPLACE-ME.example"
     prefix = settings.delivery_path_prefix
-    feeds = build_all_feeds(settings.exports_dir, base_url, settings.delivery_author, prefix)
+    feeds = _build_feeds(settings, base_url, prefix)
 
     # Always write feeds locally for inspection.
     feed_dir = _local_feed_dir(settings)
