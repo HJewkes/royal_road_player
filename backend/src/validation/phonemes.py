@@ -154,6 +154,14 @@ XTTS_FAULT_THRESHOLD = 0.45
 # Phone edit distance is too coarse on very short words (a 1-2 phone word scores a
 # binary 0/1), so we only trust an XTTS-fault verdict for words with enough phones.
 MIN_PHONES_FOR_VERDICT = 3
+# A genuinely-pronounced word — however garbled — still produces roughly its
+# expected phone count. A mapped span far shorter than that means `_index_map`'s
+# alignment degenerated rather than that the audio is bad: confirmed on a real
+# chunk where the source text repeated a near-duplicate prefix nearby ("Oka
+# Okafor") and the global diff collapsed the second word's mapped span down to a
+# single stray phone from the *next* word. Below this ratio, don't trust either
+# verdict — report "inconclusive" instead of a confident (and here, wrong) "xtts".
+MIN_SPAN_RATIO_FOR_VERDICT = 0.5
 
 
 def g2p_sentence(text: str, voice: str = "en-gb") -> list[str]:
@@ -256,14 +264,18 @@ def chunk_word_verdicts(chunk_text: str, actual_full: str,
         a_hi = (mapping[hi - 1] + 1) if hi - 1 < len(mapping) else len(actual)
         actual_span = actual[a_lo:a_hi]
         dist = 1.0 - SequenceMatcher(None, exp_w, actual_span).ratio()
-        # Only a long-enough word with a high distance is a trustworthy XTTS fault.
-        is_xtts = dist >= XTTS_FAULT_THRESHOLD and len(exp_w) >= MIN_PHONES_FOR_VERDICT
+        if len(actual_span) < MIN_SPAN_RATIO_FOR_VERDICT * len(exp_w):
+            source = "inconclusive"
+        elif dist >= XTTS_FAULT_THRESHOLD and len(exp_w) >= MIN_PHONES_FOR_VERDICT:
+            source = "xtts"
+        else:
+            source = "whisper"
         out.append({
             "word": word,
             "expected_phones": exp_w,
             "actual_phones": actual_span,
             "distance": round(dist, 3),
-            "source": "xtts" if is_xtts else "whisper",
+            "source": source,
         })
     return out
 

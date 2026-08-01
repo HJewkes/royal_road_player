@@ -103,3 +103,22 @@ def test_short_word_not_called_xtts_fault_despite_high_distance():
     verdicts = {v["word"].lower(): v for v in
                 chunk_word_verdicts(text, actual, targets=["I"])}
     assert verdicts["i"]["source"] == "whisper"  # too short to trust as xtts-fault
+
+
+def test_degenerate_span_from_duplicate_prefix_is_inconclusive_not_xtts():
+    """Regression (DoF book 8 ch 2 chunk 437): "If I locked up Oka Okafor,
+    Liverpool would..." — "Okafor" immediately follows the near-duplicate
+    prefix "Oka". `_index_map`'s global alignment collapsed "Okafor"'s mapped
+    span down to a single stray phone from the *start of "Liverpool"*, even
+    though the audio (confirmed by ear) says "Okafor" just fine. That produced
+    a false "xtts" verdict at severity 0.93 — the worst false positive in the
+    chapter's scan. `actual` below is the real wav2vec2 phoneme recognition of
+    that chunk's audio, hardcoded so this test needs no model load."""
+    text = ("If I locked up Oka Okafor, Liverpool would effectively be playing "
+            "with eight men. Eight and two halves, if we were being generous.")
+    actual = ("ɪfaɪlɑktʌpoʊkɚʊkəfɔɹlɪvɚpulwʊdəfɛktɪvlibipleɪɪŋwɪðeɪtmɛneɪtændtu"
+               "hævzɪfwiwɚbiŋdʒɛnɚɹəs")
+    verdicts = {v["word"].lower(): v for v in
+                chunk_word_verdicts(text, actual, targets=["Okafor"])}
+    assert verdicts["okafor"]["source"] == "inconclusive"
+    assert verdicts["okafor"]["source"] != "xtts"

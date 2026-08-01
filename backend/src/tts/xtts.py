@@ -145,17 +145,22 @@ class XTTSEngine:
                 )
             except Exception as e:
                 if self._device == "mps" and self._is_mps_error(str(e)):
-                    logger.warning(f"MPS error, retrying on CPU: {e}")
+                    logger.warning(f"MPS error, retrying this chunk on CPU: {e}")
                     self._tts.to("cpu")
-                    self._device = "cpu"
-                    self._tts.tts_to_file(
-                        text=text,
-                        file_path=str(output_path),
-                        language="en",
-                        speaker_wav=self.voice_sample,
-                        speed=speed,
-                        **inference_kwargs,
-                    )
+                    try:
+                        self._tts.tts_to_file(
+                            text=text,
+                            file_path=str(output_path),
+                            language="en",
+                            speaker_wav=self.voice_sample,
+                            speed=speed,
+                            **inference_kwargs,
+                        )
+                    finally:
+                        # Restore to MPS so only this chunk pays the CPU
+                        # penalty — leaving the model on CPU stalls every
+                        # subsequent chunk in the queue at ~30x slower.
+                        self._tts.to("mps")
                 else:
                     raise
 
