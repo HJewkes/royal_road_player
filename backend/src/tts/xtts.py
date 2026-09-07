@@ -16,8 +16,38 @@ from src.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-# Enable MPS fallback to CPU for unsupported operations
+# Route MPS ops that have no Metal kernel to the CPU. Only effective if it runs
+# before torch is imported, so it stays at module scope above any torch import.
+# It does NOT cover _MPS_MAX_CONV1D_CHANNELS: that limit is raised from inside
+# the Metal conv kernel, which the dispatcher-level fallback never sees.
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+
+# PyTorch's MPS backend transposes single-channel conv1d, so an audio tensor's
+# LENGTH becomes the conv's output-channel count. XTTS pre-emphasis-filters the
+# whole voice sample through such a conv, so any reference wav longer than this
+# many samples fails on MPS every single call.
+_MPS_MAX_CONV1D_CHANNELS = 65536
+
+
+def _mps_can_run_speaker_encoder(torch) -> bool:
+    """Whether MPS can run the conv1d XTTS applies to the whole voice sample.
+
+    Probed once per model load rather than discovered per chunk: on hardware
+    that fails this, every chunk otherwise pays a doomed MPS attempt and a
+    full-model device shuffle before rendering on CPU anyway. Measured on an
+    M-series Mac, MPS is ~1.8x SLOWER than CPU for XTTS even where it does run,
+    so falling back to CPU here costs nothing.
+    """
+    kernel_width = 2
+    length = _MPS_MAX_CONV1D_CHANNELS + kernel_width  # one sample over the cap
+    try:
+        audio = torch.zeros(1, 1, length, device="mps")
+        pre_emphasis = torch.zeros(1, 1, kernel_width, device="mps")
+        torch.nn.functional.conv1d(audio, pre_emphasis)
+        return True
+    except Exception as e:
+        logger.debug(f"MPS conv1d probe failed: {e}")
+        return False
 
 
 class XTTSEngine:
@@ -86,8 +116,14 @@ class XTTSEngine:
                 logger.info("CUDA GPU detected")
                 return "cuda"
             elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
-                logger.info("Apple Silicon MPS detected")
-                return "mps"
+                if _mps_can_run_speaker_encoder(torch):
+                    logger.info("Apple Silicon MPS detected")
+                    return "mps"
+                logger.info(
+                    "MPS detected but conv1d output channels are capped at "
+                    f"{_MPS_MAX_CONV1D_CHANNELS}, which XTTS's speaker encoder "
+                    "exceeds on every chunk; using CPU for this session"
+                )
         except Exception as e:
             logger.warning(f"Device detection error: {e}")
 
