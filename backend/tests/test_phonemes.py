@@ -105,6 +105,22 @@ def test_short_word_not_called_xtts_fault_despite_high_distance():
     assert verdicts["i"]["source"] == "whisper"  # too short to trust as xtts-fault
 
 
+@espeak
+def test_unusual_word_needs_a_bigger_gap_before_it_is_called_an_xtts_fault():
+    """espeak anglicizes 'Bochum' to /bɒtʃəm/, so the German-correct /boʊkəm/ the
+    audio says scores 0.5 against it. That distance is a real fault for a plain
+    word but only G2P disagreement for a proper noun."""
+    text = "the match in Bochum ended"
+    parts = g2p_sentence(text)
+    parts[3] = "boʊkəm"
+    actual = "".join(parts)
+    plain = chunk_word_verdicts(text, actual, targets=["Bochum"])[0]
+    tagged = chunk_word_verdicts(text, actual, targets=["Bochum"], unusual={"Bochum"})[0]
+    assert plain["distance"] == tagged["distance"]
+    assert plain["source"] == "xtts"
+    assert tagged["source"] == "whisper"
+
+
 def test_degenerate_span_from_duplicate_prefix_is_inconclusive_not_xtts():
     """Regression (DoF book 8 ch 2 chunk 437): "If I locked up Oka Okafor,
     Liverpool would..." — "Okafor" immediately follows the near-duplicate
