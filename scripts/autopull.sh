@@ -96,9 +96,9 @@ acquire_lock() {
 }
 
 # Strip markdown code fences from Claude output. Claude sometimes wraps its
-# JSON in ```json ... ``` fences, which breaks the json.load() parsers in
-# apply_commentary (they fail silently via `except: pass`, leaking author
-# commentary into the audiobook). Drop any line that is a fence.
+# JSON in ```json ... ``` fences, which apply_commentary.py then parses as
+# "nothing to remove", leaking author commentary into the audiobook. Drop any
+# line that is a fence.
 strip_fences() { printf '%s' "$1" | sed -E '/^[[:space:]]*```/d'; }
 
 # --- Step 1: Ensure backend is running ---
@@ -339,7 +339,17 @@ normalize_and_chunk() {
 detect_commentary() {
   local book=$1
   local chapter=$2
-  local chunks_dir="$PROJECT_DIR/data/books/$FICTION_ID/book_$book/chapters/chapter_$chapter/chunks"
+  local chapter_dir="$PROJECT_DIR/data/books/$FICTION_ID/book_$book/chapters/chapter_$chapter"
+  local chunks_dir="$chapter_dir/chunks"
+
+  # A chapter that has already been ruled on needs no second opinion: the
+  # removals were applied to normalized.txt and are reapplied on every
+  # re-normalize, so the chunks we're looking at are clean by construction.
+  if [ -f "$chapter_dir/commentary.json" ]; then
+    log "Commentary decisions on disk; skipping detection for chapter $chapter"
+    return 0
+  fi
+
   local total
   total=$(ls "$chunks_dir"/*.txt 2>/dev/null | wc -l | tr -d ' ')
 
@@ -437,132 +447,17 @@ PROMPT
 }
 
 # --- Step 8: Apply commentary detection results ---
+# Applies the removals to the chunk files AND to normalized.txt, then records
+# them in commentary.json so a later re-chunk or re-normalize can't bring the
+# commentary back (chunk filenames shift, so the record is by text).
 apply_commentary() {
   local book=$1 chapter=$2 chunks_dir=$3 preamble=$4 commentary=$5
+  local chapter_dir
+  chapter_dir=$(dirname "$chunks_dir")
 
-  # Process commentary (end of chapter) — this is the common case
-  local delete_chunks
-  delete_chunks=$(echo "$commentary" | python3 -c "
-import sys, json
-try:
-    d = json.load(sys.stdin)
-    for f in d.get('delete_chunks', []):
-        print(f)
-except:
-    pass
-" 2>/dev/null)
-
-  while IFS= read -r chunk_file; do
-    [ -z "$chunk_file" ] && continue
-    local chunk_path="$chunks_dir/$chunk_file"
-    if [ -f "$chunk_path" ]; then
-      rm -f "$chunk_path" "${chunk_path%.txt}.wav" "${chunk_path%.txt}.error"
-      log "  Deleted commentary chunk: $chunk_file"
-    fi
-  done <<< "$delete_chunks"
-
-  # Process strip_trailing
-  local strip_file strip_text
-  strip_file=$(echo "$commentary" | python3 -c "
-import sys, json
-try:
-    d = json.load(sys.stdin)
-    s = d.get('strip_trailing', {})
-    print(s.get('file', ''))
-except:
-    pass
-" 2>/dev/null)
-
-  strip_text=$(echo "$commentary" | python3 -c "
-import sys, json
-try:
-    d = json.load(sys.stdin)
-    s = d.get('strip_trailing', {})
-    print(s.get('remove_from', ''))
-except:
-    pass
-" 2>/dev/null)
-
-  if [ -n "$strip_file" ] && [ -n "$strip_text" ]; then
-    local target="$chunks_dir/$strip_file"
-    if [ -f "$target" ]; then
-      python3 -c "
-import sys
-text = open('$target').read()
-marker = '''$strip_text'''
-idx = text.find(marker)
-if idx > 0:
-    cleaned = text[:idx].rstrip() + '\n'
-    open('$target', 'w').write(cleaned)
-    print(f'Stripped trailing from $strip_file at position {idx}')
-else:
-    print(f'WARNING: Could not find marker in $strip_file')
-" 2>/dev/null | while read -r line; do log "  $line"; done
-      rm -f "${target%.txt}.wav"
-    fi
-  fi
-
-  # Process preamble (start of chapter) — rare but handle it
-  local preamble_deletes
-  preamble_deletes=$(echo "$preamble" | python3 -c "
-import sys, json
-try:
-    d = json.load(sys.stdin)
-    if isinstance(d, list):
-        for f in d:
-            print(f)
-except:
-    pass
-" 2>/dev/null)
-
-  while IFS= read -r chunk_file; do
-    [ -z "$chunk_file" ] && continue
-    local chunk_path="$chunks_dir/$chunk_file"
-    if [ -f "$chunk_path" ]; then
-      rm -f "$chunk_path" "${chunk_path%.txt}.wav" "${chunk_path%.txt}.error"
-      log "  Deleted preamble chunk: $chunk_file"
-    fi
-  done <<< "$preamble_deletes"
-
-  # Process strip_start (preamble mixed into first story chunk)
-  local strip_start_file strip_start_text
-  strip_start_file=$(echo "$preamble" | python3 -c "
-import sys, json
-try:
-    d = json.load(sys.stdin)
-    if isinstance(d, dict):
-        print(d.get('strip_start', ''))
-except:
-    pass
-" 2>/dev/null)
-
-  strip_start_text=$(echo "$preamble" | python3 -c "
-import sys, json
-try:
-    d = json.load(sys.stdin)
-    if isinstance(d, dict):
-        print(d.get('remove_before', ''))
-except:
-    pass
-" 2>/dev/null)
-
-  if [ -n "$strip_start_file" ] && [ -n "$strip_start_text" ]; then
-    local target="$chunks_dir/$strip_start_file"
-    if [ -f "$target" ]; then
-      python3 -c "
-text = open('$target').read()
-marker = '''$strip_start_text'''
-idx = text.find(marker)
-if idx > 0:
-    cleaned = text[idx:]
-    open('$target', 'w').write(cleaned)
-    print(f'Stripped preamble from $strip_start_file up to position {idx}')
-else:
-    print(f'WARNING: Could not find marker in $strip_start_file')
-" 2>/dev/null | while read -r line; do log "  $line"; done
-      rm -f "${target%.txt}.wav"
-    fi
-  fi
+  "$PYTHON" "$SCRIPT_DIR/apply_commentary.py" "$chapter_dir" \
+    --preamble "$preamble" --commentary "$commentary" 2>&1 |
+    while IFS= read -r line; do log "  $line"; done
 }
 
 # --- Step 9: Generate audio ---
