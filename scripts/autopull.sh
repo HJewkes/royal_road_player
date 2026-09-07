@@ -225,16 +225,40 @@ find_interrupted_chapters() {
   "$PYTHON" "$SCRIPT_DIR/pending_work.py" "$FICTION_ID" --interrupted "$book" 2>/dev/null || true
 }
 
-# True while a chapter still has chunk texts without audio. Generation reporting
-# "complete" in that state means the remaining chunks carry a .error file, which
-# makes them ineligible for re-queue — exporting anyway would ship a chapter with
-# silent holes and mark it complete forever.
-chunks_missing() {
+# Echoes "<chunk wavs> <chunk texts>" for a chapter.
+chunk_progress() {
   local chunks_dir="$PROJECT_DIR/data/books/$FICTION_ID/book_$1/chapters/chapter_$2/chunks"
   local texts wavs
   texts=$(ls "$chunks_dir"/*.txt 2>/dev/null | wc -l | tr -d ' ')
   wavs=$(ls "$chunks_dir"/*.wav 2>/dev/null | wc -l | tr -d ' ')
+  echo "$wavs $texts"
+}
+
+chunks_missing() {
+  local wavs texts
+  read -r wavs texts <<< "$(chunk_progress "$1" "$2")"
   [ "$texts" -gt 0 ] && [ "$wavs" -lt "$texts" ]
+}
+
+# Export and publish a chapter, but only once every chunk has audio.
+#
+# Generation reporting "complete" with chunks still unrendered means those chunks
+# carry a .error file, which makes them FAILED rather than PENDING, so
+# /api/generate will not re-queue them. Concatenation drops missing chunks
+# silently and export writes completed_at, so shipping here would publish a
+# chapter with silent holes AND hide it from the recovery path forever. Blocking
+# instead leaves it interrupted, so every later tick re-reports it.
+publish_chapter() {
+  local book=$1 ch=$2
+  if chunks_missing "$book" "$ch"; then
+    local wavs texts
+    read -r wavs texts <<< "$(chunk_progress "$book" "$ch")"
+    log "ERROR: book $book chapter $ch still missing chunk audio after generation ($wavs/$texts); not exporting"
+    notify "Audiobook chapter blocked" "Book $book chapter $ch stuck at $wavs/$texts chunks — see logs/autopull.log"
+    return 1
+  fi
+  export_chapter "$book" "$ch"
+  publish_feed
 }
 
 # Re-enter the pipeline for one interrupted chapter at the stage it died at.
@@ -257,13 +281,7 @@ resume_chapter() {
       ;;
   esac
 
-  if chunks_missing "$book" "$ch"; then
-    log "ERROR: book $book chapter $ch still missing chunk audio after generation; not exporting"
-    return 0
-  fi
-
-  export_chapter "$book" "$ch"
-  publish_feed
+  publish_chapter "$book" "$ch" || return 0
   log "--- Book $book chapter $ch recovered ---"
   SUMMARY+="Book $book: recovered chapter $ch"$'\n'
 }
@@ -619,16 +637,19 @@ process_book() {
   render_tables "$book" $new_chapters
   normalize_and_chunk "$book" $new_chapters
 
+  local done_chapters=""
   for ch in $new_chapters; do
     log "--- Processing book $book chapter $ch ---"
     detect_commentary "$book" "$ch"
     generate_audio "$book" "$ch"
-    export_chapter "$book" "$ch"
-    publish_feed
+    publish_chapter "$book" "$ch" || continue
+    done_chapters+=" $ch"
     log "--- Book $book chapter $ch complete ---"
   done
 
-  SUMMARY+="Book $book: $new_chapters"$'\n'
+  if [ -n "$done_chapters" ]; then
+    SUMMARY+="Book $book:$done_chapters"$'\n'
+  fi
 }
 
 # ============================================================
