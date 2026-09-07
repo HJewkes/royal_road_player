@@ -560,8 +560,11 @@ class ChunkDiscovery:
             error=error,
         )
 
-    def save_chunks(self, fiction_id: str, book_number: int, chapter_number: int, chunks: list[tuple[int, str]]):
-        """Save chunk text files. chunks is list of (index, text) tuples."""
+    def save_chunks(self, fiction_id: str, book_number: int, chapter_number: int, chunks: list[tuple[int, str]]) -> int:
+        """Save chunk text files. chunks is list of (index, text) tuples.
+
+        Returns the number of stale artifacts removed from a previous, longer run.
+        """
         chunks_dir = self.get_chunks_dir(fiction_id, book_number, chapter_number)
         chunks_dir.mkdir(parents=True, exist_ok=True)
 
@@ -569,6 +572,29 @@ class ChunkDiscovery:
             txt_file = chunks_dir / f"{index:03d}.txt"
             with open(txt_file, "w") as f:
                 f.write(text)
+
+        if not chunks:
+            return 0
+        return self._remove_stale_chunks(chunks_dir, max(index for index, _ in chunks))
+
+    @staticmethod
+    def _remove_stale_chunks(chunks_dir: Path, highest_index: int) -> int:
+        """Delete chunk artifacts left behind by a previous run with more chunks."""
+        removed = 0
+        for path in chunks_dir.iterdir():
+            if path.suffix not in (".txt", ".wav", ".error"):
+                continue
+            try:
+                index = int(path.stem)
+            except ValueError:
+                continue
+            if index > highest_index:
+                path.unlink()
+                removed += 1
+
+        if removed:
+            logger.info(f"Removed {removed} stale chunk artifacts from {chunks_dir}")
+        return removed
 
     def mark_chunk_complete(self, fiction_id: str, book_number: int, chapter_number: int, chunk_index: int, audio_path: Path):
         """Mark a chunk as complete by ensuring audio file exists."""

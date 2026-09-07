@@ -271,6 +271,41 @@ class TestChunkDiscovery:
         pending = chunk_discovery.get_pending_chunks("12345", 1, 1)
         assert len(pending) == 2
 
+    def test_rechunking_shorter_removes_orphan_chunks(self, temp_books_dir):
+        """Re-chunking into fewer chunks must not leave stale trailing artifacts."""
+        chunk_discovery = ChunkDiscovery(books_dir=temp_books_dir)
+        chunks_dir = chunk_discovery.get_chunks_dir("12345", 1, 1)
+
+        chunk_discovery.save_chunks("12345", 1, 1, [(i, f"old text {i}") for i in range(1, 6)])
+        for i in range(1, 6):
+            (chunks_dir / f"{i:03d}.wav").write_bytes(b"audio")
+        (chunks_dir / "005.error").write_text("boom")
+
+        removed = chunk_discovery.save_chunks(
+            "12345", 1, 1, [(i, f"new text {i}") for i in range(1, 4)]
+        )
+
+        assert removed == 5
+        for i in (4, 5):
+            assert not (chunks_dir / f"{i:03d}.txt").exists()
+            assert not (chunks_dir / f"{i:03d}.wav").exists()
+        assert not (chunks_dir / "005.error").exists()
+
+        for i in range(1, 4):
+            assert (chunks_dir / f"{i:03d}.txt").read_text() == f"new text {i}"
+            assert (chunks_dir / f"{i:03d}.wav").read_bytes() == b"audio"
+
+    def test_save_chunks_leaves_unrelated_files(self, temp_books_dir):
+        """Cleanup only touches numbered chunk artifacts."""
+        chunk_discovery = ChunkDiscovery(books_dir=temp_books_dir)
+        chunks_dir = chunk_discovery.get_chunks_dir("12345", 1, 1)
+
+        chunk_discovery.save_chunks("12345", 1, 1, [(1, "one"), (2, "two")])
+        (chunks_dir / "notes.md").write_text("keep me")
+
+        assert chunk_discovery.save_chunks("12345", 1, 1, [(1, "one")]) == 1
+        assert (chunks_dir / "notes.md").exists()
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

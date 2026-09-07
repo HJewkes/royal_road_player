@@ -829,6 +829,7 @@ async def chunk_chapters(request: ChunkRequest):
         chapters = [c for c in chapters if c.chapter_number in request.chapter_numbers]
 
     total_chunks = 0
+    stale_removed = 0
     for chapter_sum in chapters:
         normalized_text = chapter_discovery.get_normalized_text(
             request.fiction_id, request.book_number, chapter_sum.chapter_number
@@ -841,15 +842,19 @@ async def chunk_chapters(request: ChunkRequest):
 
         # Save chunks
         chunks_data = [(c.index, c.text) for c in chunk_results]
-        chunk_discovery.save_chunks(
+        stale_removed += chunk_discovery.save_chunks(
             request.fiction_id, request.book_number, chapter_sum.chapter_number, chunks_data
         )
         total_chunks += len(chunk_results)
 
+    message = f"Created {total_chunks} chunks"
+    if stale_removed:
+        message += f", removed {stale_removed} stale chunk files"
+
     return OperationResult(
         success=True,
-        message=f"Created {total_chunks} chunks",
-        data={"count": total_chunks},
+        message=message,
+        data={"count": total_chunks, "stale_removed": stale_removed},
     )
 
 
