@@ -1,5 +1,6 @@
 """Audio concatenation and export functionality."""
 
+import json
 import logging
 import shutil
 import subprocess
@@ -8,9 +9,69 @@ from typing import Optional
 
 from src.config import get_settings
 from src.discovery import BookDiscovery, ChapterDiscovery, ChunkDiscovery
+from src.models import Chunk
 from src.utils import sanitize_filename
 
 logger = logging.getLogger(__name__)
+
+MANIFEST_SUFFIX = ".manifest.json"
+
+
+def _chunk_fingerprints(chunks: list[Chunk]) -> list[dict]:
+    """Describe the chunk wavs an audio.wav would be built from, in order."""
+    fingerprints = []
+    for chunk in sorted(chunks, key=lambda c: c.index):
+        if not (chunk.audio_path and chunk.audio_path.exists()):
+            continue
+        stat = chunk.audio_path.stat()
+        fingerprints.append(
+            {"index": chunk.index, "size": stat.st_size, "mtime": stat.st_mtime}
+        )
+    return fingerprints
+
+
+def _write_manifest(wav_path: Path, chunks: list[Chunk]) -> None:
+    """Record the inputs of a freshly concatenated audio.wav beside it."""
+    manifest_path = wav_path.with_name(wav_path.name + MANIFEST_SUFFIX)
+    payload = {"chunks": _chunk_fingerprints(chunks)}
+    try:
+        manifest_path.write_text(json.dumps(payload))
+    except OSError as e:
+        logger.warning(f"Could not write {manifest_path.name}: {e}")
+
+
+def _read_manifest(wav_path: Path) -> Optional[list[dict]]:
+    """Load the recorded inputs of an audio.wav, or None if unavailable."""
+    manifest_path = wav_path.with_name(wav_path.name + MANIFEST_SUFFIX)
+    try:
+        return json.loads(manifest_path.read_text())["chunks"]
+    except (OSError, ValueError, KeyError):
+        return None
+
+
+def _audio_is_stale(wav_path: Path, chunks: list[Chunk]) -> bool:
+    """
+    Decide whether audio.wav must be rebuilt from its chunk wavs.
+
+    Treats audio.wav as a cache keyed on the chunk wavs it was concatenated
+    from. A pruned chapter (no chunk wavs left) is never stale: the existing
+    audio.wav is the only remaining copy.
+    """
+    current = _chunk_fingerprints(chunks)
+    if not current:
+        return False
+
+    recorded = _read_manifest(wav_path)
+    if recorded is None:
+        return True
+
+    if [c["index"] for c in current] != [r.get("index") for r in recorded]:
+        return True
+    if any(c["size"] != r.get("size") for c, r in zip(current, recorded)):
+        return True
+    if any(c["mtime"] != r.get("mtime") for c, r in zip(current, recorded)):
+        return True
+    return any(c["mtime"] > wav_path.stat().st_mtime for c in current)
 
 
 class AudioConcatenator:
@@ -67,6 +128,19 @@ class AudioConcatenator:
         )
         output_path = chapter_dir / "audio.wav"
 
+        result = self._write_concatenated(audio_files, output_path)
+        if result:
+            # Sidecar of the inputs, so a later export can tell this audio.wav
+            # apart from one whose chunk wavs have since changed.
+            _write_manifest(result, chunks)
+        return result
+
+    def _write_concatenated(
+        self,
+        audio_files: list[Path],
+        output_path: Path,
+    ) -> Optional[Path]:
+        """Join the given wavs into output_path."""
         try:
             # Use scipy for WAV concatenation
             from scipy.io import wavfile
@@ -153,6 +227,7 @@ class AudioExporter:
         self.concatenator = AudioConcatenator()
         self.book_discovery = BookDiscovery()
         self.chapter_discovery = ChapterDiscovery()
+        self.chunk_discovery = ChunkDiscovery()
 
     def export_chapter(
         self,
@@ -160,6 +235,7 @@ class AudioExporter:
         book_number: int,
         chapter_number: int,
         format: str = "mp3",
+        force: bool = False,
     ) -> Optional[Path]:
         """
         Export a chapter to final audio format.
@@ -169,6 +245,7 @@ class AudioExporter:
             book_number: Book number
             chapter_number: Chapter number
             format: Output format (wav, m4b, mp3) - defaults to mp3 (audiobook-optimized)
+            force: Reconcatenate audio.wav even when it looks up to date
 
         Returns:
             Path to exported file, or None if failed
@@ -183,7 +260,8 @@ class AudioExporter:
         )
         wav_path = chapter_dir / "audio.wav"
 
-        if not wav_path.exists():
+        stale = self._needs_concatenation(wav_path, fiction_id, book_number, chapter_number)
+        if force or stale:
             wav_path = self.concatenator.concatenate_chapter(
                 fiction_id, book_number, chapter_number
             )
@@ -222,6 +300,19 @@ class AudioExporter:
                 fiction_id, book_number, chapter_number, result_path
             )
         return result_path
+
+    def _needs_concatenation(
+        self,
+        wav_path: Path,
+        fiction_id: str,
+        book_number: int,
+        chapter_number: int,
+    ) -> bool:
+        """Whether audio.wav is missing or out of date with its chunk wavs."""
+        if not wav_path.exists():
+            return True
+        chunks = self.chunk_discovery.list_chunks(fiction_id, book_number, chapter_number)
+        return _audio_is_stale(wav_path, chunks)
 
     def _convert_audio(
         self,
