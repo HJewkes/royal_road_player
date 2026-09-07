@@ -1,0 +1,10 @@
+{
+  "_comment": "Source word -> plain-letter respelling fed to XTTS so it pronounces hard words correctly. Keys match case-insensitively on whole words; use single-token respellings (no spaces/hyphens) to keep chunk word-alignment stable. ONLY add an entry after proving it with scripts/regen_chunk.py (before/after severity must drop and the heard text must converge on the correct sound) \u2014 hand-guessed respellings often do nothing or make XTTS worse. Verified entries only:",
+  "Wythenshawe": "Withenshaw",
+  "gamechanger": "gamechaynjer",
+  "Aston": "Astun",
+  "Die": "Dye",
+  "coochy": "koochee",
+  "CBs": "seebeez",
+  "DMs": "deeyemz"
+}

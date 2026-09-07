@@ -210,9 +210,13 @@ data/*
 !data/.gitkeep
 data/**/*
 !data/**/.gitkeep
+# Measured XTTS respellings; keep with the code so they survive this machine
+!data/pronunciation_lexicon.json
 logs/*
 !logs/.gitkeep
 .autopull.lock/
+# Agent worktrees
+.worktrees/
 # Generated podcast feed staging output
 feeds/
 backend/data/
