@@ -14,8 +14,16 @@
     <key>WorkingDirectory</key>
     <string>/Users/hjewkes/projects/audiobook</string>
 
-    <key>StartInterval</key>
-    <integer>900</integer>
+    <!-- Calendar minutes, not StartInterval: after a deep sleep this Mac's
+         launchd left every StartInterval job "pended" indefinitely (2026-09-07),
+         while calendar timers kept firing. -->
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict><key>Minute</key><integer>1</integer></dict>
+        <dict><key>Minute</key><integer>16</integer></dict>
+        <dict><key>Minute</key><integer>31</integer></dict>
+        <dict><key>Minute</key><integer>46</integer></dict>
+    </array>
 
     <key>StandardOutPath</key>
     <string>/Users/hjewkes/projects/audiobook/logs/launchd-autopull.log</string>
