@@ -151,6 +151,14 @@ def load_slice(wav_path: Path, start: Optional[float], end: Optional[float],
 # Above this phone distance the audio genuinely mispronounces the word (XTTS's
 # fault); below it the audio is correct and any text mismatch is Whisper's fault.
 XTTS_FAULT_THRESHOLD = 0.45
+# Proper nouns and coinages need a bigger gap, because on those the *expected*
+# side is the unreliable one: espeak anglicizes "Bochum" to /bɒtʃəm/, so the
+# German-correct renderings the audio actually produces score 0.455 (/bɒkʌm/) to
+# 0.667 (/boʊxʊm/) against it — all past 0.45, all false faults. Genuine mangles
+# sit far higher: 0.882 for a wholly different word, 1.0 for garble (see the
+# fixtures in tests/test_phonemes.py). 0.70 clears the worst G2P disagreement
+# and still leaves the real-mangle band untouched.
+XTTS_FAULT_THRESHOLD_UNUSUAL = 0.70
 # Phone edit distance is too coarse on very short words (a 1-2 phone word scores a
 # binary 0/1), so we only trust an XTTS-fault verdict for words with enough phones.
 MIN_PHONES_FOR_VERDICT = 3
@@ -239,14 +247,22 @@ def _locate(sub: str, full: str) -> tuple:
     return (best_start, best_start + m)
 
 
-def chunk_word_verdicts(chunk_text: str, actual_full: str,
-                        targets=None, voice: str = "en-gb") -> list[dict]:
+def _fault_threshold(word: str, unusual) -> float:
+    """Distance at which we blame the audio rather than the G2P, for one word."""
+    if unusual and word in unusual:
+        return XTTS_FAULT_THRESHOLD_UNUSUAL
+    return XTTS_FAULT_THRESHOLD
+
+
+def chunk_word_verdicts(chunk_text: str, actual_full: str, targets=None,
+                        voice: str = "en-gb", unusual=None) -> list[dict]:
     """Positional phoneme verdict for specific words in a chunk.
 
     Locates each target word's expected phones inside the chunk's full expected
     phone string, then reads the POSITIONALLY-aligned actual (audio) span — so a
     garbled word scores high even if its phones appear elsewhere. `targets` is an
-    iterable of the actual words to score.
+    iterable of the actual words to score; `unusual` is the subset of them judged
+    against XTTS_FAULT_THRESHOLD_UNUSUAL.
     """
     actual = clean_ipa(actual_full)
     expected_full = clean_ipa(g2p(chunk_text, voice))
@@ -266,7 +282,8 @@ def chunk_word_verdicts(chunk_text: str, actual_full: str,
         dist = 1.0 - SequenceMatcher(None, exp_w, actual_span).ratio()
         if len(actual_span) < MIN_SPAN_RATIO_FOR_VERDICT * len(exp_w):
             source = "inconclusive"
-        elif dist >= XTTS_FAULT_THRESHOLD and len(exp_w) >= MIN_PHONES_FOR_VERDICT:
+        elif (dist >= _fault_threshold(word, unusual)
+              and len(exp_w) >= MIN_PHONES_FOR_VERDICT):
             source = "xtts"
         else:
             source = "whisper"

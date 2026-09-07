@@ -126,6 +126,18 @@ def test_letter_read_as_its_name_is_not_flagged():
     assert [d for d in detect_defects(expected, rich) if d.expected == "C"] == []
 
 
+def test_defect_on_last_word_is_a_chunk_boundary_not_an_unusual_word():
+    """Tail decoder artifacts (the click on 'ASAP' in DoF ch2 chunk 387) must be
+    attributed to the chunk edge, not to the word being an odd proper noun."""
+    expected = "she needs the report ASAP."
+    rich = _rich([("she", 0.98), ("needs", 0.97), ("the", 0.98),
+                  ("report", 0.96), ("zorptrix", 0.4)])
+    subs = [d for d in detect_defects(expected, rich) if d.expected == "ASAP"]
+    assert subs, "the mangled final word should still be flagged"
+    assert "chunk_boundary" in subs[0].causes
+    assert "unusual_word" not in subs[0].causes
+
+
 def test_confirm_keeps_defect_both_models_agree_on():
     expected = "the aegis protected them"
     base = _rich([("the", 0.99), ("eejis", 0.3), ("protected", 0.96), ("them", 0.95)])

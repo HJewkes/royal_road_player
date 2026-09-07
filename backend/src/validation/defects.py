@@ -185,6 +185,12 @@ def _char_distance(a: str, b: str) -> float:
     return 1.0 - SequenceMatcher(None, a, b).ratio()
 
 
+def is_unusual_word(word: str) -> bool:
+    """A capitalized multi-letter word: proper noun or coinage, so both the TTS
+    and any grapheme-to-phoneme guess about it are unreliable."""
+    return len(word) > 3 and word[:1].isupper()
+
+
 def _causes_for(token: Token, at_boundary: bool) -> list[str]:
     """Heuristic reasons a source word might trip up TTS -> guides the fix."""
     causes = []
@@ -195,7 +201,7 @@ def _causes_for(token: Token, at_boundary: bool) -> list[str]:
         causes.append("stylized_elongation")
     if _SMUSH.search(orig):
         causes.append("smushed")
-    if len(orig) > 3 and orig[:1].isupper() and not at_boundary:
+    if is_unusual_word(orig) and not at_boundary:
         causes.append("unusual_word")  # candidate for pronunciation lexicon
     if at_boundary:
         causes.append("chunk_boundary")
@@ -248,7 +254,8 @@ def _low_confidence_boost(hyps: list[HypWord]) -> float:
     return max(0.0, (0.6 - min(probs))) * 0.8  # low prob (<0.6) adds up to ~0.48
 
 
-def _context_snippet(text: str, offset: int, width: int = 40) -> str:
+def context_snippet(text: str, offset: int, width: int = 40) -> str:
+    """Source text around a character offset, whitespace-collapsed, for the report."""
     lo, hi = max(0, offset - width), offset + width
     return re.sub(r"\s+", " ", text[lo:hi]).strip()
 
@@ -305,8 +312,17 @@ def _span(hyps) -> tuple:
     return ts0, ts1
 
 
+# Slack, in characters, for deciding a word sits at a chunk edge. The tail needs
+# it because trailing punctuation ('… ASAP."') pushes the final word short of the
+# text end, and tail decoder artifacts — clicks, cut-off syllables — land there
+# just as lead-in artifacts land at the head.
+BOUNDARY_WINDOW_CHARS = 3
+
+
 def _boundary(tok: Token, n_exp: int) -> bool:
-    return tok.start == 0 or (tok.start + len(tok.original)) >= n_exp
+    """True when the word sits within the boundary window of either chunk edge."""
+    end = tok.start + len(tok.original)
+    return tok.start <= BOUNDARY_WINDOW_CHARS or end >= n_exp - BOUNDARY_WINDOW_CHARS
 
 
 def _one_sub(tok: Token, h: HypWord, expected_text, n_exp, conf) -> Optional[Defect]:
@@ -323,7 +339,7 @@ def _one_sub(tok: Token, h: HypWord, expected_text, n_exp, conf) -> Optional[Def
         kind="substitution", expected=tok.original, heard=h.original or "∅",
         severity=min(1.0, pdist * 0.7 + conf), causes=_causes_for(tok, _boundary(tok, n_exp)),
         audio_start=h.start, audio_end=h.end,
-        context=_context_snippet(expected_text, tok.start),
+        context=context_snippet(expected_text, tok.start),
     )
 
 
@@ -341,7 +357,7 @@ def _grouped_sub(exp, hyps, expected_text, n_exp, conf) -> Optional[Defect]:
         heard=" ".join(h.original for h in hyps) or "∅",
         severity=min(1.0, pdist * 0.7 + conf), causes=causes,
         audio_start=ts0, audio_end=ts1,
-        context=_context_snippet(expected_text, exp[0].start),
+        context=context_snippet(expected_text, exp[0].start),
     )
 
 
@@ -351,12 +367,11 @@ def _omission_defect(exp, expected_text, n_exp, near_ts) -> Optional[Defect]:
     if not content:
         return None
     tok = content[0]
-    boundary = tok.start == 0 or (tok.start + len(tok.original)) >= n_exp
     return Defect(
         kind="omission", expected=" ".join(t.original for t in exp), heard="∅",
         severity=0.5 + (0.2 if len(content) > 1 else 0.0),
-        causes=_causes_for(tok, boundary), audio_start=near_ts, audio_end=near_ts,
-        context=_context_snippet(expected_text, tok.start),
+        causes=_causes_for(tok, _boundary(tok, n_exp)), audio_start=near_ts, audio_end=near_ts,
+        context=context_snippet(expected_text, tok.start),
     )
 
 

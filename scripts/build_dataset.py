@@ -2,7 +2,7 @@
 """Aggregate the phoneme-triage audit JSONs into a labeled test set + issue-rate docs.
 
 Consumes logs/audit/b{book}_ch{ch}.json (output of
-`scan_defects.py --phoneme-triage`) and produces:
+`scan_defects.py`) and produces:
   data/test_set/tts_defects.jsonl   one labeled record per confirmed defect
   data/test_set/chunk_labels.jsonl  per chunk: bad (real XTTS fault) / flagged-ok / clean
   docs/tts_issue_rates.md           human-readable issue-rate documentation
