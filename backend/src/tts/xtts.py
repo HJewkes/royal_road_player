@@ -124,6 +124,7 @@ class XTTSEngine:
                     f"{_MPS_MAX_CONV1D_CHANNELS}, which XTTS's speaker encoder "
                     "exceeds on every chunk; using CPU for this session"
                 )
+                return "cpu"
         except Exception as e:
             logger.warning(f"Device detection error: {e}")
 
