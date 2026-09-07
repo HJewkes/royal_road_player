@@ -134,6 +134,53 @@ def test_nothing_interrupted_does_nothing(tmp_path):
     assert _run(tmp_path, "", texts=12, wavs=12) == []
 
 
+_DETECT_HARNESS = """
+set -uo pipefail
+source "$AUTOPULL"
+PROJECT_DIR="$TMP"
+FICTION_ID=1
+LOG_FILE="$TMP/log"
+claude() { echo "claude" >> "$TMP/calls"; echo '{}'; }
+apply_commentary() { echo "apply_commentary" >> "$TMP/calls"; }
+detect_commentary 8 10
+"""
+
+
+def _run_detect(tmp_path: Path) -> tuple[str, list[str]]:
+    chunks = tmp_path / "data/books/1/book_8/chapters/chapter_10/chunks"
+    chunks.mkdir(parents=True)
+    (chunks / "001.txt").write_text("story")
+    result = subprocess.run(
+        ["bash", "-c", _DETECT_HARNESS],
+        env={"PATH": "/usr/bin:/bin", "TMP": str(tmp_path), "AUTOPULL": str(_AUTOPULL)},
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    calls = tmp_path / "calls"
+    return result.stdout, (calls.read_text().splitlines() if calls.exists() else [])
+
+
+def test_detection_is_skipped_when_decisions_are_already_on_disk(tmp_path):
+    """The removals live in normalized.txt and commentary.json, so the chunks are
+    already clean — asking Claude again costs money and can only change its mind."""
+    chapter = tmp_path / "data/books/1/book_8/chapters/chapter_10"
+    chapter.mkdir(parents=True)
+    (chapter / "commentary.json").write_text('{"version": 1, "removed": []}')
+
+    stdout, calls = _run_detect(tmp_path)
+
+    assert "skipping detection for chapter 10" in stdout
+    assert calls == []
+
+
+def test_detection_runs_when_no_decisions_are_recorded(tmp_path):
+    stdout, calls = _run_detect(tmp_path)
+
+    assert "skipping detection" not in stdout
+    assert calls == ["claude", "claude", "apply_commentary"]
+
+
 @pytest.mark.parametrize(
     "status, expected",
     [
