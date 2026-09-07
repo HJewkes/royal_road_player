@@ -524,12 +524,10 @@ async def get_chapter(fiction_id: FictionIdPath, book_number: BookNumberPath, ch
 # Scraping Routes
 # ============================================================================
 
-@app.get("/api/scraper/preview")
+@app.get("/api/scraper/preview/{fiction_id}")
 async def preview_chapters(fiction_id: FictionIdPath, book_number: BookNumberQuery = None):
     """Preview available chapters without downloading."""
-    is_patreon = fiction_id.startswith("patreon_")
-    source = "patreon" if is_patreon else "royal_road"
-    scraper = get_scraper(source)
+    scraper = get_scraper(_detect_source(fiction_id))
     return scraper.get_chapter_list(fiction_id, book_number)
 
 
