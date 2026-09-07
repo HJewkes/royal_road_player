@@ -22,10 +22,27 @@ VENV="$PROJECT_DIR/venv311/bin/activate"
 PYTHON="$PROJECT_DIR/venv311/bin/python"
 
 LOCK_DIR="$PROJECT_DIR/.autopull.lock"
+STATUS_FILE="$PROJECT_DIR/logs/autopull.last_status"
 
 mkdir -p "$(dirname "$LOG_FILE")"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"; }
+
+write_status() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" > "$STATUS_FILE" 2>/dev/null || true; }
+
+# Carry a dead run into the next tick's log. A run that exits non-zero says so
+# once and is then buried by later ticks; one killed outright (reboot, OOM) never
+# gets to say anything at all, and leaves the status file reading "running".
+report_last_status() {
+  [ -f "$STATUS_FILE" ] || return 0
+  local last
+  last=$(cat "$STATUS_FILE" 2>/dev/null || echo "")
+  case "$last" in
+    *exit=0) ;;
+    *running*) log "WARNING: previous run was killed before it finished ($last)" ;;
+    *) log "WARNING: previous run failed ($last)" ;;
+  esac
+}
 
 # Post a macOS notification (best-effort; works from a user LaunchAgent).
 notify() {
@@ -42,6 +59,7 @@ cleanup() {
   # fail on the non-empty dir and leak the lock — forcing every subsequent run
   # down the stale-reclaim path. Remove the dir and its contents outright.
   rm -rf "$LOCK_DIR" 2>/dev/null || true
+  write_status "exit=$code"
   if [ "$code" -ne 0 ]; then
     log "ERROR: Autopull exited with code $code"
     notify "Audiobook autopull failed" "Exit $code — see logs/autopull.log"
@@ -196,6 +214,68 @@ find_new_chapters() {
   local sorted
   sorted=$(printf '%s\n' "${new_chapters[@]}" | sort -n)
   echo $sorted
+}
+
+# --- Step 5a: Find chapters a previous run left mid-pipeline ---
+# Emits "chapter:stage:wavs:texts" per interrupted chapter (see pending_work.py).
+# These are invisible to find_new_chapters, which only looks for a chapter with
+# raw.txt and no normalized.txt.
+find_interrupted_chapters() {
+  local book=$1
+  "$PYTHON" "$SCRIPT_DIR/pending_work.py" "$FICTION_ID" --interrupted "$book" 2>/dev/null || true
+}
+
+# True while a chapter still has chunk texts without audio. Generation reporting
+# "complete" in that state means the remaining chunks carry a .error file, which
+# makes them ineligible for re-queue — exporting anyway would ship a chapter with
+# silent holes and mark it complete forever.
+chunks_missing() {
+  local chunks_dir="$PROJECT_DIR/data/books/$FICTION_ID/book_$1/chapters/chapter_$2/chunks"
+  local texts wavs
+  texts=$(ls "$chunks_dir"/*.txt 2>/dev/null | wc -l | tr -d ' ')
+  wavs=$(ls "$chunks_dir"/*.wav 2>/dev/null | wc -l | tr -d ' ')
+  [ "$texts" -gt 0 ] && [ "$wavs" -lt "$texts" ]
+}
+
+# Re-enter the pipeline for one interrupted chapter at the stage it died at.
+# Generation resumes by construction: /api/generate queues only chunks with no
+# wav yet, so the finished ones are never re-synthesized.
+resume_chapter() {
+  local book=$1 entry=$2
+  local ch stage wavs texts
+  IFS=: read -r ch stage wavs texts <<< "$entry"
+  log "WARNING: book $book chapter $ch interrupted at $wavs/$texts chunks; resuming at stage '$stage'"
+
+  case "$stage" in
+    chunk)
+      normalize_and_chunk "$book" "$ch"
+      detect_commentary "$book" "$ch"
+      generate_audio "$book" "$ch"
+      ;;
+    generate)
+      generate_audio "$book" "$ch"
+      ;;
+  esac
+
+  if chunks_missing "$book" "$ch"; then
+    log "ERROR: book $book chapter $ch still missing chunk audio after generation; not exporting"
+    return 0
+  fi
+
+  export_chapter "$book" "$ch"
+  publish_feed
+  log "--- Book $book chapter $ch recovered ---"
+  SUMMARY+="Book $book: recovered chapter $ch"$'\n'
+}
+
+resume_interrupted() {
+  local book=$1
+  local interrupted entry
+  interrupted=$(find_interrupted_chapters "$book")
+  [ -z "$interrupted" ] && return 0
+  for entry in $interrupted; do
+    resume_chapter "$book" "$entry"
+  done
 }
 
 # --- Step 5b: Pin spoken renderings for any table we can't convert ---
@@ -522,6 +602,11 @@ publish_feed() {
 process_book() {
   local book=$1
   download_chapters "$book" > /dev/null
+
+  # Finish what a killed run started before taking on anything new: recovered
+  # chapters come earlier in reading order, so the feed stays in sequence.
+  resume_interrupted "$book"
+
   local new_chapters
   new_chapters=$(find_new_chapters "$book")
 
@@ -550,42 +635,53 @@ process_book() {
 # Main
 # ============================================================
 
-acquire_lock
+# Wrapped in a function, and run only when executed rather than sourced, so the
+# recovery helpers above can be sourced and exercised by tests.
+main() {
+  acquire_lock
 
-log "=== Autopull started ==="
+  log "=== Autopull started ==="
+  report_last_status
+  write_status "running pid=$$"
 
-ON_DISK_BOOK=$(get_latest_book)
+  ON_DISK_BOOK=$(get_latest_book)
 
-# Cheap precheck BEFORE any backend/TTS startup: is there a new source chapter or
-# a half-processed chapter on disk? Only boot the backend (and eventually the TTS
-# model, which loads lazily on first generation) when there is confirmed work.
-if BOOKS=$(run_precheck); then
-  if [ -z "$BOOKS" ]; then
-    log "Precheck: no new chapters — skipping backend startup"
-    log "=== Autopull complete (no changes) ==="
-    exit 0
+  # Cheap precheck BEFORE any backend/TTS startup: is there a new source chapter or
+  # a half-processed chapter on disk? Only boot the backend (and eventually the TTS
+  # model, which loads lazily on first generation) when there is confirmed work.
+  if BOOKS=$(run_precheck); then
+    if [ -z "$BOOKS" ]; then
+      log "Precheck: no new chapters — skipping backend startup"
+      log "=== Autopull complete (no changes) ==="
+      exit 0
+    fi
+    log "Precheck: books with pending work: $(echo $BOOKS | tr '\n' ' ')"
+  else
+    # Source fetch failed (network/cookie/parse). Don't skip on a transient blip —
+    # fall back to full discovery, which itself degrades to the on-disk book.
+    log "Precheck failed; falling back to full discovery"
+    BOOKS=$(books_to_process "$ON_DISK_BOOK")
   fi
-  log "Precheck: books with pending work: $(echo $BOOKS | tr '\n' ' ')"
-else
-  # Source fetch failed (network/cookie/parse). Don't skip on a transient blip —
-  # fall back to full discovery, which itself degrades to the on-disk book.
-  log "Precheck failed; falling back to full discovery"
-  BOOKS=$(books_to_process "$ON_DISK_BOOK")
-fi
 
-ensure_backend
+  ensure_backend
 
-# BOOK stays in scope for the cleanup trap's run.error event. SUMMARY collects
-# per-book results across the loop for the final notification.
-BOOK=$ON_DISK_BOOK
-SUMMARY=""
-for BOOK in $BOOKS; do
-  process_book "$BOOK"
-done
+  # BOOK stays in scope for the cleanup trap's run.error event. SUMMARY collects
+  # per-book results across the loop for the final notification.
+  BOOK=$ON_DISK_BOOK
+  SUMMARY=""
+  for BOOK in $BOOKS; do
+    process_book "$BOOK"
+  done
 
-if [ -n "$SUMMARY" ]; then
-  log "=== Autopull complete ==="
-  notify "Audiobook autopull complete" "$SUMMARY"
-else
-  log "=== Autopull complete (no changes) ==="
+  if [ -n "$SUMMARY" ]; then
+    log "=== Autopull complete ==="
+    notify "Audiobook autopull complete" "$SUMMARY"
+  else
+    log "=== Autopull complete (no changes) ==="
+  fi
+}
+
+# Only self-execute; sourcing (tests) loads the helpers without running a pull.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  main "$@"
 fi
