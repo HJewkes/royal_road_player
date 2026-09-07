@@ -3,15 +3,16 @@
 
 Always writes each series' feed.xml to a local staging dir so it's inspectable
 without any cloud setup. If AUDIOBOOK_DELIVERY_BASE_URL and the four R2_* settings
-are present, it also uploads any not-yet-uploaded chapter mp3s plus the freshly
+are present, it also uploads any new or changed chapter mp3s plus the freshly
 built feeds to the R2 bucket — the always-on host the phone's podcast app pulls
-from. Safe to run on every export: uploads are incremental (skip objects already
-in the bucket) and feeds are small.
+from. Safe to run on every export: uploads are incremental (an mp3 whose bytes
+already match the stored object is skipped) and feeds are small.
 
 Usage:
   publish_feed.py            # build locally; upload if configured
   publish_feed.py --no-upload  # build locally only
 """
+import hashlib
 import sys
 from pathlib import Path
 
@@ -92,19 +93,48 @@ def _r2_client(settings):
     )
 
 
-def _existing_keys(client, bucket: str) -> set[str]:
-    keys: set[str] = set()
+def _remote_objects(client, bucket: str) -> dict[str, tuple[int, str]]:
+    """Map every stored key to its (size, etag) so changed files can be spotted."""
+    objects: dict[str, tuple[int, str]] = {}
     token = None
     while True:
         kw = {"Bucket": bucket}
         if token:
             kw["ContinuationToken"] = token
         resp = client.list_objects_v2(**kw)
-        keys.update(o["Key"] for o in resp.get("Contents", []))
+        for o in resp.get("Contents", []):
+            objects[o["Key"]] = (o.get("Size", -1), str(o.get("ETag", "")).strip('"'))
         if not resp.get("IsTruncated"):
             break
         token = resp.get("NextContinuationToken")
-    return keys
+    return objects
+
+
+def _file_md5(path: Path) -> str:
+    digest = hashlib.md5()
+    with open(path, "rb") as fh:
+        for block in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _needs_upload(local_path: Path, remote: tuple[int, str] | None) -> bool:
+    """True when the local mp3 differs from what the bucket already holds.
+
+    A re-exported chapter keeps its object key, so key presence alone can't
+    decide this — comparing content is what makes a corrected episode reach the
+    phone. R2 sets the ETag of a single-part put to the body's MD5 hex, which is
+    what we upload with; a multipart ETag carries a '-<parts>' suffix that is not
+    an MD5 of the whole body, so there we fall back to comparing size only.
+    """
+    if remote is None:
+        return True
+    size, etag = remote
+    if size != local_path.stat().st_size:
+        return True
+    if not etag or "-" in etag:
+        return False
+    return etag.lower() != _file_md5(local_path)
 
 
 def main() -> int:
@@ -135,24 +165,30 @@ def main() -> int:
 
     try:
         client = _r2_client(settings)
-        existing = _existing_keys(client, settings.r2_bucket)
+        existing = _remote_objects(client, settings.r2_bucket)
     except Exception as exc:  # missing boto3, bad creds, network
         print(f"Upload skipped — R2 client/list failed: {exc}", file=sys.stderr)
         return 0
 
     uploaded = 0
+    replaced = 0
     for slug, episodes in discover_episodes(settings.exports_dir).items():
         for ep in episodes:
             key = prefixed(ep.object_key, prefix)
-            if key in existing:
+            remote = existing.get(key)
+            if not _needs_upload(ep.path, remote):
                 continue
             with open(ep.path, "rb") as fh:
                 client.put_object(
                     Bucket=settings.r2_bucket, Key=key,
                     Body=fh, ContentType="audio/mpeg",
                 )
-            uploaded += 1
-            print(f"uploaded mp3: {key}")
+            if remote is None:
+                uploaded += 1
+                print(f"uploaded mp3: {key}")
+            else:
+                replaced += 1
+                print(f"re-uploaded mp3: {key}")
 
     for slug, xml in feeds.items():
         key = prefixed(feed_key_for(slug), prefix)
@@ -162,7 +198,7 @@ def main() -> int:
         )
         print(f"uploaded feed: {key}")
 
-    print(f"Done — {uploaded} new mp3(s), {len(feeds)} feed(s).")
+    print(f"Done — {uploaded} new mp3(s), {replaced} re-uploaded, {len(feeds)} feed(s).")
     return 0
 
 
