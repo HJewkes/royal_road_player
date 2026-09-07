@@ -123,6 +123,7 @@ class ExportRequest(BaseModel):
     book_number: int
     chapter_number: int
     format: str = "mp3"  # Default to audiobook-optimized MP3
+    force: bool = False  # Reconcatenate audio.wav even when it looks up to date
 
 
 # ============================================================================

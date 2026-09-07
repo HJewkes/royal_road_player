@@ -978,6 +978,7 @@ async def export_chapter(request: ExportRequest):
         request.book_number,
         request.chapter_number,
         request.format,
+        force=request.force,
     )
 
     if not path:
