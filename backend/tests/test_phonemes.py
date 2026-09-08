@@ -1,12 +1,16 @@
 """Tests for the phoneme-fidelity helpers (model-free; espeak-ng required)."""
 
+import hashlib
+import json
 import shutil
 
 import pytest
 
+from src.config import get_settings
 from src.validation.phonemes import (
     chunk_word_verdicts, clean_ipa, detect_hallucinations, g2p, g2p_sentence,
-    phone_match_distance, phoneme_distance,
+    g2p_voice, phone_match_distance, phoneme_distance, PhonemeRecognizer,
+    XTTS_FAULT_THRESHOLD, XTTS_FAULT_THRESHOLD_SHORT,
 )
 
 espeak = pytest.mark.skipif(shutil.which("espeak-ng") is None, reason="espeak-ng not installed")
@@ -15,6 +19,25 @@ espeak = pytest.mark.skipif(shutil.which("espeak-ng") is None, reason="espeak-ng
 def test_clean_ipa_strips_stress_and_length_marks():
     assert clean_ipa("wˈɪθənʃˌɔː") == "wɪθənʃɔ"
     assert clean_ipa("  ɹˈɛksəm  ") == "ɹɛksəm"
+
+
+def test_clean_ipa_folds_flap_and_open_schwa():
+    """espeak writes the flap in "better" as ɾ where the recognizer hears t, and
+    the two sides split schwa into ə/ɐ; neither difference is audible."""
+    assert clean_ipa("bˈɛɾɐ") == clean_ipa("bˈɛtə")
+    assert phoneme_distance("bɛɾɚ", "bɛtɚ") == 0.0
+
+
+def test_cached_phones_are_folded_on_read(tmp_path):
+    """Entries written before a fold change hold unfolded phones, so the fold has
+    to run on read — otherwise a warm cache silently bypasses it."""
+    wav = tmp_path / "chunk_001.wav"
+    wav.write_bytes(b"not really a wav, only its hash is used")
+    digest = hashlib.sha256(wav.read_bytes()).hexdigest()[:16]
+    recognizer = PhonemeRecognizer.__new__(PhonemeRecognizer)
+    recognizer.cache_dir = tmp_path
+    (tmp_path / f"{digest}.json").write_text(json.dumps({"phones": "bˈɛɾɐ"}))
+    assert recognizer.recognize_wav(wav) == "bɛtə"
 
 
 def test_phoneme_distance_identical_is_zero():
@@ -119,6 +142,49 @@ def test_unusual_word_needs_a_bigger_gap_before_it_is_called_an_xtts_fault():
     assert plain["distance"] == tagged["distance"]
     assert plain["source"] == "xtts"
     assert tagged["source"] == "whisper"
+
+
+def test_g2p_voice_defaults_to_the_configured_accent(monkeypatch):
+    monkeypatch.setattr(get_settings(), "phoneme_g2p_voice", "en-au")
+    assert g2p_voice() == "en-au"
+    assert g2p_voice("en-gb") == "en-gb"  # an explicit voice still wins
+
+
+@espeak
+def test_configured_accent_decides_whether_rhotic_audio_is_a_fault(monkeypatch):
+    """The narrator and the phoneme recognizer are both rhotic. Predicting against
+    a non-rhotic accent turns every r-coloured word into a false XTTS fault, which
+    is what flooded the DoF book 8 ch 2 scan (over/here/career, 0.5-0.67 each)."""
+    text = "his career was over"
+    actual = "".join(g2p_sentence(text, voice="en-us"))
+    monkeypatch.setattr(get_settings(), "phoneme_g2p_voice", "en-us")
+    assert chunk_word_verdicts(text, actual, targets=["career"])[0]["source"] == "whisper"
+    monkeypatch.setattr(get_settings(), "phoneme_g2p_voice", "en-gb")
+    assert chunk_word_verdicts(text, actual, targets=["career"])[0]["source"] == "xtts"
+
+
+@espeak
+def test_short_word_needs_a_wider_gap_than_a_long_one():
+    """A 3-phone word costs 0.33-0.5 for a single recognizer slip — ordinary-
+    threshold territory — so the short band asks for a bigger break before blaming
+    the audio. A whole-word swap still lands past it."""
+    text = '"Dye Hard," I said.'
+    swapped, near = g2p_sentence(text), g2p_sentence(text)
+    swapped[0], near[0] = "ɡɹu", "zɔɪn"
+    assert chunk_word_verdicts(text, "".join(swapped), targets=["Dye"])[0]["source"] == "xtts"
+    assert chunk_word_verdicts(text, "".join(near), targets=["Dye"])[0]["source"] == "whisper"
+
+
+@espeak
+def test_long_word_keeps_the_ordinary_threshold():
+    """The wider band is for short words only: a 6-phone word still counts as an
+    XTTS fault at the ordinary 0.45, which is what keeps real mangles visible."""
+    text = "the match in Salford ended"
+    parts = g2p_sentence(text)
+    parts[3] = "sɑlvɚt"
+    verdict = chunk_word_verdicts(text, "".join(parts), targets=["Salford"])[0]
+    assert XTTS_FAULT_THRESHOLD <= verdict["distance"] < XTTS_FAULT_THRESHOLD_SHORT
+    assert verdict["source"] == "xtts"
 
 
 def test_degenerate_span_from_duplicate_prefix_is_inconclusive_not_xtts():

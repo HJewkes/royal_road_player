@@ -122,7 +122,8 @@ def _match_case(variant: str, original: str) -> str:
     return variant
 
 
-def generate_phoneme_respellings(word: str, voice: str = "en-gb", limit: int = 8) -> list[str]:
+def generate_phoneme_respellings(word: str, voice: Optional[str] = None,
+                                 limit: int = 8) -> list[str]:
     """Phoneme-grounded respelling candidates for `word`.
 
     1. G2P the word to get its target IPA.
@@ -178,7 +179,7 @@ DEFAULT_CARRIER = "I travelled to {} last year."
 
 
 def isolation_verdict(word: str, tts, recognizer, carrier: str = DEFAULT_CARRIER,
-                       voice: str = "en-gb") -> dict:
+                       voice: Optional[str] = None) -> dict:
     """Synthesize `word` alone in a neutral carrier and phoneme-score it.
 
     Returns the chunk_word_verdicts() dict for the word (distance, source =
@@ -205,7 +206,7 @@ def isolation_verdict(word: str, tts, recognizer, carrier: str = DEFAULT_CARRIER
 
 
 def context_verdict(word: str, fiction_id: str, book: int, chapter: int, chunk_idx: int,
-                     recognizer, voice: str = "en-gb") -> Optional[dict]:
+                     recognizer, voice: Optional[str] = None) -> Optional[dict]:
     """Phoneme verdict for `word` inside an ALREADY-GENERATED chunk (no new
     XTTS synthesis — reuses the wav already on disk from the real pipeline
     run) so we can show the in-context mangle for free."""
@@ -223,7 +224,8 @@ def context_verdict(word: str, fiction_id: str, book: int, chapter: int, chunk_i
 #    whether it round-trips through G2P itself).
 # ---------------------------------------------------------------------------
 def sweep_candidates(word: str, candidates: list[str], tts, recognizer,
-                      carrier: str = DEFAULT_CARRIER, voice: str = "en-gb") -> list[dict]:
+                      carrier: str = DEFAULT_CARRIER,
+                      voice: Optional[str] = None) -> list[dict]:
     """Synthesize each candidate spelling in the carrier, phoneme-score the
     audio against the ORIGINAL word's expected phones (positionally located
     via the original word's text, since the carrier is fixed and only the

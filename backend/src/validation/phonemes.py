@@ -29,12 +29,25 @@ TARGET_SR = 16000
 # Stress, length, tie-bar and separator marks stripped before comparing phones.
 _IPA_NOISE = re.compile(r"[ˈˌːˑ‍͡\s'_]")
 
+# Allophones the two sides disagree on for free: espeak writes the American flap
+# as ɾ where the recognizer often hears t, and splits schwa into ə/ɐ. Folding both
+# sides costs nothing and removed 13 false faults from the ch2 scan.
+_ALLOPHONE_FOLD = str.maketrans({"ɾ": "t", "ɐ": "ə"})
 
-def g2p(text: str, voice: str = "en-gb") -> str:
-    """Expected phoneme string for a word via espeak-ng (British English default)."""
+
+def g2p_voice(voice: Optional[str] = None) -> str:
+    """The espeak accent used to predict pronunciation, from settings unless given."""
+    if voice is not None:
+        return voice
+    from src.config import get_settings
+    return get_settings().phoneme_g2p_voice
+
+
+def g2p(text: str, voice: Optional[str] = None) -> str:
+    """Expected phoneme string for a word via espeak-ng."""
     try:
         out = subprocess.run(
-            ["espeak-ng", "-q", "--ipa=3", "-v", voice, text],
+            ["espeak-ng", "-q", "--ipa=3", "-v", g2p_voice(voice), text],
             capture_output=True, text=True, timeout=10, check=True,
         ).stdout
         return clean_ipa(out)
@@ -44,8 +57,9 @@ def g2p(text: str, voice: str = "en-gb") -> str:
 
 
 def clean_ipa(ipa: str) -> str:
-    """Drop stress/length/tie marks so only the phones themselves are compared."""
-    return _IPA_NOISE.sub("", ipa.strip())
+    """Drop stress/length/tie marks and fold allophones, so only the phones the two
+    sides could genuinely disagree about are compared."""
+    return _IPA_NOISE.sub("", ipa.strip()).translate(_ALLOPHONE_FOLD)
 
 
 def phoneme_distance(expected: str, actual: str) -> float:
@@ -101,6 +115,10 @@ class PhonemeRecognizer:
 
     def recognize(self, samples_16k) -> str:
         """Transcribe a 16kHz mono float array to an espeak-style phoneme string."""
+        return clean_ipa(self._recognize_raw(samples_16k))
+
+    def _recognize_raw(self, samples_16k) -> str:
+        """The model's own decode, before any cleaning or allophone folding."""
         import torch
         self._load()
         inputs = self._processor(
@@ -109,26 +127,30 @@ class PhonemeRecognizer:
         with torch.no_grad():
             logits = self._model(inputs.input_values).logits
         pred = torch.argmax(logits, dim=-1)
-        return clean_ipa(self._processor.batch_decode(pred)[0])
+        return self._processor.batch_decode(pred)[0]
 
     def recognize_wav(self, wav_path: Path, use_cache: bool = True) -> str:
-        """Whole-file phoneme transcription, cached by file content hash."""
+        """Whole-file phoneme transcription, cached by file content hash.
+
+        The cache holds the raw decode and `clean_ipa` runs on read, so changing
+        what the fold covers re-scores old entries instead of needing a wipe.
+        """
         import hashlib
         import json
         digest = hashlib.sha256(Path(wav_path).read_bytes()).hexdigest()[:16]
         cache = self.cache_dir / f"{digest}.json"
         if use_cache and cache.exists():
             try:
-                return json.loads(cache.read_text())["phones"]
+                return clean_ipa(json.loads(cache.read_text())["phones"])
             except Exception:
                 pass
-        phones = self.recognize(load_slice(Path(wav_path), None, None))
+        phones = self._recognize_raw(load_slice(Path(wav_path), None, None))
         if use_cache:
             try:
                 cache.write_text(json.dumps({"phones": phones}))
             except Exception as e:
                 logger.warning(f"Phoneme cache write failed: {e}")
-        return phones
+        return clean_ipa(phones)
 
 
 def load_slice(wav_path: Path, start: Optional[float], end: Optional[float],
@@ -162,6 +184,12 @@ XTTS_FAULT_THRESHOLD_UNUSUAL = 0.70
 # Phone edit distance is too coarse on very short words (a 1-2 phone word scores a
 # binary 0/1), so we only trust an XTTS-fault verdict for words with enough phones.
 MIN_PHONES_FOR_VERDICT = 3
+# Distance is quantized by phone count: on a 3-4 phone word ONE recognizer slip
+# already costs 0.33-0.5, which the ordinary threshold reads as a fault. Every hit
+# in that band on DoF book 8 ch 2 was the recognizer clipping a coda — /bɔl/ read
+# back as /boʊ/, /dɔɹ/ as /doʊ/ — so short words must break further to count.
+SHORT_WORD_MAX_PHONES = 4
+XTTS_FAULT_THRESHOLD_SHORT = 0.70
 # A genuinely-pronounced word — however garbled — still produces roughly its
 # expected phone count. A mapped span far shorter than that means `_index_map`'s
 # alignment degenerated rather than that the audio is bad: confirmed on a real
@@ -172,11 +200,11 @@ MIN_PHONES_FOR_VERDICT = 3
 MIN_SPAN_RATIO_FOR_VERDICT = 0.5
 
 
-def g2p_sentence(text: str, voice: str = "en-gb") -> list[str]:
+def g2p_sentence(text: str, voice: Optional[str] = None) -> list[str]:
     """Per-word phones for a whole sentence (context-correct), cleaned."""
     try:
         raw = subprocess.run(
-            ["espeak-ng", "-q", "--ipa=3", "-v", voice, text],
+            ["espeak-ng", "-q", "--ipa=3", "-v", g2p_voice(voice), text],
             capture_output=True, text=True, timeout=15, check=True,
         ).stdout
     except (subprocess.SubprocessError, FileNotFoundError) as e:
@@ -204,7 +232,8 @@ def _index_map(expected: str, actual: str) -> list[int]:
 HALLUCINATION_MIN_PHONES = 5
 
 
-def detect_hallucinations(chunk_text: str, actual_full: str, voice: str = "en-gb",
+def detect_hallucinations(chunk_text: str, actual_full: str,
+                          voice: Optional[str] = None,
                           min_run: int = HALLUCINATION_MIN_PHONES) -> list[dict]:
     """Find runs of audio phones that correspond to NO source text — the phantom
     babble XTTS injects (usually at boundaries). These are insertions the
@@ -247,15 +276,17 @@ def _locate(sub: str, full: str) -> tuple:
     return (best_start, best_start + m)
 
 
-def _fault_threshold(word: str, unusual) -> float:
+def _fault_threshold(word: str, expected_phones: str, unusual) -> float:
     """Distance at which we blame the audio rather than the G2P, for one word."""
     if unusual and word in unusual:
         return XTTS_FAULT_THRESHOLD_UNUSUAL
+    if len(expected_phones) <= SHORT_WORD_MAX_PHONES:
+        return XTTS_FAULT_THRESHOLD_SHORT
     return XTTS_FAULT_THRESHOLD
 
 
 def chunk_word_verdicts(chunk_text: str, actual_full: str, targets=None,
-                        voice: str = "en-gb", unusual=None) -> list[dict]:
+                        voice: Optional[str] = None, unusual=None) -> list[dict]:
     """Positional phoneme verdict for specific words in a chunk.
 
     Locates each target word's expected phones inside the chunk's full expected
@@ -282,7 +313,7 @@ def chunk_word_verdicts(chunk_text: str, actual_full: str, targets=None,
         dist = 1.0 - SequenceMatcher(None, exp_w, actual_span).ratio()
         if len(actual_span) < MIN_SPAN_RATIO_FOR_VERDICT * len(exp_w):
             source = "inconclusive"
-        elif (dist >= _fault_threshold(word, unusual)
+        elif (dist >= _fault_threshold(word, exp_w, unusual)
               and len(exp_w) >= MIN_PHONES_FOR_VERDICT):
             source = "xtts"
         else:

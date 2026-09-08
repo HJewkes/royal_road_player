@@ -30,8 +30,10 @@ from src.validation.defects import (  # noqa: E402
 from src.validation.stt import get_stt_service  # noqa: E402
 
 # Words shorter than this score a near-binary 0/1 on phone edit distance (see
-# MIN_PHONES_FOR_VERDICT), so scoring them only buys espeak calls and noise.
-MIN_TARGET_LEN = 4
+# MIN_PHONES_FOR_VERDICT), so scoring them only buys espeak calls and noise. Three
+# letters is inside the useful range — real mangles land on words like "Dye" — and
+# XTTS_FAULT_THRESHOLD_SHORT keeps their coarser distances from flooding the scan.
+MIN_TARGET_LEN = 3
 
 
 def _iter_chapters(books_dir: Path, only: tuple | None):
