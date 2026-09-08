@@ -8,6 +8,7 @@ from src.config import get_settings
 from src.validation.phonemes import (
     chunk_word_verdicts, clean_ipa, detect_hallucinations, g2p, g2p_sentence,
     g2p_voice, phone_match_distance, phoneme_distance,
+    XTTS_FAULT_THRESHOLD, XTTS_FAULT_THRESHOLD_SHORT,
 )
 
 espeak = pytest.mark.skipif(shutil.which("espeak-ng") is None, reason="espeak-ng not installed")
@@ -133,12 +134,36 @@ def test_configured_accent_decides_whether_rhotic_audio_is_a_fault(monkeypatch):
     """The narrator and the phoneme recognizer are both rhotic. Predicting against
     a non-rhotic accent turns every r-coloured word into a false XTTS fault, which
     is what flooded the DoF book 8 ch 2 scan (over/here/career, 0.5-0.67 each)."""
-    text = "he handed it over now"
+    text = "his career was over"
     actual = "".join(g2p_sentence(text, voice="en-us"))
     monkeypatch.setattr(get_settings(), "phoneme_g2p_voice", "en-us")
-    assert chunk_word_verdicts(text, actual, targets=["over"])[0]["source"] == "whisper"
+    assert chunk_word_verdicts(text, actual, targets=["career"])[0]["source"] == "whisper"
     monkeypatch.setattr(get_settings(), "phoneme_g2p_voice", "en-gb")
-    assert chunk_word_verdicts(text, actual, targets=["over"])[0]["source"] == "xtts"
+    assert chunk_word_verdicts(text, actual, targets=["career"])[0]["source"] == "xtts"
+
+
+@espeak
+def test_short_word_needs_a_wider_gap_than_a_long_one():
+    """A 3-phone word costs 0.33-0.5 for a single recognizer slip — ordinary-
+    threshold territory — so the short band asks for a bigger break before blaming
+    the audio. A whole-word swap still lands past it."""
+    text = '"Dye Hard," I said.'
+    swapped, near = g2p_sentence(text), g2p_sentence(text)
+    swapped[0], near[0] = "ɡɹu", "zɔɪn"
+    assert chunk_word_verdicts(text, "".join(swapped), targets=["Dye"])[0]["source"] == "xtts"
+    assert chunk_word_verdicts(text, "".join(near), targets=["Dye"])[0]["source"] == "whisper"
+
+
+@espeak
+def test_long_word_keeps_the_ordinary_threshold():
+    """The wider band is for short words only: a 6-phone word still counts as an
+    XTTS fault at the ordinary 0.45, which is what keeps real mangles visible."""
+    text = "the match in Salford ended"
+    parts = g2p_sentence(text)
+    parts[3] = "sɑlvɚt"
+    verdict = chunk_word_verdicts(text, "".join(parts), targets=["Salford"])[0]
+    assert XTTS_FAULT_THRESHOLD <= verdict["distance"] < XTTS_FAULT_THRESHOLD_SHORT
+    assert verdict["source"] == "xtts"
 
 
 def test_degenerate_span_from_duplicate_prefix_is_inconclusive_not_xtts():

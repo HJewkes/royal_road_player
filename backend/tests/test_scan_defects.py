@@ -120,5 +120,36 @@ def test_flagged_chunk_keeps_readable_heard_text_and_schema(tmp_path):
 
 
 @espeak
-def test_targets_skip_short_words(tmp_path):
-    assert scan_defects._chunk_targets(BAD_TEXT) == ["crowd", "Wrexham", "roared"]
+def test_targets_keep_three_letter_words_and_skip_shorter(tmp_path):
+    """Real defects live on 3-letter words (the "Dye Hard" mangle), so they are
+    scored; 1-2 letter words stay out, where phone distance is a coin flip."""
+    assert scan_defects._chunk_targets(BAD_TEXT) == ["the", "crowd", "Wrexham", "roared"]
+
+
+@espeak
+def test_three_letter_mangle_is_flagged(tmp_path):
+    """Regression (DoF book 8 ch 2 chunk 646, "Dye Hard"): a 3-letter word read
+    as something else must reach the report, not be dropped before scoring."""
+    text = '"Dye Hard," I said.'
+    parts = g2p_sentence(text)
+    parts[0] = "ɡɹu"  # the audio says something else entirely
+    verdicts = {v["word"].lower(): v for v in scan_defects._detect(
+        FakeChunk(646, text, Path("x.wav")),
+        FakeRecognizer({"x.wav": "".join(parts)}),
+    )[0]}
+    assert verdicts["dye"]["source"] == "xtts"
+
+
+@espeak
+def test_three_letter_word_needs_more_than_one_wrong_phone(tmp_path):
+    """A single-phone slip on a 3-letter word is within G2P disagreement, so the
+    short-word band keeps it out of the report."""
+    text = '"Dye Hard," I said.'
+    parts = g2p_sentence(text)
+    parts[0] = "dɛɪ"  # one phone off
+    verdicts = {v["word"].lower(): v for v in scan_defects._detect(
+        FakeChunk(646, text, Path("x.wav")),
+        FakeRecognizer({"x.wav": "".join(parts)}),
+    )[0]}
+    assert verdicts["dye"]["distance"] < 0.7
+    assert verdicts["dye"]["source"] == "whisper"

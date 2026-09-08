@@ -170,6 +170,12 @@ XTTS_FAULT_THRESHOLD_UNUSUAL = 0.70
 # Phone edit distance is too coarse on very short words (a 1-2 phone word scores a
 # binary 0/1), so we only trust an XTTS-fault verdict for words with enough phones.
 MIN_PHONES_FOR_VERDICT = 3
+# Distance is quantized by phone count: on a 3-4 phone word ONE recognizer slip
+# already costs 0.33-0.5, which the ordinary threshold reads as a fault. Every hit
+# in that band on DoF book 8 ch 2 was the recognizer clipping a coda — /bɔl/ read
+# back as /boʊ/, /dɔɹ/ as /doʊ/ — so short words must break further to count.
+SHORT_WORD_MAX_PHONES = 4
+XTTS_FAULT_THRESHOLD_SHORT = 0.70
 # A genuinely-pronounced word — however garbled — still produces roughly its
 # expected phone count. A mapped span far shorter than that means `_index_map`'s
 # alignment degenerated rather than that the audio is bad: confirmed on a real
@@ -256,10 +262,12 @@ def _locate(sub: str, full: str) -> tuple:
     return (best_start, best_start + m)
 
 
-def _fault_threshold(word: str, unusual) -> float:
+def _fault_threshold(word: str, expected_phones: str, unusual) -> float:
     """Distance at which we blame the audio rather than the G2P, for one word."""
     if unusual and word in unusual:
         return XTTS_FAULT_THRESHOLD_UNUSUAL
+    if len(expected_phones) <= SHORT_WORD_MAX_PHONES:
+        return XTTS_FAULT_THRESHOLD_SHORT
     return XTTS_FAULT_THRESHOLD
 
 
@@ -291,7 +299,7 @@ def chunk_word_verdicts(chunk_text: str, actual_full: str, targets=None,
         dist = 1.0 - SequenceMatcher(None, exp_w, actual_span).ratio()
         if len(actual_span) < MIN_SPAN_RATIO_FOR_VERDICT * len(exp_w):
             source = "inconclusive"
-        elif (dist >= _fault_threshold(word, unusual)
+        elif (dist >= _fault_threshold(word, exp_w, unusual)
               and len(exp_w) >= MIN_PHONES_FOR_VERDICT):
             source = "xtts"
         else:
