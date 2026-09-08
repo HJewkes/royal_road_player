@@ -1,5 +1,7 @@
 """Tests for the phoneme-fidelity helpers (model-free; espeak-ng required)."""
 
+import hashlib
+import json
 import shutil
 
 import pytest
@@ -7,7 +9,7 @@ import pytest
 from src.config import get_settings
 from src.validation.phonemes import (
     chunk_word_verdicts, clean_ipa, detect_hallucinations, g2p, g2p_sentence,
-    g2p_voice, phone_match_distance, phoneme_distance,
+    g2p_voice, phone_match_distance, phoneme_distance, PhonemeRecognizer,
     XTTS_FAULT_THRESHOLD, XTTS_FAULT_THRESHOLD_SHORT,
 )
 
@@ -24,6 +26,18 @@ def test_clean_ipa_folds_flap_and_open_schwa():
     the two sides split schwa into ə/ɐ; neither difference is audible."""
     assert clean_ipa("bˈɛɾɐ") == clean_ipa("bˈɛtə")
     assert phoneme_distance("bɛɾɚ", "bɛtɚ") == 0.0
+
+
+def test_cached_phones_are_folded_on_read(tmp_path):
+    """Entries written before a fold change hold unfolded phones, so the fold has
+    to run on read — otherwise a warm cache silently bypasses it."""
+    wav = tmp_path / "chunk_001.wav"
+    wav.write_bytes(b"not really a wav, only its hash is used")
+    digest = hashlib.sha256(wav.read_bytes()).hexdigest()[:16]
+    recognizer = PhonemeRecognizer.__new__(PhonemeRecognizer)
+    recognizer.cache_dir = tmp_path
+    (tmp_path / f"{digest}.json").write_text(json.dumps({"phones": "bˈɛɾɐ"}))
+    assert recognizer.recognize_wav(wav) == "bɛtə"
 
 
 def test_phoneme_distance_identical_is_zero():

@@ -115,6 +115,10 @@ class PhonemeRecognizer:
 
     def recognize(self, samples_16k) -> str:
         """Transcribe a 16kHz mono float array to an espeak-style phoneme string."""
+        return clean_ipa(self._recognize_raw(samples_16k))
+
+    def _recognize_raw(self, samples_16k) -> str:
+        """The model's own decode, before any cleaning or allophone folding."""
         import torch
         self._load()
         inputs = self._processor(
@@ -123,26 +127,30 @@ class PhonemeRecognizer:
         with torch.no_grad():
             logits = self._model(inputs.input_values).logits
         pred = torch.argmax(logits, dim=-1)
-        return clean_ipa(self._processor.batch_decode(pred)[0])
+        return self._processor.batch_decode(pred)[0]
 
     def recognize_wav(self, wav_path: Path, use_cache: bool = True) -> str:
-        """Whole-file phoneme transcription, cached by file content hash."""
+        """Whole-file phoneme transcription, cached by file content hash.
+
+        The cache holds the raw decode and `clean_ipa` runs on read, so changing
+        what the fold covers re-scores old entries instead of needing a wipe.
+        """
         import hashlib
         import json
         digest = hashlib.sha256(Path(wav_path).read_bytes()).hexdigest()[:16]
         cache = self.cache_dir / f"{digest}.json"
         if use_cache and cache.exists():
             try:
-                return json.loads(cache.read_text())["phones"]
+                return clean_ipa(json.loads(cache.read_text())["phones"])
             except Exception:
                 pass
-        phones = self.recognize(load_slice(Path(wav_path), None, None))
+        phones = self._recognize_raw(load_slice(Path(wav_path), None, None))
         if use_cache:
             try:
                 cache.write_text(json.dumps({"phones": phones}))
             except Exception as e:
                 logger.warning(f"Phoneme cache write failed: {e}")
-        return phones
+        return clean_ipa(phones)
 
 
 def load_slice(wav_path: Path, start: Optional[float], end: Optional[float],
