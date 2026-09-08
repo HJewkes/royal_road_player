@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -15,6 +16,39 @@ from src.utils import sanitize_filename
 logger = logging.getLogger(__name__)
 
 MANIFEST_SUFFIX = ".manifest.json"
+TEMP_SUFFIX = ".tmp"
+
+
+def _fsync_path(path: Path) -> None:
+    """Flush a file or directory to disk so a later rename survives a crash."""
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _promote(tmp_path: Path, final_path: Path) -> None:
+    """Publish a fully written temp file under its final name in one step."""
+    _fsync_path(tmp_path)
+    os.replace(tmp_path, final_path)
+    _fsync_path(final_path.parent)
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Write text so readers see either the old file or the whole new one."""
+    tmp_path = path.with_name(path.name + TEMP_SUFFIX)
+    tmp_path.write_text(text)
+    _promote(tmp_path, path)
+
+
+def _clear_temp_files(directory: Path) -> None:
+    """Drop leftovers from a run that died between temp write and rename."""
+    for leftover in directory.glob("*" + TEMP_SUFFIX):
+        try:
+            leftover.unlink()
+        except OSError as e:
+            logger.warning(f"Could not remove {leftover.name}: {e}")
 
 
 def _chunk_fingerprints(chunks: list[Chunk]) -> list[dict]:
@@ -30,12 +64,23 @@ def _chunk_fingerprints(chunks: list[Chunk]) -> list[dict]:
     return fingerprints
 
 
+def _ordered_chunk_audio(chunks: list[Chunk]) -> list[Path]:
+    """List the chunk wavs to concatenate, in chunk order."""
+    audio_files = []
+    for chunk in sorted(chunks, key=lambda c: c.index):
+        if chunk.audio_path and chunk.audio_path.exists():
+            audio_files.append(chunk.audio_path)
+        else:
+            logger.warning(f"Missing audio for chunk {chunk.index}")
+    return audio_files
+
+
 def _write_manifest(wav_path: Path, chunks: list[Chunk]) -> None:
     """Record the inputs of a freshly concatenated audio.wav beside it."""
     manifest_path = wav_path.with_name(wav_path.name + MANIFEST_SUFFIX)
     payload = {"chunks": _chunk_fingerprints(chunks)}
     try:
-        manifest_path.write_text(json.dumps(payload))
+        _atomic_write_text(manifest_path, json.dumps(payload))
     except OSError as e:
         logger.warning(f"Could not write {manifest_path.name}: {e}")
 
@@ -106,14 +151,7 @@ class AudioConcatenator:
             logger.error(f"No chunks found for chapter {chapter_number}")
             return None
 
-        # Get audio files in order
-        audio_files = []
-        for chunk in sorted(chunks, key=lambda c: c.index):
-            if chunk.audio_path and chunk.audio_path.exists():
-                audio_files.append(chunk.audio_path)
-            else:
-                logger.warning(f"Missing audio for chunk {chunk.index}")
-
+        audio_files = _ordered_chunk_audio(chunks)
         if not audio_files:
             logger.error("No audio files to concatenate")
             return None
@@ -127,13 +165,18 @@ class AudioConcatenator:
             / f"chapter_{chapter_number}"
         )
         output_path = chapter_dir / "audio.wav"
+        _clear_temp_files(chapter_dir)
 
-        result = self._write_concatenated(audio_files, output_path)
-        if result:
-            # Sidecar of the inputs, so a later export can tell this audio.wav
-            # apart from one whose chunk wavs have since changed.
-            _write_manifest(result, chunks)
-        return result
+        tmp_path = output_path.with_name(output_path.name + TEMP_SUFFIX)
+        if not self._write_concatenated(audio_files, tmp_path):
+            tmp_path.unlink(missing_ok=True)
+            return None
+
+        # Wav first, manifest last: an interrupted run can then only leave a
+        # missing or stale manifest, which _audio_is_stale rebuilds from.
+        _promote(tmp_path, output_path)
+        _write_manifest(output_path, chunks)
+        return output_path
 
     def _write_concatenated(
         self,
@@ -187,13 +230,14 @@ class AudioConcatenator:
                 for audio_file in audio_files:
                     f.write(f"file '{audio_file}'\n")
 
-            # Run ffmpeg
+            # -f wav because output_path is a temp name ffmpeg can't infer from
             cmd = [
                 "ffmpeg", "-y",
                 "-f", "concat",
                 "-safe", "0",
                 "-i", str(concat_file),
                 "-c", "copy",
+                "-f", "wav",
                 str(output_path)
             ]
 
