@@ -29,6 +29,11 @@ TARGET_SR = 16000
 # Stress, length, tie-bar and separator marks stripped before comparing phones.
 _IPA_NOISE = re.compile(r"[ˈˌːˑ‍͡\s'_]")
 
+# Allophones the two sides disagree on for free: espeak writes the American flap
+# as ɾ where the recognizer often hears t, and splits schwa into ə/ɐ. Folding both
+# sides costs nothing and removed 13 false faults from the ch2 scan.
+_ALLOPHONE_FOLD = str.maketrans({"ɾ": "t", "ɐ": "ə"})
+
 
 def g2p_voice(voice: Optional[str] = None) -> str:
     """The espeak accent used to predict pronunciation, from settings unless given."""
@@ -52,8 +57,9 @@ def g2p(text: str, voice: Optional[str] = None) -> str:
 
 
 def clean_ipa(ipa: str) -> str:
-    """Drop stress/length/tie marks so only the phones themselves are compared."""
-    return _IPA_NOISE.sub("", ipa.strip())
+    """Drop stress/length/tie marks and fold allophones, so only the phones the two
+    sides could genuinely disagree about are compared."""
+    return _IPA_NOISE.sub("", ipa.strip()).translate(_ALLOPHONE_FOLD)
 
 
 def phoneme_distance(expected: str, actual: str) -> float:

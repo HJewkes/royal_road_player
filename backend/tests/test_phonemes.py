@@ -19,6 +19,13 @@ def test_clean_ipa_strips_stress_and_length_marks():
     assert clean_ipa("  ɹˈɛksəm  ") == "ɹɛksəm"
 
 
+def test_clean_ipa_folds_flap_and_open_schwa():
+    """espeak writes the flap in "better" as ɾ where the recognizer hears t, and
+    the two sides split schwa into ə/ɐ; neither difference is audible."""
+    assert clean_ipa("bˈɛɾɐ") == clean_ipa("bˈɛtə")
+    assert phoneme_distance("bɛɾɚ", "bɛtɚ") == 0.0
+
+
 def test_phoneme_distance_identical_is_zero():
     assert phoneme_distance("wɪθənʃɔ", "wɪθənʃɔ") == 0.0
 
