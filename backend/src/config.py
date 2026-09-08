@@ -41,6 +41,12 @@ class Settings(BaseSettings):
     whisper_confirm_model: str = "small"  # stronger model that confirms flagged chunks
     validation_threshold: float = 0.90
 
+    # espeak-ng voice used to predict how a word *should* sound. It must match the
+    # accent of the narrator voice and of the wav2vec2 recognizer that reads the
+    # audio back, both rhotic: under en-gb every r-coloured word ("over", "here",
+    # "career") scores ~0.5 against correct audio and floods the scan.
+    phoneme_g2p_voice: str = "en-us"
+
     # Pronunciation lexicon: respell hard words so XTTS says them correctly
     pronunciation_lexicon_path: str = str(
         Path(__file__).parent.parent.parent / "data" / "pronunciation_lexicon.json"

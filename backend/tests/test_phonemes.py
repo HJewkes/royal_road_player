@@ -4,9 +4,10 @@ import shutil
 
 import pytest
 
+from src.config import get_settings
 from src.validation.phonemes import (
     chunk_word_verdicts, clean_ipa, detect_hallucinations, g2p, g2p_sentence,
-    phone_match_distance, phoneme_distance,
+    g2p_voice, phone_match_distance, phoneme_distance,
 )
 
 espeak = pytest.mark.skipif(shutil.which("espeak-ng") is None, reason="espeak-ng not installed")
@@ -119,6 +120,25 @@ def test_unusual_word_needs_a_bigger_gap_before_it_is_called_an_xtts_fault():
     assert plain["distance"] == tagged["distance"]
     assert plain["source"] == "xtts"
     assert tagged["source"] == "whisper"
+
+
+def test_g2p_voice_defaults_to_the_configured_accent(monkeypatch):
+    monkeypatch.setattr(get_settings(), "phoneme_g2p_voice", "en-au")
+    assert g2p_voice() == "en-au"
+    assert g2p_voice("en-gb") == "en-gb"  # an explicit voice still wins
+
+
+@espeak
+def test_configured_accent_decides_whether_rhotic_audio_is_a_fault(monkeypatch):
+    """The narrator and the phoneme recognizer are both rhotic. Predicting against
+    a non-rhotic accent turns every r-coloured word into a false XTTS fault, which
+    is what flooded the DoF book 8 ch 2 scan (over/here/career, 0.5-0.67 each)."""
+    text = "he handed it over now"
+    actual = "".join(g2p_sentence(text, voice="en-us"))
+    monkeypatch.setattr(get_settings(), "phoneme_g2p_voice", "en-us")
+    assert chunk_word_verdicts(text, actual, targets=["over"])[0]["source"] == "whisper"
+    monkeypatch.setattr(get_settings(), "phoneme_g2p_voice", "en-gb")
+    assert chunk_word_verdicts(text, actual, targets=["over"])[0]["source"] == "xtts"
 
 
 def test_degenerate_span_from_duplicate_prefix_is_inconclusive_not_xtts():

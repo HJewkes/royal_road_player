@@ -30,11 +30,19 @@ TARGET_SR = 16000
 _IPA_NOISE = re.compile(r"[ˈˌːˑ‍͡\s'_]")
 
 
-def g2p(text: str, voice: str = "en-gb") -> str:
-    """Expected phoneme string for a word via espeak-ng (British English default)."""
+def g2p_voice(voice: Optional[str] = None) -> str:
+    """The espeak accent used to predict pronunciation, from settings unless given."""
+    if voice is not None:
+        return voice
+    from src.config import get_settings
+    return get_settings().phoneme_g2p_voice
+
+
+def g2p(text: str, voice: Optional[str] = None) -> str:
+    """Expected phoneme string for a word via espeak-ng."""
     try:
         out = subprocess.run(
-            ["espeak-ng", "-q", "--ipa=3", "-v", voice, text],
+            ["espeak-ng", "-q", "--ipa=3", "-v", g2p_voice(voice), text],
             capture_output=True, text=True, timeout=10, check=True,
         ).stdout
         return clean_ipa(out)
@@ -172,11 +180,11 @@ MIN_PHONES_FOR_VERDICT = 3
 MIN_SPAN_RATIO_FOR_VERDICT = 0.5
 
 
-def g2p_sentence(text: str, voice: str = "en-gb") -> list[str]:
+def g2p_sentence(text: str, voice: Optional[str] = None) -> list[str]:
     """Per-word phones for a whole sentence (context-correct), cleaned."""
     try:
         raw = subprocess.run(
-            ["espeak-ng", "-q", "--ipa=3", "-v", voice, text],
+            ["espeak-ng", "-q", "--ipa=3", "-v", g2p_voice(voice), text],
             capture_output=True, text=True, timeout=15, check=True,
         ).stdout
     except (subprocess.SubprocessError, FileNotFoundError) as e:
@@ -204,7 +212,8 @@ def _index_map(expected: str, actual: str) -> list[int]:
 HALLUCINATION_MIN_PHONES = 5
 
 
-def detect_hallucinations(chunk_text: str, actual_full: str, voice: str = "en-gb",
+def detect_hallucinations(chunk_text: str, actual_full: str,
+                          voice: Optional[str] = None,
                           min_run: int = HALLUCINATION_MIN_PHONES) -> list[dict]:
     """Find runs of audio phones that correspond to NO source text — the phantom
     babble XTTS injects (usually at boundaries). These are insertions the
@@ -255,7 +264,7 @@ def _fault_threshold(word: str, unusual) -> float:
 
 
 def chunk_word_verdicts(chunk_text: str, actual_full: str, targets=None,
-                        voice: str = "en-gb", unusual=None) -> list[dict]:
+                        voice: Optional[str] = None, unusual=None) -> list[dict]:
     """Positional phoneme verdict for specific words in a chunk.
 
     Locates each target word's expected phones inside the chunk's full expected
