@@ -186,6 +186,44 @@ class TestChapterCompletionMarker:
         assert data["title"] == "Real Title"
         assert data["source_url"] == "https://example.com/chapter/1"
 
+    def test_mark_records_duration_and_discovery_reads_it_back(self, temp_books_dir):
+        """Duration is durable because audio.wav and the chunk wavs get pruned;
+        metadata.json and the export are the only survivors."""
+        chapter_discovery = self._make_chapter(temp_books_dir)
+
+        chapter_discovery.mark_chapter_completed(
+            "12345", 1, 1, Path("/exports/ch1.mp3"), duration_seconds=4356.344671
+        )
+
+        metadata_path = chapter_discovery.get_chapter_path("12345", 1, 1) / "metadata.json"
+        assert json.loads(metadata_path.read_text())["audio_duration_seconds"] == 4356.345
+        assert chapter_discovery.get_chapter("12345", 1, 1).audio_duration_seconds == 4356.345
+
+    def test_mark_drops_the_stale_persisted_chunk_count(self, temp_books_dir):
+        """chunk_count is recomputed from disk on every read, so a stored copy is
+        dead weight that survives the chunks it counted."""
+        chapter_discovery = self._make_chapter(temp_books_dir)
+        metadata_path = chapter_discovery.get_chapter_path("12345", 1, 1) / "metadata.json"
+        data = json.loads(metadata_path.read_text())
+        data["chunk_count"] = 999
+        metadata_path.write_text(json.dumps(data, default=str))
+
+        chapter_discovery.mark_chapter_completed("12345", 1, 1, Path("/exports/ch1.mp3"))
+
+        assert "chunk_count" not in json.loads(metadata_path.read_text())
+
+    def test_mark_without_a_duration_leaves_the_field_alone(self, temp_books_dir):
+        """An unprobeable export must not overwrite a duration already recorded."""
+        chapter_discovery = self._make_chapter(temp_books_dir)
+        chapter_discovery.mark_chapter_completed(
+            "12345", 1, 1, Path("/exports/ch1.mp3"), duration_seconds=120.0
+        )
+
+        chapter_discovery.mark_chapter_completed("12345", 1, 1, Path("/exports/ch1.mp3"))
+
+        metadata_path = chapter_discovery.get_chapter_path("12345", 1, 1) / "metadata.json"
+        assert json.loads(metadata_path.read_text())["audio_duration_seconds"] == 120.0
+
     def test_is_chapter_completed_reflects_marker(self, temp_books_dir):
         chapter_discovery = self._make_chapter(temp_books_dir)
 

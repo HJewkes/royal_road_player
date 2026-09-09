@@ -75,6 +75,20 @@ def _ordered_chunk_audio(chunks: list[Chunk]) -> list[Path]:
     return audio_files
 
 
+def probe_duration_seconds(path: Path) -> Optional[float]:
+    """Length of an audio file in seconds, or None if it cannot be probed.
+
+    Never raises: a chapter that exported fine must not be reported as failed
+    just because ffprobe is unavailable or the duration is unreadable.
+    """
+    try:
+        from src.export.m4b import probe_duration_ms
+        return probe_duration_ms(path) / 1000.0
+    except Exception as e:
+        logger.warning(f"Could not probe duration of {path.name}: {e}")
+        return None
+
+
 def _write_manifest(wav_path: Path, chunks: list[Chunk]) -> None:
     """Record the inputs of a freshly concatenated audio.wav beside it."""
     manifest_path = wav_path.with_name(wav_path.name + MANIFEST_SUFFIX)
@@ -341,7 +355,8 @@ class AudioExporter:
             # Durable completion marker so a finished chapter stays recognizable
             # after audio.wav / chunk wavs are pruned.
             self.chapter_discovery.mark_chapter_completed(
-                fiction_id, book_number, chapter_number, result_path
+                fiction_id, book_number, chapter_number, result_path,
+                duration_seconds=probe_duration_seconds(result_path),
             )
         return result_path
 
