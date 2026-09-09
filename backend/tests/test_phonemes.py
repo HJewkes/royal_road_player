@@ -174,11 +174,22 @@ def test_clean_tail_is_not_an_artifact():
 
 
 @espeak
-def test_single_stray_phone_is_not_a_tail_artifact():
-    """One trailing phone is ordinary recognizer noise: 27 of ch2's 760 chunks have
-    one, against 33 with two or more."""
+def test_single_stray_phone_is_a_tail_artifact():
+    """One trailing phone is enough. This was assumed to be recognizer noise until
+    ch11's single-phone cases were listened to: all were audible."""
     text = "we need to get him here"
-    assert detect_tail_artifact(text, clean_ipa(g2p(text)) + "t") is None
+    artifact = detect_tail_artifact(text, clean_ipa(g2p(text)) + "t")
+    assert artifact is not None
+    assert artifact["phones"] == "t"
+
+
+@espeak
+def test_stray_echoing_the_final_phone_still_counts():
+    """The likeliest double-counts — a stray /l/ after "football", /ɹ/ after "here" —
+    were the clearest strays by ear, so a repeated phone gets no exemption."""
+    text = "hegemony over English women's football"
+    artifact = detect_tail_artifact(text, clean_ipa(g2p(text)) + "l")
+    assert artifact is not None
 
 
 @espeak
