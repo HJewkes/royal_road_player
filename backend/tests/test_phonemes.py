@@ -28,6 +28,20 @@ def test_clean_ipa_folds_flap_and_open_schwa():
     assert phoneme_distance("bɛɾɚ", "bɛtɚ") == 0.0
 
 
+def test_clean_ipa_folds_glottal_stop_and_syllabic_nasal():
+    """espeak writes "certain" as /sɜːʔn̩/, the recognizer reads it back as
+    /sɜtən/; both spell the same audio, and unfolded they scored 0.46 — a fault."""
+    assert clean_ipa("sˈɜːʔn̩") == "sɜtən"
+    assert clean_ipa("bˈɑːɾl̩") == "bɑtəl"
+    assert phoneme_distance("bˈʌʔn̩", "bʌtən") == 0.0
+
+
+def test_glottal_fold_keeps_t_d_contrast():
+    """ʔ and ɾ are allophones of /t/, so folding them to t is free; t and d are
+    separate phonemes and must still score apart."""
+    assert phoneme_distance("bæt", "bæd") > 0.0
+
+
 def test_cached_phones_are_folded_on_read(tmp_path):
     """Entries written before a fold change hold unfolded phones, so the fold has
     to run on read — otherwise a warm cache silently bypasses it."""
