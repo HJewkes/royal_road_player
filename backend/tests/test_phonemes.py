@@ -8,9 +8,9 @@ import pytest
 
 from src.config import get_settings
 from src.validation.phonemes import (
-    chunk_word_verdicts, clean_ipa, detect_hallucinations, g2p, g2p_sentence,
-    g2p_voice, phone_match_distance, phoneme_distance, PhonemeRecognizer,
-    XTTS_FAULT_THRESHOLD, XTTS_FAULT_THRESHOLD_SHORT,
+    admissible_phones, chunk_word_verdicts, clean_ipa, detect_hallucinations, g2p,
+    g2p_sentence, g2p_voice, phone_match_distance, phoneme_distance,
+    PhonemeRecognizer, XTTS_FAULT_THRESHOLD, XTTS_FAULT_THRESHOLD_SHORT,
 )
 
 espeak = pytest.mark.skipif(shutil.which("espeak-ng") is None, reason="espeak-ng not installed")
@@ -103,6 +103,37 @@ def test_positional_verdict_flags_garbled_word_not_neighbours():
                 chunk_word_verdicts(text, actual, targets=["Bochum", "match"])}
     assert verdicts["bochum"]["source"] == "xtts"
     assert verdicts["match"]["source"] == "whisper"  # untouched word stays low
+
+
+@espeak
+def test_reduced_function_word_is_not_a_fault():
+    """The narrator says "our" as /ɑɹ/, espeak only predicts the citation /aʊɚ/.
+    Scored against the citation alone every occurrence was a 1.0 XTTS fault."""
+    text = "we kept our heads"
+    parts = g2p_sentence(text)
+    parts[2] = "ɑɹ"  # the reduced form the audio actually contains
+    verdicts = chunk_word_verdicts(text, "".join(parts), targets=["our"])
+    assert verdicts[0]["source"] == "whisper"
+    assert verdicts[0]["distance"] == 0.0
+
+
+@espeak
+def test_weak_form_does_not_rescue_a_genuine_mismatch():
+    """Accepting a reduction must not accept anything else: "have" read as /ɪf/
+    is still a fault even though "have" carries weak forms."""
+    text = "they have the ball"
+    parts = g2p_sentence(text)
+    parts[1] = "ɪf"
+    verdicts = chunk_word_verdicts(text, "".join(parts), targets=["have"])
+    assert verdicts[0]["source"] == "xtts"
+
+
+def test_only_function_words_carry_weak_forms():
+    """A name or content word must keep exactly one admissible pronunciation, so
+    no variant can mask an XTTS mispronunciation of it."""
+    assert admissible_phones("Okafor", "oʊkəfɔɹ") == ("oʊkəfɔɹ",)
+    assert "ɑɹ" in admissible_phones("our", "aʊɚ")
+    assert "ɑɹ" in admissible_phones("Our,", "aʊɚ")  # case and punctuation
 
 
 @espeak
