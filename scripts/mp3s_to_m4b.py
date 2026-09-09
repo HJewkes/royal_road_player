@@ -185,7 +185,9 @@ def main() -> None:
     b.add_argument("--author", default="")
     b.add_argument("--cover", help="cover image (default: largest image in folder)")
     b.add_argument("--titles", help="titles file (default: Chapter N)")
-    b.add_argument("--format", choices=["both", "aac", "mp3"], default="both")
+    # AAC only by default: it is the codec Apple Books decodes, and "both" just
+    # produced a second, larger file that plays silent there.
+    b.add_argument("--format", choices=["both", "aac", "mp3"], default="aac")
     b.add_argument("--bitrate", default="128k")
     b.add_argument("--output-dir")
     b.set_defaults(func=cmd_build)
