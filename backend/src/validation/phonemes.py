@@ -290,6 +290,15 @@ def _index_map(expected: str, actual: str) -> list[int]:
 # outburst (babble XTTS emits at sentence/quote/paragraph boundaries), not STT noise.
 HALLUCINATION_MIN_PHONES = 5
 
+# XTTS also appends a phantom syllable AFTER the last word of a chunk, heard as a
+# click or a "tsch": ch2 chunk 387 ends "...here ASAP." but reads back /ɛsæp/ + /ku/,
+# and the same shape recurs as /taɪp/, /tdɔɡ/, /tɔtʃ/ on 33 of ch2's 760 chunks. The
+# general hallucination rule misses all of them because it needs 5 phones and these
+# run 2-4. A stray run at the very end earns a lower bar than a mid-utterance one:
+# there is no following speech for the recognizer to have smeared into, so a run
+# that survives to the end of the audio is real.
+TAIL_STRAY_MIN_PHONES = 2
+
 
 def detect_hallucinations(chunk_text: str, actual_full: str,
                           voice: Optional[str] = None,
@@ -317,6 +326,32 @@ def detect_hallucinations(chunk_text: str, actual_full: str,
                 "severity": round(min(1.0, 0.5 + 0.06 * (len(run) - min_run)), 3),
             })
     return out
+
+
+def detect_tail_artifact(chunk_text: str, actual_full: str,
+                         voice: Optional[str] = None,
+                         min_phones: int = TAIL_STRAY_MIN_PHONES) -> Optional[dict]:
+    """Phantom phones appended after a chunk's last expected phone, or None.
+
+    Only the final alignment opcode is considered, so this fires on audio that runs
+    past the text and not on a mispronounced last word: the stray run must be longer
+    than whatever expected phones it displaced, which keeps "paths" read as /ɑðz/
+    (a substitution the word detector already reports) out of the results.
+    """
+    expected = clean_ipa(g2p(chunk_text, voice))
+    actual = clean_ipa(actual_full)
+    if not expected or not actual:
+        return None
+    tag, i1, i2, j1, j2 = SequenceMatcher(None, expected, actual).get_opcodes()[-1]
+    stray, displaced = actual[j1:j2], expected[i1:i2]
+    if tag == "equal" or len(stray) < min_phones or len(stray) <= len(displaced):
+        return None
+    return {
+        "phones": stray,
+        "length": len(stray),
+        "displaced": displaced,
+        "severity": round(min(1.0, 0.4 + 0.1 * len(stray)), 3),
+    }
 
 
 def _locate(sub: str, full: str) -> tuple:

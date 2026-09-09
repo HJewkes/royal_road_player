@@ -91,13 +91,17 @@ def _chunk_targets(text: str) -> list[str]:
 
 def _detect(chunk, recognizer):
     """Detector pass: a phone verdict for every scoreable source word, plus any
-    hallucinated outbursts. Cheapest model here, so it runs on every chunk."""
-    from src.validation.phonemes import chunk_word_verdicts, detect_hallucinations
+    hallucinated outbursts and a phantom syllable past the last word. Cheapest
+    model here, so it runs on every chunk."""
+    from src.validation.phonemes import (
+        chunk_word_verdicts, detect_hallucinations, detect_tail_artifact,
+    )
     phones = recognizer.recognize_wav(chunk.audio_path)
     targets = _chunk_targets(chunk.text)
     verdicts = chunk_word_verdicts(chunk.text, phones, targets=targets,
                                    unusual={w for w in targets if is_unusual_word(w)})
-    return verdicts, detect_hallucinations(chunk.text, phones)
+    return (verdicts, detect_hallucinations(chunk.text, phones),
+            detect_tail_artifact(chunk.text, phones))
 
 
 def _annotate(defect, verdicts):
@@ -125,6 +129,18 @@ def _undescribed_finding(chunk, verdict, base):
             "phoneme_source": verdict["source"], "phoneme_distance": verdict["distance"],
             "actual_phones": verdict["actual_phones"],
             "expected_phones": verdict["expected_phones"]}
+
+
+def _tail_finding(artifact, chunk, base):
+    """A phantom syllable after the chunk's last word: audible as a click or a
+    "tsch" right at the join, with no source word to hang a verdict on. The
+    context is the text it runs on from, since there is no word to centre on."""
+    return {**base, "kind": "tail_artifact", "expected": "(end of chunk)",
+            "heard": f"/{artifact['phones']}/", "severity": artifact["severity"],
+            "causes": ["chunk_boundary"], "audio_start": None, "audio_end": None,
+            "context": chunk.text[-60:].strip(), "phoneme_source": "xtts",
+            "phoneme_distance": None, "actual_phones": artifact["phones"],
+            "position": 1.0}
 
 
 def _hallucination_finding(halluc, base):
@@ -155,16 +171,20 @@ def _scan_chapter(fiction_id, book, ch, base_stt, confirm_stt, discovery, min_se
     findings = []
     chunks = [c for c in discovery.list_chunks(fiction_id, book, ch) if c.has_audio]
     for chunk in chunks:
-        verdicts, hallucinations = _detect(chunk, recognizer)
+        verdicts, hallucinations, tail = _detect(chunk, recognizer)
         faults = [v for v in verdicts if v["source"] == "xtts" and v["distance"] >= min_sev]
         hallucinations = [h for h in hallucinations if h["severity"] >= min_sev]
-        if not faults and not hallucinations:
+        if tail and tail["severity"] < min_sev:
+            tail = None
+        if not faults and not hallucinations and not tail:
             continue
         base = {"fiction_id": fiction_id, "book": book, "chapter": ch,
                 "chunk": chunk.index, "wav": str(chunk.audio_path)}
         findings.extend(_describe(chunk, faults, verdicts, base, min_sev,
                                   base_stt, confirm_stt))
         findings.extend(_hallucination_finding(h, base) for h in hallucinations)
+        if tail:
+            findings.append(_tail_finding(tail, chunk, base))
     return findings, len(chunks)
 
 

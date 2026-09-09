@@ -8,9 +8,10 @@ import pytest
 
 from src.config import get_settings
 from src.validation.phonemes import (
-    admissible_phones, chunk_word_verdicts, clean_ipa, detect_hallucinations, g2p,
-    g2p_sentence, g2p_voice, phone_match_distance, phoneme_distance,
-    PhonemeRecognizer, XTTS_FAULT_THRESHOLD, XTTS_FAULT_THRESHOLD_SHORT,
+    admissible_phones, chunk_word_verdicts, clean_ipa, detect_hallucinations,
+    detect_tail_artifact, g2p, g2p_sentence, g2p_voice, phone_match_distance,
+    phoneme_distance, PhonemeRecognizer, XTTS_FAULT_THRESHOLD,
+    XTTS_FAULT_THRESHOLD_SHORT,
 )
 
 espeak = pytest.mark.skipif(shutil.which("espeak-ng") is None, reason="espeak-ng not installed")
@@ -152,6 +153,41 @@ def test_detect_hallucination_flags_inserted_babble():
     halluc = detect_hallucinations(text, actual)
     assert halluc and any("wʌnʃɹi" in h["phones"] for h in halluc)
     assert halluc[0]["length"] >= 5
+
+
+@espeak
+def test_tail_artifact_flags_phantom_syllable_after_last_word():
+    """XTTS appends a syllable the text never had — ch2 chunk 387 ends "...ASAP."
+    but the audio runs on into /ku/, heard as a click. Too short (2-4 phones) for
+    the general hallucination rule, which needs 5."""
+    text = "we need to get him here"
+    artifact = detect_tail_artifact(text, clean_ipa(g2p(text)) + "tʃə")
+    assert artifact is not None
+    assert artifact["phones"] == "tʃə"
+    assert artifact["length"] == 3
+
+
+@espeak
+def test_clean_tail_is_not_an_artifact():
+    text = "we need to get him here"
+    assert detect_tail_artifact(text, clean_ipa(g2p(text))) is None
+
+
+@espeak
+def test_single_stray_phone_is_not_a_tail_artifact():
+    """One trailing phone is ordinary recognizer noise: 27 of ch2's 760 chunks have
+    one, against 33 with two or more."""
+    text = "we need to get him here"
+    assert detect_tail_artifact(text, clean_ipa(g2p(text)) + "t") is None
+
+
+@espeak
+def test_mispronounced_last_word_is_not_a_tail_artifact():
+    """A substitution on the final word is the word detector's job. The stray run
+    must be LONGER than what it displaced, so "paths" read as /ɑðz/ stays out."""
+    text = "the same career paths"
+    actual = clean_ipa(g2p(text))[:-4] + "ɑðz"
+    assert detect_tail_artifact(text, actual) is None
 
 
 @espeak
