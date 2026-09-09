@@ -214,10 +214,18 @@ MIN_SPAN_RATIO_FOR_VERDICT = 0.5
 # inventory. The class is deliberately closed and function-word-only: a content
 # word or name XTTS mispronounces must still flag, so nothing here has a variant
 # that could mask one.
+#
+# Every entry is a weak form from the standard English list. Measured on ch2, the
+# ones that actually beat the citation are could (26/28), our (27/40), her (17/26),
+# but (57/142), for (55/113), and, can, had, has, have, him, his, should, some,
+# that, their, them, were, would, your. XTTS renders does/from/there/was at full
+# strength there, so those four never fire yet; they stay because they are standard
+# and cost nothing. Add an entry only if it is a documented weak form — "than" was
+# dropped because clean_ipa already yields ðən, and just/must/what/because were
+# dropped as non-canonical and never observed.
 _WEAK_FORMS: dict[str, tuple[str, ...]] = {
     "and": ("ənd", "ən"),
     "are": ("ɚ",),
-    "because": ("bɪkəz", "kəz"),
     "but": ("bət",),
     "can": ("kən",),
     "could": ("kəd",),
@@ -230,19 +238,15 @@ _WEAK_FORMS: dict[str, tuple[str, ...]] = {
     "her": ("ɚ",),
     "him": ("ɪm",),
     "his": ("ɪz",),
-    "just": ("dʒəs",),
-    "must": ("məs",),
     "our": ("ɑɹ",),
     "should": ("ʃəd",),
     "some": ("səm",),
-    "than": ("ðən",),
     "that": ("ðət",),
     "their": ("ðɚ",),
     "them": ("ðəm", "əm"),
     "there": ("ðɚ",),
     "was": ("wəz",),
     "were": ("wɚ",),
-    "what": ("wət",),
     "would": ("wəd",),
     "your": ("jɚ",),
 }
