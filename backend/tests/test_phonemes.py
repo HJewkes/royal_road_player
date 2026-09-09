@@ -8,9 +8,9 @@ import pytest
 
 from src.config import get_settings
 from src.validation.phonemes import (
-    chunk_word_verdicts, clean_ipa, detect_hallucinations, g2p, g2p_sentence,
-    g2p_voice, phone_match_distance, phoneme_distance, PhonemeRecognizer,
-    XTTS_FAULT_THRESHOLD, XTTS_FAULT_THRESHOLD_SHORT,
+    admissible_phones, chunk_word_verdicts, clean_ipa, detect_hallucinations, g2p,
+    g2p_sentence, g2p_voice, phone_match_distance, phoneme_distance,
+    PhonemeRecognizer, XTTS_FAULT_THRESHOLD, XTTS_FAULT_THRESHOLD_SHORT,
 )
 
 espeak = pytest.mark.skipif(shutil.which("espeak-ng") is None, reason="espeak-ng not installed")
@@ -26,6 +26,20 @@ def test_clean_ipa_folds_flap_and_open_schwa():
     the two sides split schwa into ə/ɐ; neither difference is audible."""
     assert clean_ipa("bˈɛɾɐ") == clean_ipa("bˈɛtə")
     assert phoneme_distance("bɛɾɚ", "bɛtɚ") == 0.0
+
+
+def test_clean_ipa_folds_glottal_stop_and_syllabic_nasal():
+    """espeak writes "certain" as /sɜːʔn̩/, the recognizer reads it back as
+    /sɜtən/; both spell the same audio, and unfolded they scored 0.46 — a fault."""
+    assert clean_ipa("sˈɜːʔn̩") == "sɜtən"
+    assert clean_ipa("bˈɑːɾl̩") == "bɑtəl"
+    assert phoneme_distance("bˈʌʔn̩", "bʌtən") == 0.0
+
+
+def test_glottal_fold_keeps_t_d_contrast():
+    """ʔ and ɾ are allophones of /t/, so folding them to t is free; t and d are
+    separate phonemes and must still score apart."""
+    assert phoneme_distance("bæt", "bæd") > 0.0
 
 
 def test_cached_phones_are_folded_on_read(tmp_path):
@@ -89,6 +103,37 @@ def test_positional_verdict_flags_garbled_word_not_neighbours():
                 chunk_word_verdicts(text, actual, targets=["Bochum", "match"])}
     assert verdicts["bochum"]["source"] == "xtts"
     assert verdicts["match"]["source"] == "whisper"  # untouched word stays low
+
+
+@espeak
+def test_reduced_function_word_is_not_a_fault():
+    """The narrator says "our" as /ɑɹ/, espeak only predicts the citation /aʊɚ/.
+    Scored against the citation alone every occurrence was a 1.0 XTTS fault."""
+    text = "we kept our heads"
+    parts = g2p_sentence(text)
+    parts[2] = "ɑɹ"  # the reduced form the audio actually contains
+    verdicts = chunk_word_verdicts(text, "".join(parts), targets=["our"])
+    assert verdicts[0]["source"] == "whisper"
+    assert verdicts[0]["distance"] == 0.0
+
+
+@espeak
+def test_weak_form_does_not_rescue_a_genuine_mismatch():
+    """Accepting a reduction must not accept anything else: "have" read as /ɪf/
+    is still a fault even though "have" carries weak forms."""
+    text = "they have the ball"
+    parts = g2p_sentence(text)
+    parts[1] = "ɪf"
+    verdicts = chunk_word_verdicts(text, "".join(parts), targets=["have"])
+    assert verdicts[0]["source"] == "xtts"
+
+
+def test_only_function_words_carry_weak_forms():
+    """A name or content word must keep exactly one admissible pronunciation, so
+    no variant can mask an XTTS mispronunciation of it."""
+    assert admissible_phones("Okafor", "oʊkəfɔɹ") == ("oʊkəfɔɹ",)
+    assert "ɑɹ" in admissible_phones("our", "aʊɚ")
+    assert "ɑɹ" in admissible_phones("Our,", "aʊɚ")  # case and punctuation
 
 
 @espeak
