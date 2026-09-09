@@ -128,12 +128,18 @@ class BookSummary(BaseModel):
 # ============================================================================
 
 class ChapterMetadata(BaseModel):
-    """Metadata stored in chapter's metadata.json file."""
+    """Metadata stored in chapter's metadata.json file.
+
+    No chunk_count here on purpose: discovery recomputes it from the chunk files
+    on every read, so a persisted copy was dead weight that also went stale the
+    moment chunks were pruned. Files still carrying the old field are ignored.
+    """
     chapter_number: int
     title: str
     source_url: Optional[str] = None
     scraped_at: Optional[datetime] = None
-    chunk_count: int = 0
+    # Probed from the exported file at completion: audio.wav and the chunk wavs
+    # get pruned, but the export and this file survive.
     audio_duration_seconds: Optional[float] = None
     # Durable completion marker, written at export time. Survives pruning of
     # audio.wav / chunk wavs, so "was this chapter finished?" can be answered

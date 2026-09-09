@@ -357,13 +357,16 @@ class ChapterDiscovery:
         book_number: int,
         chapter_number: int,
         export_path: Path,
+        duration_seconds: Optional[float] = None,
     ) -> None:
         """Record a durable completion marker in the chapter's metadata.json.
 
         Written at export time. Because it lives in metadata.json — which
         disk-cleanup leaves in place — a completed chapter stays distinguishable
         from a genuinely interrupted one even after audio.wav and chunk wavs are
-        pruned. Existing metadata fields are preserved (read-merge-write).
+        pruned. `duration_seconds` is durable for the same reason: it is the only
+        record of a chapter's length once the audio it was measured from is gone.
+        Existing metadata fields are preserved (read-merge-write).
         """
         chapter_dir = self.get_chapter_path(fiction_id, book_number, chapter_number)
         metadata_path = chapter_dir / "metadata.json"
@@ -380,6 +383,9 @@ class ChapterDiscovery:
         data.setdefault("title", f"Chapter {chapter_number}")
         data["completed_at"] = datetime.now().isoformat()
         data["export_path"] = str(export_path)
+        data.pop("chunk_count", None)  # recomputed from disk; never read from here
+        if duration_seconds is not None:
+            data["audio_duration_seconds"] = round(duration_seconds, 3)
 
         chapter_dir.mkdir(parents=True, exist_ok=True)
         with open(metadata_path, "w") as f:
@@ -435,14 +441,20 @@ class ChapterDiscovery:
         with open(normalized_path) as f:
             return f.read()
 
-    def _check_export_exists(self, fiction_id: str, book_number: int, chapter_number: int) -> bool:
-        """Check if an export file exists for this chapter in the exports directory."""
-        # Get book title from metadata
+    def find_export(
+        self, fiction_id: str, book_number: int, chapter_number: int
+    ) -> Optional[Path]:
+        """The chapter's export file located by naming convention, or None.
+
+        Recovers the export for chapters finished before export_path was recorded
+        in metadata.json, which is the only way to measure them once audio.wav is
+        pruned.
+        """
         book_dir = self.books_dir / fiction_id / f"book_{book_number}"
         metadata_path = book_dir / "metadata.json"
 
         if not metadata_path.exists():
-            return False
+            return None
 
         try:
             with open(metadata_path) as f:
@@ -451,20 +463,21 @@ class ChapterDiscovery:
         except Exception:
             book_title = f"Book {book_number}"
 
-        sanitized_title = sanitize_filename(book_title)
-        export_dir = self.exports_dir / sanitized_title
-
+        export_dir = self.exports_dir / sanitize_filename(book_title)
         if not export_dir.exists():
-            return False
+            return None
 
-        # Check for any supported format
         for fmt in ["wav", "m4b", "mp3"]:
             filename = sanitize_filename(f"{book_title} - Chapter {chapter_number}.{fmt}")
             export_path = export_dir / filename
             if export_path.exists():
-                return True
+                return export_path
 
-        return False
+        return None
+
+    def _check_export_exists(self, fiction_id: str, book_number: int, chapter_number: int) -> bool:
+        """Whether an export file exists for this chapter."""
+        return self.find_export(fiction_id, book_number, chapter_number) is not None
 
 
 class ChunkDiscovery:
