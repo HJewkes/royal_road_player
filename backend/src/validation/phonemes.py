@@ -297,7 +297,14 @@ HALLUCINATION_MIN_PHONES = 5
 # run 2-4. A stray run at the very end earns a lower bar than a mid-utterance one:
 # there is no following speech for the recognizer to have smeared into, so a run
 # that survives to the end of the audio is real.
-TAIL_STRAY_MIN_PHONES = 2
+#
+# One phone is enough. This started at 2 on the assumption that a single trailing
+# phone was recognizer noise; listening to ch11's single-phone cases disproved that.
+# All were audible, including /l/ after "football" and /ɹ/ after "here", where the
+# stray repeats the last word's own final phone — the cases most likely to be a
+# double-count were the clearest strays by ear. So there is deliberately no rule
+# excluding a stray that echoes the preceding phone.
+TAIL_STRAY_MIN_PHONES = 1
 
 
 def detect_hallucinations(chunk_text: str, actual_full: str,
