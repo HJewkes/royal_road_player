@@ -107,13 +107,96 @@ def _sentence(text, word):
     return " ".join(text.split())[:200]
 
 
-def main():
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--limit", type=int, default=9, help="chunks to attempt")
-    ap.add_argument("--takes", type=int, default=len(PARAM_TAKES), help="regeneration takes")
-    args = ap.parse_args()
+def _select_tails(disc, recog, target, limit):
+    """Chunks whose audio runs past the last word, from a live scan.
 
-    disc, tts, recog = ChunkDiscovery(), get_tts_engine(), get_phoneme_recognizer()
+    The word-defect path reads a curated dataset; tail artifacts have no such
+    dataset and no flagged word, so they are found by scanning the chapter.
+    """
+    from src.validation.phonemes import detect_tail_artifact
+    fid, book, ch = target
+    out = []
+    for chunk in disc.list_chunks(fid, book, ch):
+        if not chunk.has_audio:
+            continue
+        art = detect_tail_artifact(chunk.text, recog.recognize_wav(chunk.audio_path))
+        if art:
+            out.append((chunk, art))
+    out.sort(key=lambda t: -t[1]["severity"])
+    return out[:limit]
+
+
+def _word_faults(text, wav, recog):
+    """The set of words this audio genuinely mispronounces, for regression checks."""
+    from src.validation.defects import is_unusual_word
+    targets = [t.original for t in tokenize(text)
+               if not t.norm.startswith("#") and len(t.norm) >= 3]
+    if not targets:
+        return set()
+    phones = recog.recognize_wav(wav, use_cache=False)
+    verdicts = chunk_word_verdicts(text, phones, targets=targets,
+                                   unusual={w for w in targets if is_unusual_word(w)})
+    return {v["word"] for v in verdicts if v["source"] == "xtts"}
+
+
+def _tail_take(chunk, wav, recog, shipped_faults):
+    """Score one regenerated take: (stray length, new word faults broken)."""
+    from src.validation.phonemes import detect_tail_artifact
+    art = detect_tail_artifact(chunk.text, recog.recognize_wav(wav, use_cache=False))
+    broke = _word_faults(chunk.text, wav, recog) - shipped_faults
+    return (len(broke), art["length"] if art else 0), art, broke
+
+
+def _best_tail_take(chunk, before, args, tts, recog):
+    """Regenerate one chunk and return the best take, plus whether to keep it.
+
+    Asymmetric on purpose: a take that clears the stray but mangles a word mid-chunk
+    is worse than what shipped, so any newly broken word disqualifies it outright.
+    """
+    shipped_faults = _word_faults(chunk.text, chunk.audio_path, recog)
+    takes = []
+    for label, params in PARAM_TAKES[:args.takes]:
+        wav = Path(tempfile.mkstemp(suffix=".wav")[1])
+        tts.synthesize(chunk.text, wav, **params)
+        key, art, broke = _tail_take(chunk, wav, recog, shipped_faults)
+        takes.append((key, label, art, broke))
+    takes.sort(key=lambda t: t[0])
+    (nbroke, nstray), label, art, broke = takes[0]
+    return {
+        "chunk": chunk.index, "before_phones": before["phones"],
+        "before_len": before["length"], "after_phones": art["phones"] if art else "",
+        "after_len": nstray, "take": label, "broke_words": sorted(broke),
+        "kept": nbroke == 0 and nstray < before["length"],
+        "context": chunk.text[-60:].strip(),
+    }
+
+
+def _run_tails(args, disc, tts, recog):
+    """Regenerate tail-artifact chunks and keep only takes that are strictly better."""
+    target = (args.fiction_id, args.book, args.chapter)
+    selected = _select_tails(disc, recog, target, args.limit)
+    print(f"Tail fix pass over {len(selected)} flagged chunks, {args.takes} takes each\n")
+
+    results = []
+    for chunk, before in selected:
+        r = _best_tail_take(chunk, before, args, tts, recog)
+        results.append(r)
+        verdict = (("CLEAN" if r["after_len"] == 0 else f"shorter /{r['after_phones']}/")
+                   if r["kept"] else
+                   (f"rejected (broke {r['broke_words']})" if r["broke_words"] else "no gain"))
+        print(f"  chunk {r['chunk']:3d} /{r['before_phones']}/ -> [{r['take']}] {verdict}")
+
+    n, kept = len(results), sum(1 for r in results if r["kept"])
+    cleared = sum(1 for r in results if r["kept"] and r["after_len"] == 0)
+    print(f"\nCleared outright: {cleared}/{n}. Improved and kept: {kept}/{n}.")
+    out = OUT.with_name("tail_fix_results.json")
+    out.write_text(json.dumps({"attempted": n, "cleared": cleared, "kept": kept,
+                               "results": results}, indent=2))
+    print(f"Wrote {out}")
+
+
+def _run_words(args, disc, tts, recog):
+    """The original path: rescue a flagged WORD in a curated bad chunk."""
     selected = _select(args.limit)
     print(f"Fix pass over {len(selected)} bad chunks, {args.takes} takes each\n")
 
@@ -159,6 +242,25 @@ def main():
                                "results": results}, indent=2))
     print(f"\nImprovement rate: {improved}/{attempted} = {rate:.0f}%")
     print(f"Wrote {OUT} ({OUT.stat().st_size // 1024} KB)")
+
+
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--limit", type=int, default=9, help="chunks to attempt")
+    ap.add_argument("--takes", type=int, default=len(PARAM_TAKES), help="regeneration takes")
+    ap.add_argument("--tails", action="store_true",
+                    help="fix tail artifacts in a chapter instead of dataset word defects")
+    ap.add_argument("--fiction-id", default="124774")
+    ap.add_argument("--book", type=int, default=8)
+    ap.add_argument("--chapter", type=int, default=2)
+    args = ap.parse_args()
+
+    disc, tts, recog = ChunkDiscovery(), get_tts_engine(), get_phoneme_recognizer()
+    if args.tails:
+        return _run_tails(args, disc, tts, recog)
+    return _run_words(args, disc, tts, recog)
 
 
 if __name__ == "__main__":
