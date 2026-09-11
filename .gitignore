@@ -436,3 +436,8 @@ local_config.py
 
 # Generated review demos (large base64-embedded audio; rebuild from scripts)
 demo/
+
+# Codex AI local tooling (not this project's config; see CLAUDE.md instead)
+.agents/
+.codex/
+AGENTS.md
