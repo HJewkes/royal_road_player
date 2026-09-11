@@ -257,8 +257,42 @@ publish_chapter() {
     notify "Audiobook chapter blocked" "Book $book chapter $ch stuck at $wavs/$texts chunks — see logs/autopull.log"
     return 1
   fi
+  repair_tails "$book" "$ch"
   export_chapter "$book" "$ch"
   publish_feed
+}
+
+# --- Step 9b: repair the phantom tail syllable before exporting ---
+# XTTS appends a stray syllable past the last word on ~4.5% of chunks, heard as a
+# click or a "tsch" at the join. Regenerating clears it on about two thirds and
+# improves four fifths (ch2 23/35 and 28/35, ch11 19/29 and 23/29 — stable across
+# both chapters). Runs BEFORE export so audio.wav is built from repaired chunks.
+#
+# Capped on purpose. Each chunk costs 3 CPU synthesis takes and this sits inside an
+# unattended 15-minute tick, so an uncapped pass on a bad chapter could stall the
+# run. Chunks left unfixed stay flagged for a later sweep; per-chunk outcome is a
+# stochastic draw, so a second attempt often succeeds where the first did not.
+#
+# fix_pass loads XTTS itself rather than going through the API, so this briefly
+# holds a SECOND copy of the model alongside the backend's: measured 4.94 GB for
+# fix_pass against 36 GB of RAM here, which is comfortable. Re-check that before
+# running this on a smaller box. Set TAIL_REPAIR_LIMIT=0 to disable.
+TAIL_REPAIR_LIMIT="${TAIL_REPAIR_LIMIT:-12}"
+repair_tails() {
+  local book=$1 ch=$2
+  if [ "$TAIL_REPAIR_LIMIT" -le 0 ]; then
+    return 0
+  fi
+  log "Repairing tail artifacts (cap $TAIL_REPAIR_LIMIT) for book $book chapter $ch…"
+  if "$PYTHON" "$SCRIPT_DIR/fix_pass.py" --tails --apply \
+      --fiction-id "$FICTION_ID" --book "$book" --chapter "$ch" \
+      --limit "$TAIL_REPAIR_LIMIT" >> "$LOG_FILE" 2>&1; then
+    log "Tail repair complete"
+  else
+    # Never block a chapter over a cosmetic fix: unrepaired audio is still
+    # shippable and the flagged chunks stay detectable for a later sweep.
+    log "WARNING: tail repair failed (non-fatal); exporting unrepaired"
+  fi
 }
 
 # Re-enter the pipeline for one interrupted chapter at the stage it died at.
