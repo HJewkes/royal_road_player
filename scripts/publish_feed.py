@@ -137,6 +137,31 @@ def _needs_upload(local_path: Path, remote: tuple[int, str] | None) -> bool:
     return etag.lower() != _file_md5(local_path)
 
 
+def find_key_collisions(episodes_by_slug: dict) -> dict[str, list[Path]]:
+    """Object keys that more than one local file claims.
+
+    Two exports of the same chapter under different book titles collide on one
+    key. Because their bytes differ, whichever the walk reaches last wins and
+    `_needs_upload` is true again on the next run, so the pair re-uploads forever.
+    Seen live: a Book 5 chapter 1 left over from a malformed book title
+    ("creating LitRPG and Progression Fantasy novels") shadowing the corrected
+    export, re-uploading ~27 MB on every publish.
+    """
+    by_key: dict[str, list[Path]] = {}
+    for episodes in episodes_by_slug.values():
+        for ep in episodes:
+            by_key.setdefault(ep.object_key, []).append(ep.path)
+    return {k: v for k, v in by_key.items() if len(v) > 1}
+
+
+def _warn_on_key_collisions(episodes_by_slug: dict) -> None:
+    for key, paths in sorted(find_key_collisions(episodes_by_slug).items()):
+        print(f"WARNING: {len(paths)} local files map to {key} — they will "
+              f"re-upload on every run until one is removed:", file=sys.stderr)
+        for p in sorted(paths):
+            print(f"    {p.name}", file=sys.stderr)
+
+
 def main() -> int:
     settings = get_settings()
     do_upload = "--no-upload" not in sys.argv and _upload_configured(settings)
@@ -172,7 +197,9 @@ def main() -> int:
 
     uploaded = 0
     replaced = 0
-    for slug, episodes in discover_episodes(settings.exports_dir).items():
+    all_episodes = discover_episodes(settings.exports_dir)
+    _warn_on_key_collisions(all_episodes)
+    for slug, episodes in all_episodes.items():
         for ep in episodes:
             key = prefixed(ep.object_key, prefix)
             remote = existing.get(key)
