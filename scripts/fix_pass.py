@@ -126,46 +126,80 @@ def _select_tails(disc, recog, target, limit):
     return out[:limit]
 
 
-def _word_faults(text, wav, recog):
-    """The set of words this audio genuinely mispronounces, for regression checks."""
+# How much further an ALREADY-faulty word must degrade to count as a regression.
+# Only applied to words the take leaves over the fault threshold: a whole-chunk
+# re-synthesis re-renders every word, so sub-threshold distances jitter freely and
+# scoring that jitter rejects good takes. Measured — guarding every word at 0.06 cut
+# the ch2 keep rate from 5/6 to 2/5, rejecting on words like "across" and "years"
+# that were fine in both renderings.
+WORSE_MARGIN = MARGIN
+
+
+def _word_distances(text, wav, recog):
+    """Per-word phone distance for this audio, keyed by word.
+
+    Distances, not a set of over-threshold words: a word that was ALREADY faulty and
+    then degrades further never enters or leaves such a set, so set membership cannot
+    see it get worse. Measured on ch2, 1 of 35 tail-flagged chunks carries a
+    pre-existing word fault, so that blind spot is narrow but real.
+    """
     from src.validation.defects import is_unusual_word
     targets = [t.original for t in tokenize(text)
                if not t.norm.startswith("#") and len(t.norm) >= 3]
     if not targets:
-        return set()
+        return {}
     phones = recog.recognize_wav(wav, use_cache=False)
     verdicts = chunk_word_verdicts(text, phones, targets=targets,
                                    unusual={w for w in targets if is_unusual_word(w)})
-    return {v["word"] for v in verdicts if v["source"] == "xtts"}
+    return {v["word"]: (v["distance"], v["source"] == "xtts") for v in verdicts}
 
 
-def _tail_take(chunk, wav, recog, shipped_faults):
-    """Score one regenerated take: (stray length, new word faults broken)."""
+def _regressions(shipped, take):
+    """Words this take actively damages.
+
+    A word counts only if the take leaves it genuinely mispronounced AND it is worse
+    than it shipped — either it was fine before, or it was already faulty and has
+    degraded past WORSE_MARGIN. That is the union of the two failure modes: a good
+    word breaking, and a bad word getting worse without ever leaving the fault set.
+    """
+    out = []
+    for word, (dist, faulty) in take.items():
+        if not faulty:
+            continue
+        was_dist, was_faulty = shipped.get(word, (0.0, False))
+        if not was_faulty or dist > was_dist + WORSE_MARGIN:
+            out.append(word)
+    return sorted(out)
+
+
+def _tail_take(chunk, wav, recog, shipped_dist):
+    """Score one regenerated take: (words made worse, stray length)."""
     from src.validation.phonemes import detect_tail_artifact
     art = detect_tail_artifact(chunk.text, recog.recognize_wav(wav, use_cache=False))
-    broke = _word_faults(chunk.text, wav, recog) - shipped_faults
+    broke = _regressions(shipped_dist, _word_distances(chunk.text, wav, recog))
     return (len(broke), art["length"] if art else 0), art, broke
 
 
 def _best_tail_take(chunk, before, args, tts, recog):
     """Regenerate one chunk and return the best take, plus whether to keep it.
 
-    Asymmetric on purpose: a take that clears the stray but mangles a word mid-chunk
-    is worse than what shipped, so any newly broken word disqualifies it outright.
+    Asymmetric on purpose: a take that clears the stray but pronounces any word worse
+    than the shipped audio is worse overall, so it is disqualified outright regardless
+    of how good its tail is.
     """
-    shipped_faults = _word_faults(chunk.text, chunk.audio_path, recog)
+    shipped_dist = _word_distances(chunk.text, chunk.audio_path, recog)
     takes = []
     for label, params in PARAM_TAKES[:args.takes]:
         wav = Path(tempfile.mkstemp(suffix=".wav")[1])
         tts.synthesize(chunk.text, wav, **params)
-        key, art, broke = _tail_take(chunk, wav, recog, shipped_faults)
+        key, art, broke = _tail_take(chunk, wav, recog, shipped_dist)
         takes.append((key, label, wav, art, broke))
     takes.sort(key=lambda t: t[0])
     (nbroke, nstray), label, wav, art, broke = takes[0]
     return {
         "chunk": chunk.index, "before_phones": before["phones"],
         "before_len": before["length"], "after_phones": art["phones"] if art else "",
-        "after_len": nstray, "take": label, "broke_words": sorted(broke),
+        "after_len": nstray, "take": label, "broke_words": broke,
         "kept": nbroke == 0 and nstray < before["length"],
         "context": chunk.text[-60:].strip(), "wav": str(wav),
     }
@@ -174,17 +208,21 @@ def _best_tail_take(chunk, before, args, tts, recog):
 def _apply_take(chunk, result):
     """Swap a winning take over the shipped chunk wav, atomically.
 
-    Concatenation is keyed on chunk mtimes, so replacing the file is enough for the
-    next export to rebuild audio.wav — no other bookkeeping is needed.
+    Reuses export's own `_promote` rather than reimplementing it, so the temp file,
+    both fsyncs (file and parent directory) and the rename stay identical to how
+    audio.wav is published. Concatenation is keyed on chunk size and mtime, which
+    os.replace updates, so the next export rebuilds without further bookkeeping.
     """
-    import os
     import shutil
+    from src.export.concatenator import _promote
     src, dst = Path(result["wav"]), Path(chunk.audio_path)
-    tmp = dst.with_suffix(".wav.tmp")
-    shutil.copyfile(src, tmp)
-    with open(tmp, "rb") as f:
-        os.fsync(f.fileno())
-    os.replace(tmp, dst)
+    tmp = dst.with_name(dst.name + ".tmp")
+    try:
+        shutil.copyfile(src, tmp)
+        _promote(tmp, dst)
+    except Exception:
+        tmp.unlink(missing_ok=True)  # never leave a half-written .tmp behind
+        raise
 
 
 def _run_tails(args, disc, tts, recog):

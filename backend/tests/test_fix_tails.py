@@ -120,6 +120,33 @@ def test_take_that_clears_the_tail_but_breaks_a_word_is_rejected(tmp_path):
 
 
 @espeak
+def test_already_faulty_word_getting_worse_is_also_a_regression(tmp_path):
+    """Set membership could not see this: a word over the fault threshold in BOTH
+    renderings never enters or leaves the set, so only distances catch it."""
+    shipped = {"need": (0.50, True), "here": (0.10, False)}
+    take = {"need": (0.90, True), "here": (0.10, False)}
+    assert fix_pass._regressions(shipped, take) == ["need"]
+
+
+def test_recognizer_noise_below_the_margin_is_not_a_regression():
+    shipped = {"need": (0.50, True)}
+    take = {"need": (0.50 + fix_pass.WORSE_MARGIN / 2, True)}
+    assert fix_pass._regressions(shipped, take) == []
+
+
+def test_a_word_absent_from_shipped_counts_from_zero():
+    assert fix_pass._regressions({}, {"need": (0.9, True)}) == ["need"]
+
+
+def test_sub_threshold_drift_on_a_healthy_word_is_not_a_regression():
+    """Whole-chunk re-synthesis re-renders every word, so distances jitter. Only
+    words the take leaves genuinely faulty can disqualify it."""
+    shipped = {"across": (0.10, False)}
+    take = {"across": (0.40, False)}
+    assert fix_pass._regressions(shipped, take) == []
+
+
+@espeak
 def test_every_param_take_is_tried(tmp_path):
     clean = clean_ipa(g2p(TEXT))
     shipped = tmp_path / "shipped.wav"
@@ -146,3 +173,17 @@ def test_apply_replaces_the_chunk_wav_atomically(tmp_path):
 
     assert shipped.read_bytes() == b"NEW"
     assert not list(tmp_path.glob("*.tmp")), "temp file must not survive"
+
+
+@espeak
+def test_apply_leaves_no_temp_file_when_the_copy_fails(tmp_path):
+    """A raise mid-copy must not strand a .wav.tmp beside the real chunk."""
+    shipped = tmp_path / "shipped.wav"
+    shipped.write_bytes(b"OLD")
+    chunk = FakeChunk(1, TEXT, shipped)
+
+    with pytest.raises(OSError):
+        fix_pass._apply_take(chunk, {"wav": str(tmp_path / "does-not-exist.wav")})
+
+    assert shipped.read_bytes() == b"OLD", "the shipped wav must be untouched"
+    assert not list(tmp_path.glob("*.tmp"))
