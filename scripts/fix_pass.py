@@ -159,16 +159,32 @@ def _best_tail_take(chunk, before, args, tts, recog):
         wav = Path(tempfile.mkstemp(suffix=".wav")[1])
         tts.synthesize(chunk.text, wav, **params)
         key, art, broke = _tail_take(chunk, wav, recog, shipped_faults)
-        takes.append((key, label, art, broke))
+        takes.append((key, label, wav, art, broke))
     takes.sort(key=lambda t: t[0])
-    (nbroke, nstray), label, art, broke = takes[0]
+    (nbroke, nstray), label, wav, art, broke = takes[0]
     return {
         "chunk": chunk.index, "before_phones": before["phones"],
         "before_len": before["length"], "after_phones": art["phones"] if art else "",
         "after_len": nstray, "take": label, "broke_words": sorted(broke),
         "kept": nbroke == 0 and nstray < before["length"],
-        "context": chunk.text[-60:].strip(),
+        "context": chunk.text[-60:].strip(), "wav": str(wav),
     }
+
+
+def _apply_take(chunk, result):
+    """Swap a winning take over the shipped chunk wav, atomically.
+
+    Concatenation is keyed on chunk mtimes, so replacing the file is enough for the
+    next export to rebuild audio.wav — no other bookkeeping is needed.
+    """
+    import os
+    import shutil
+    src, dst = Path(result["wav"]), Path(chunk.audio_path)
+    tmp = dst.with_suffix(".wav.tmp")
+    shutil.copyfile(src, tmp)
+    with open(tmp, "rb") as f:
+        os.fsync(f.fileno())
+    os.replace(tmp, dst)
 
 
 def _run_tails(args, disc, tts, recog):
@@ -184,6 +200,9 @@ def _run_tails(args, disc, tts, recog):
         verdict = (("CLEAN" if r["after_len"] == 0 else f"shorter /{r['after_phones']}/")
                    if r["kept"] else
                    (f"rejected (broke {r['broke_words']})" if r["broke_words"] else "no gain"))
+        if r["kept"] and args.apply:
+            _apply_take(chunk, r)
+            verdict += " [APPLIED]"
         print(f"  chunk {r['chunk']:3d} /{r['before_phones']}/ -> [{r['take']}] {verdict}")
 
     n, kept = len(results), sum(1 for r in results if r["kept"])
@@ -252,6 +271,9 @@ def main():
     ap.add_argument("--takes", type=int, default=len(PARAM_TAKES), help="regeneration takes")
     ap.add_argument("--tails", action="store_true",
                     help="fix tail artifacts in a chapter instead of dataset word defects")
+    ap.add_argument("--apply", action="store_true",
+                    help="with --tails, overwrite the chunk wav for kept takes "
+                         "(default is report-only; re-export rebuilds audio.wav)")
     ap.add_argument("--fiction-id", default="124774")
     ap.add_argument("--book", type=int, default=8)
     ap.add_argument("--chapter", type=int, default=2)

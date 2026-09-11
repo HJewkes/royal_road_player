@@ -130,3 +130,19 @@ def test_every_param_take_is_tried(tmp_path):
     fix_pass._best_tail_take(chunk, {"phones": "tʃə", "length": 3}, _args(3), tts, recog)
     assert len(tts.calls) == 3
     assert {"temperature": 0.85} in tts.calls
+
+
+@espeak
+def test_apply_replaces_the_chunk_wav_atomically(tmp_path):
+    """--apply swaps the winning take over the shipped wav; concatenation is keyed
+    on chunk mtimes, so nothing else needs updating for a re-export to pick it up."""
+    shipped = tmp_path / "shipped.wav"
+    shipped.write_bytes(b"OLD")
+    winner = tmp_path / "winner.wav"
+    winner.write_bytes(b"NEW")
+    chunk = FakeChunk(1, TEXT, shipped)
+
+    fix_pass._apply_take(chunk, {"wav": str(winner)})
+
+    assert shipped.read_bytes() == b"NEW"
+    assert not list(tmp_path.glob("*.tmp")), "temp file must not survive"
