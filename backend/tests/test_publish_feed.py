@@ -131,3 +131,42 @@ def test_publish_skips_an_unchanged_chapter(monkeypatch, tmp_path):
     _publish(monkeypatch, tmp_path, client)
 
     assert client.puts == ["test-series/feed.xml"]
+
+
+def test_find_key_collisions_spots_two_files_claiming_one_object_key(tmp_path):
+    """A stale export under an old book title shadows the corrected one: both map
+    to the same key, their bytes differ, so the pair re-uploads on every run."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "publish_feed", Path(__file__).resolve().parents[2] / "scripts" / "publish_feed.py")
+    pf = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(pf)
+
+    class Ep:
+        def __init__(self, key, path):
+            self.object_key, self.path = key, Path(path)
+
+    episodes = {"soccer": [
+        Ep("soccer/book-05/chapter-001.mp3", tmp_path / "Correct Title - Chapter 1.mp3"),
+        Ep("soccer/book-05/chapter-001.mp3", tmp_path / "Malformed Title - Chapter 1.mp3"),
+        Ep("soccer/book-05/chapter-002.mp3", tmp_path / "Correct Title - Chapter 2.mp3"),
+    ]}
+    collisions = pf.find_key_collisions(episodes)
+    assert list(collisions) == ["soccer/book-05/chapter-001.mp3"]
+    assert len(collisions["soccer/book-05/chapter-001.mp3"]) == 2
+
+
+def test_no_collision_reported_when_every_key_is_unique(tmp_path):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "publish_feed", Path(__file__).resolve().parents[2] / "scripts" / "publish_feed.py")
+    pf = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(pf)
+
+    class Ep:
+        def __init__(self, key, path):
+            self.object_key, self.path = key, Path(path)
+
+    episodes = {"s": [Ep("s/book-01/chapter-001.mp3", tmp_path / "a.mp3"),
+                      Ep("s/book-01/chapter-002.mp3", tmp_path / "b.mp3")]}
+    assert pf.find_key_collisions(episodes) == {}
