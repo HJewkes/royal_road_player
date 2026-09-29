@@ -1,7 +1,7 @@
 """In-memory job queue with chapter-by-chapter processing.
 
-Processes audio generation jobs one chunk at a time, prioritizing
-completion of chapters before moving to the next.
+Processes audio generation jobs with one or more concurrent consumers,
+prioritizing completion of chapters before moving to the next.
 """
 
 import asyncio
@@ -68,8 +68,8 @@ class JobQueue:
 
         # Processing state
         self._is_running = False
-        self._current_job: Optional[Job] = None
-        self._processor_task: Optional[asyncio.Task] = None
+        self._running: dict[str, Job] = {}  # job_id -> Job, one per busy consumer
+        self._processor_tasks: list[asyncio.Task] = []
 
         # Callbacks
         self._on_chunk_complete: Optional[Callable] = None
@@ -171,6 +171,7 @@ class JobQueue:
         process_fn: Callable[[Job], tuple[Path, float]],
         on_chunk_complete: Optional[Callable] = None,
         on_chapter_complete: Optional[Callable] = None,
+        consumers: int = 1,
     ) -> None:
         """
         Start background processing of jobs.
@@ -179,6 +180,7 @@ class JobQueue:
             process_fn: Function to process a job, returns (audio_path, duration)
             on_chunk_complete: Callback when a chunk completes
             on_chapter_complete: Callback when all chunks for a chapter complete
+            consumers: Jobs processed at once; each runs process_fn in its own thread
         """
         if self._is_running:
             logger.warning("Processor already running")
@@ -188,23 +190,26 @@ class JobQueue:
         self._on_chapter_complete = on_chapter_complete
         self._is_running = True
 
-        logger.info("Starting job processor...")
-        self._processor_task = asyncio.create_task(self._process_loop(process_fn))
+        logger.info(f"Starting job processor with {consumers} consumer(s)...")
+        self._processor_tasks = [
+            asyncio.create_task(self._process_loop(process_fn)) for _ in range(consumers)
+        ]
 
     async def stop_processing(self) -> None:
         """Stop the background processor."""
         self._is_running = False
-        if self._processor_task:
-            self._processor_task.cancel()
-            try:
-                await self._processor_task
-            except asyncio.CancelledError:
-                pass
-            self._processor_task = None
+        for task in self._processor_tasks:
+            task.cancel()
+        await asyncio.gather(*self._processor_tasks, return_exceptions=True)
+        self._processor_tasks = []
         logger.info("Job processor stopped")
 
     async def _process_loop(self, process_fn: Callable) -> None:
-        """Main processing loop."""
+        """One consumer's loop.
+
+        Picking a job and marking it RUNNING happen with no await in between, so
+        consumers sharing the event loop can never claim the same job.
+        """
         while self._is_running:
             try:
                 job = self.get_next_job()
@@ -215,7 +220,7 @@ class JobQueue:
                     continue
 
                 # Process the job
-                self._current_job = job
+                self._running[job.job_id] = job
                 job.status = JobStatus.RUNNING
                 job.started_at = datetime.utcnow()
 
@@ -240,6 +245,8 @@ class JobQueue:
                     )
 
                     logger.info(f"✅ Completed: {job.job_id}")
+                    # Decided before any await, so only the consumer finishing the last job sees it.
+                    chapter_done = self._is_chapter_complete(job.chapter_key)
 
                     # Trigger callback
                     if self._on_chunk_complete:
@@ -248,8 +255,7 @@ class JobQueue:
                         except Exception as e:
                             logger.error(f"Chunk callback error: {e}")
 
-                    # Check if chapter is complete
-                    if self._is_chapter_complete(job.chapter_key):
+                    if chapter_done:
                         logger.info(f"📚 Chapter complete: {job.chapter_key}")
                         if self._on_chapter_complete:
                             try:
@@ -278,13 +284,22 @@ class JobQueue:
                     logger.error(f"❌ Failed: {job.job_id} - {e}")
 
                 finally:
-                    self._current_job = None
+                    self._running.pop(job.job_id, None)
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"Processor error: {e}")
                 await asyncio.sleep(1)
+
+    @property
+    def _current_job(self) -> Optional[Job]:
+        """The earliest running job, reported as the queue's current position."""
+        running = sorted(
+            self._running.values(),
+            key=lambda j: (j.book_number, j.chapter_number, j.chunk_index),
+        )
+        return running[0] if running else None
 
     def _is_chapter_complete(self, chapter_key: str) -> bool:
         """Check if all jobs for a chapter are complete."""

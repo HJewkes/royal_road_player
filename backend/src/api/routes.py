@@ -45,9 +45,7 @@ from src.scraper import get_scraper
 from src.text import TextChunker, TextNormalizer, TableConverter, StatBlockConverter
 from src.text.commentary import apply_recorded_removals, load_records
 from src.text.renderings import UnrenderedSpecBlockError, render_or_raise
-from src.tts import get_tts_engine
-from src.tts.verified import synthesize_verified
-from src.validation.phonemes import get_phoneme_recognizer
+from src.tts.pool import RenderPool
 from src.utils import (
     extract_series_name,
     FictionIdPath,
@@ -81,6 +79,8 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down...")
     job_queue = get_job_queue()
     await job_queue.stop_processing()
+    if _render_pool is not None:
+        _render_pool.shutdown()
     download_queue = get_download_queue()
     await download_queue.stop_processing()
 
@@ -106,35 +106,30 @@ app.add_middleware(
 # Background Processor
 # ============================================================================
 
+_render_pool: Optional[RenderPool] = None
+
+
 async def start_processor():
     """Start the background job processor."""
+    global _render_pool
     settings = get_settings()
     queue = get_job_queue()
-    tts = get_tts_engine()
     exporter = get_exporter()
 
-    # Load the phoneme recognizer once so self-healing synthesis doesn't reload it
-    # per chunk. If verification is off (or the model is unavailable) this is skipped.
-    recognizer = None
-    if settings.verify_synthesis:
-        try:
-            recognizer = get_phoneme_recognizer()
-        except Exception as exc:
-            logger.warning(f"Self-healing synthesis disabled — recognizer load failed: {exc}")
+    # Each worker loads its own XTTS model and phoneme recognizer on first use.
+    pool = _render_pool = RenderPool(
+        workers=max(1, settings.max_concurrent_chunks),
+        threads_per_worker=settings.tts_threads_per_worker,
+        verify=settings.verify_synthesis,
+        retries=settings.verify_max_retries,
+    )
 
     def process_job(job: Job) -> tuple[Path, float]:
         """Process a single chunk job, self-healing hallucinated takes."""
         chunks_dir = get_chunk_discovery().get_chunks_dir(
             job.fiction_id, job.book_number, job.chapter_number
         )
-        output_path = chunks_dir / f"{job.chunk_index:03d}.wav"
-
-        if recognizer is not None:
-            return synthesize_verified(
-                tts, job.text, output_path,
-                recognizer=recognizer, retries=settings.verify_max_retries,
-            )
-        return tts.synthesize(job.text, output_path)
+        return pool.render(job.text, chunks_dir / f"{job.chunk_index:03d}.wav")
 
     async def on_chapter_complete(fiction_id: str, book_number: int, chapter_number: int):
         """Export chapter when all chunks complete."""
@@ -152,6 +147,7 @@ async def start_processor():
     await queue.start_processing(
         process_fn=process_job,
         on_chapter_complete=on_chapter_complete,
+        consumers=pool.workers,
     )
 
 
