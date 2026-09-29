@@ -57,3 +57,20 @@ def test_curly_trailing_quote_stripped():
     text = "It ended there.”"
     chunks = TextChunker().chunk(text)
     assert chunks[0].text == "It ended there."
+
+
+def test_split_never_lands_inside_a_dotted_initialism():
+    chunks = TextChunker().chunk("aaa bbb F. A. Cup is here.", max_chars=12)
+    assert any("F. A." in c.text for c in chunks)
+
+
+def test_spelled_initialism_period_is_not_a_sentence_end():
+    text = (
+        "He left early. The board met again that night to argue over the budget, "
+        "and nobody in the room wanted to be the one who told the manager that the club "
+        "would be answering to the league with the F. A. watching closely from London, "
+        "because every decision now carried a cost they could not easily explain to anyone."
+    )
+    chunks = TextChunker().chunk(text)
+    assert chunks[0].text == "He left early."
+    assert all(not c.text.endswith("F. A.") for c in chunks)

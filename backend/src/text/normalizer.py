@@ -6,17 +6,15 @@ Simplified version that applies all normalization steps for clean TTS output.
 import re
 from typing import Optional
 
+from src.text.initialisms import spell_initialisms
 from src.text.lexicon import get_lexicon
 
 
 class TextNormalizer:
     """Normalizes text for optimal TTS generation."""
 
-    # Default acronym expansions
+    # Dotted abbreviations; spell_initialisms handles bare all-caps initialisms.
     ACRONYM_MAP = {
-        'FC': 'F C',
-        'PA': 'P A',
-        'CA': 'C A',
         'U.S.': 'United States',
         'U.K.': 'United Kingdom',
         'Mr.': 'Mister',
@@ -163,11 +161,11 @@ class TextNormalizer:
         return text
 
     def normalize_acronyms(self, text: str) -> str:
-        """Normalize acronyms by expanding from map."""
+        """Expand mapped abbreviations, then spell out all-caps initialisms."""
         for acronym, expansion in sorted(self.ACRONYM_MAP.items(), key=lambda x: -len(x[0])):
             pattern = r'\b' + re.escape(acronym) + r'\b'
             text = re.sub(pattern, expansion, text)
-        return text
+        return spell_initialisms(text)
 
     def normalize_time_formats(self, text: str) -> str:
         """Normalize time formats to spoken form."""
