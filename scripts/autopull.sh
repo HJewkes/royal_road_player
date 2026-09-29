@@ -291,7 +291,7 @@ repair_tails() {
   if [ "$TAIL_REPAIR_LIMIT" -le 0 ]; then
     return 0
   fi
-  log "Repairing tail artifacts (cap $TAIL_REPAIR_LIMIT) for book $book chapter $ch…"
+  log "Repairing tail artifacts (cap $TAIL_REPAIR_LIMIT) for book $book chapter ${ch}…"
   if "$PYTHON" "$SCRIPT_DIR/fix_pass.py" --tails --apply \
       --fiction-id "$FICTION_ID" --book "$book" --chapter "$ch" \
       --limit "$TAIL_REPAIR_LIMIT" >> "$LOG_FILE" 2>&1; then
