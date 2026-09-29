@@ -57,3 +57,8 @@ def test_curly_trailing_quote_stripped():
     text = "It ended there.”"
     chunks = TextChunker().chunk(text)
     assert chunks[0].text == "It ended there."
+
+
+def test_split_never_lands_inside_a_dotted_initialism():
+    chunks = TextChunker().chunk("aaa bbb F. A. Cup is here.", max_chars=12)
+    assert any("F. A." in c.text for c in chunks)

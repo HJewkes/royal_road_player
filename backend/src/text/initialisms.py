@@ -1,9 +1,10 @@
 """Spell out all-caps initialisms so XTTS reads them letter by letter.
 
 XTTS reads an unfamiliar all-caps token as a word ("ASAP" -> "asaps", "FA" ->
-"fa"). Spacing the letters ("A S A P") makes it say the letter names. But not
-every all-caps token is an initialism: this corpus shouts ordinary words ("I
-did NOT", "BEST") and names acronyms that are said as words (DOVE, UEFA, FIFA).
+"fa"). Dotted letters ("A. S. A. P.") make it say the letter names; bare spaced
+letters do not, because a lone "A" is read as the article. But not every
+all-caps token is an initialism: this corpus shouts ordinary words ("I did
+NOT", "BEST") and names acronyms that are said as words (DOVE, UEFA, FIFA).
 The rule therefore branches on token shape:
 
 - Two letters: spell out, except a closed set of English two-letter words that
@@ -15,7 +16,7 @@ The rule therefore branches on token shape:
   so a general rule here would spell out "NOT" and "BEST".
 
 A trailing lowercase plural "s" is kept on the last letter as "'s" ("CEOs" ->
-"C E O's"), and tokens inside contractions ("I'LL", "DON'T") are left alone.
+"C. E. O's"), and tokens inside contractions ("I'LL", "DON'T") are left alone.
 """
 
 import re
@@ -41,6 +42,7 @@ SPELLED_INITIALISMS = frozenset({
 _VOWELS = frozenset("AEIOUY")
 _ROMAN_NUMERAL = re.compile(r"[IVX]+")
 _CAPS_TOKEN = re.compile(r"(?<![\w'’])([A-Z]{2,5})(s?)\b(?!['’][A-Z])")
+_SENTENCE_END = tuple(".!?…")
 
 
 def is_initialism(token: str) -> bool:
@@ -58,9 +60,13 @@ def _spell(match: re.Match) -> str:
     token, plural = match.group(1), match.group(2)
     if not is_initialism(token):
         return match.group(0)
-    return " ".join(token) + ("'s" if plural else "")
+    letters = ". ".join(token)
+    if plural:
+        return letters + "'s"
+    ends_sentence = match.string.startswith(_SENTENCE_END, match.end())
+    return letters if ends_sentence else letters + "."
 
 
 def spell_initialisms(text: str) -> str:
-    """Replace every initialism in ``text`` with its space-separated letters."""
+    """Replace every initialism in ``text`` with its dotted letters."""
     return _CAPS_TOKEN.sub(_spell, text)
