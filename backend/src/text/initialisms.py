@@ -8,9 +8,10 @@ NOT", "BEST") and names acronyms that are said as words (DOVE, UEFA, FIFA).
 The rule therefore branches on token shape:
 
 - Two letters: spell out, except a closed set of English two-letter words that
-  only appear shouted (TO, IS, MY...), am/pm and Roman numerals.
+  only appear shouted (TO, IS, MY...), interjections (OI, UM, OK), am/pm and
+  Roman numerals.
 - Three to five letters with no vowel (Y counts as a vowel): spell out, since
-  it cannot be read as a word (BBC, WSL, CFC), except interjections (HMM).
+  it cannot be read as a word (BBC, WSL, CFC), except interjections (HMM, HMPH).
 - Three to five letters with a vowel: spell out only if listed in
   ``SPELLED_INITIALISMS``. In this corpus most such tokens are shouted words,
   so a general rule here would spell out "NOT" and "BEST".
@@ -22,14 +23,15 @@ A trailing lowercase plural "s" is kept on the last letter as "'s" ("CEOs" ->
 import re
 
 SHOUTED_TWO_LETTER_WORDS = frozenset({
-    "AH", "AM", "AN", "AS", "AT", "AU", "BE", "BY", "DO", "EH", "GO", "HA",
-    "HE", "HI", "IF", "IN", "IS", "IT", "ME", "MY", "NO", "OF", "OH", "ON",
-    "OR", "OW", "PM", "SO", "TO", "UP", "US", "WE", "YA", "YO",
+    "AH", "AM", "AN", "AS", "AT", "AU", "AW", "BE", "BY", "DO", "EH", "GO",
+    "HA", "HE", "HI", "IF", "IN", "IS", "IT", "ME", "MM", "MY", "NO", "OF",
+    "OH", "OI", "OK", "ON", "OR", "OW", "PM", "SO", "TO", "UH", "UM", "UP",
+    "US", "WE", "YA", "YO",
 })
 
 VOWELLESS_INTERJECTIONS = frozenset({
-    "BRR", "GRR", "HMM", "HMMM", "MMM", "MMMM", "PFFT", "PSST", "SHH", "SHHH",
-    "TSK", "ZZZ",
+    "BRR", "GRR", "GRRR", "HMM", "HMMM", "HMPH", "MMM", "MMMM", "PFFT", "PSST",
+    "SHH", "SHHH", "TSK", "ZZZ",
 })
 
 SPELLED_INITIALISMS = frozenset({

@@ -136,13 +136,12 @@ class TextChunker:
 
         return None
 
-    # A split between dotted letters ("F. | A. Cup") would voice half an initialism.
-    _LETTER_BEFORE = re.compile(r'(?:^|\s)[A-Z]\.$')
-    _LETTER_AFTER = re.compile(r'^[A-Z]\.')
+    # A spelled letter's period ("the F. A.") is not a sentence end, so never split after one.
+    _SPELLED_LETTER_END = re.compile(r'(?:^|\s)[A-Z]\.$')
 
     def _would_break_pattern(self, before: str, after: str) -> bool:
         """Check if splitting here would break a protected pattern."""
-        if self._LETTER_BEFORE.search(before.rstrip()) and self._LETTER_AFTER.match(after.lstrip()):
+        if self._SPELLED_LETTER_END.search(before.rstrip()):
             return True
         before_words = ' '.join(before.rstrip().split()[-3:])
         after_words = ' '.join(after.lstrip().split()[:3])

@@ -62,6 +62,14 @@ def test_rule_branches(text, expected):
     assert spell_initialisms(text) == expected
 
 
+@pytest.mark.parametrize(
+    "interjection", ["OI", "UH", "UM", "AW", "MM", "OK", "HMPH", "GRRR"]
+)
+def test_interjections_stay_words(interjection):
+    text = f"{interjection}, you there!"
+    assert spell_initialisms(text) == text
+
+
 def test_normalizer_spells_initialisms_end_to_end():
     out = TextNormalizer().normalize("The FA wants it ASAP, said the CEO.")
     assert out == "The F. A. wants it A. S. A. P., said the C. E. O."
