@@ -17,6 +17,9 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
 
+      - name: Install espeak-ng
+        run: sudo apt-get update && sudo apt-get install -y espeak-ng
+
       - name: Install backend dependencies
         run: pip install -r backend/requirements.txt
 
