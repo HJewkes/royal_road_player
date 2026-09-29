@@ -161,6 +161,7 @@ def test_mps_fallback_env_var_is_set_before_torch_is_imported():
 
         sys.meta_path.insert(0, Recorder())
         import src.api.routes  # noqa: F401
+        seen["after_import"] = os.environ.get("PYTORCH_ENABLE_MPS_FALLBACK")
         print(json.dumps(seen))
         """
     )
@@ -171,4 +172,7 @@ def test_mps_fallback_env_var_is_set_before_torch_is_imported():
         [sys.executable, "-c", probe], capture_output=True, text=True, env=env, check=True
     )
 
-    assert json.loads(result.stdout.strip().splitlines()[-1]) == {"env": "1"}
+    seen = json.loads(result.stdout.strip().splitlines()[-1])
+    assert seen.pop("after_import") == "1"
+    # CI installs no torch, so the import chain may never reach it; when it does, the var must already be set.
+    assert seen in ({}, {"env": "1"})
