@@ -114,15 +114,23 @@ ensure_backend() {
   python main.py >> "$LOG_FILE" 2>&1 &
   BACKEND_PID=$!
 
-  for i in $(seq 1 30); do
+  # Importing torch and loading models under a loaded machine (load average 165
+  # on 2026-09-29) outlasted the old 30s wait, so allow far longer.
+  local wait=${BACKEND_START_WAIT:-180}
+  for i in $(seq 1 "$wait"); do
     sleep 1
     if curl -sf "$API/api/queue/status" > /dev/null 2>&1; then
-      log "Backend started (PID $BACKEND_PID)"
+      log "Backend started after ${i}s (PID $BACKEND_PID)"
       return 0
+    fi
+    if ! kill -0 "$BACKEND_PID" 2>/dev/null; then
+      log "ERROR: Backend process exited during startup"
+      exit 1
     fi
   done
 
-  log "ERROR: Backend failed to start"
+  log "ERROR: Backend not ready after ${wait}s; stopping it"
+  kill "$BACKEND_PID" 2>/dev/null || true
   exit 1
 }
 
