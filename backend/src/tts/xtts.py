@@ -50,6 +50,30 @@ def _mps_can_run_speaker_encoder(torch) -> bool:
         return False
 
 
+def _memoize_conditioning(model) -> None:
+    """Compute a voice sample's conditioning latents once instead of per sentence.
+
+    tts_to_file splits a chunk into sentences and re-derives the speaker latents
+    from the reference wav for every one of them, although they depend only on the
+    file and the conditioning settings. Conditioning is deterministic (load, slice,
+    encode; no sampling), so reusing it leaves the audio byte-identical. The key
+    carries the file's mtime and the model's device, so a replaced sample or a
+    CPU retry after an MPS failure recomputes rather than reusing stale tensors.
+    """
+    compute = model.get_conditioning_latents
+    cache = {}
+
+    def cached(audio_path, **params):
+        paths = audio_path if isinstance(audio_path, list) else [audio_path]
+        stamps = tuple((str(p), os.stat(p).st_mtime_ns) for p in paths)
+        key = (stamps, str(model.device), tuple(sorted(params.items())))
+        if key not in cache:
+            cache[key] = compute(audio_path=audio_path, **params)
+        return cache[key]
+
+    model.get_conditioning_latents = cached
+
+
 class XTTSEngine:
     """XTTS v2 TTS engine."""
 
@@ -86,6 +110,7 @@ class XTTSEngine:
                 gpu=False,
                 progress_bar=True
             )
+            _memoize_conditioning(self._tts.synthesizer.tts_model)
 
             # Move to device
             if self._device != "cpu":

@@ -59,7 +59,11 @@ class Settings(BaseSettings):
 
     # Processing settings
     enable_background_processor: bool = True
-    max_concurrent_chunks: int = 1  # XTTS is GPU-bound, run one at a time
+    # Synthesis worker processes, each holding its own XTTS model (~2 GB). On CPU,
+    # two workers splitting the cores beat one using all of them (see tts/pool.py).
+    max_concurrent_chunks: int = 2
+    # Torch threads per worker; 0 splits torch's default evenly across workers.
+    tts_threads_per_worker: int = 0
 
     # Patreon settings
     patreon_session_id: str = ""
