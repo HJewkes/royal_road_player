@@ -136,8 +136,13 @@ class TextChunker:
 
         return None
 
+    # A spelled letter's period ("the F. A.") is not a sentence end, so never split after one.
+    _SPELLED_LETTER_END = re.compile(r'(?:^|\s)[A-Z]\.$')
+
     def _would_break_pattern(self, before: str, after: str) -> bool:
         """Check if splitting here would break a protected pattern."""
+        if self._SPELLED_LETTER_END.search(before.rstrip()):
+            return True
         before_words = ' '.join(before.rstrip().split()[-3:])
         after_words = ' '.join(after.lstrip().split()[:3])
         combined = before_words + ' ' + after_words
