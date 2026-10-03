@@ -143,3 +143,60 @@ def test_the_manifest_written_after_a_crash_free_run_matches_the_chunks(
     assert [c["index"] for c in manifest["chunks"]] == [1, 2, 3]
     assert _export() is not None
     assert calls["concat"] == 1
+
+
+@pytest.fixture
+def real_convert(monkeypatch):
+    """Stub concatenation only, so export runs the real _convert_audio."""
+
+    def fake_concat(self, audio_files, output_path):
+        output_path.write_bytes(b"".join(f.read_bytes() for f in audio_files))
+        return output_path
+
+    monkeypatch.setattr(AudioConcatenator, "_write_concatenated", fake_concat)
+
+
+def _fake_ffmpeg(monkeypatch, *, crash: bool):
+    """Stand in for ffmpeg: write to its output argument, then succeed or die."""
+
+    def run(cmd, **kwargs):
+        if cmd[0] != "ffmpeg":
+            return SimpleNamespace(returncode=1, stdout="", stderr="not ffmpeg")
+        Path(cmd[-1]).write_bytes(b"partial" if crash else b"encoded mp3")
+        if crash:
+            raise KeyboardInterrupt("machine went down mid-encode")
+        return SimpleNamespace(returncode=0, stderr="")
+
+    monkeypatch.setattr(concat_module.subprocess, "run", run)
+
+
+def _mp3_path(tmp_path: Path) -> Path:
+    return tmp_path / "exports" / "Book 1" / "Book 1 - Chapter 1.mp3"
+
+
+def test_a_crash_mid_encode_keeps_the_previous_mp3(chapter_dir, real_convert, tmp_path, monkeypatch):
+    _fake_ffmpeg(monkeypatch, crash=False)
+    assert _export() is not None
+    mp3 = _mp3_path(tmp_path)
+    assert mp3.read_bytes() == b"encoded mp3"
+
+    _fake_ffmpeg(monkeypatch, crash=True)
+    with pytest.raises(KeyboardInterrupt):
+        _export(force=True)
+
+    assert mp3.read_bytes() == b"encoded mp3"
+
+
+def test_a_crash_on_the_first_encode_leaves_no_mp3(chapter_dir, real_convert, tmp_path, monkeypatch):
+    _fake_ffmpeg(monkeypatch, crash=True)
+    with pytest.raises(KeyboardInterrupt):
+        _export()
+
+    assert not _mp3_path(tmp_path).exists()
+
+
+def test_a_successful_encode_leaves_no_temp_file(chapter_dir, real_convert, tmp_path, monkeypatch):
+    _fake_ffmpeg(monkeypatch, crash=False)
+    assert _export() == _mp3_path(tmp_path)
+
+    assert list(_mp3_path(tmp_path).parent.glob("*.tmp")) == []

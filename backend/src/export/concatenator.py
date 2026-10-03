@@ -18,6 +18,14 @@ logger = logging.getLogger(__name__)
 MANIFEST_SUFFIX = ".manifest.json"
 TEMP_SUFFIX = ".tmp"
 
+# format -> (ffmpeg muxer, codec args); the muxer is explicit because temp names hide it.
+ENCODINGS = {
+    # AAC in an M4B container, mono 48 kbps for speech; +faststart is critical for seeking.
+    "m4b": ("ipod", ["-ac", "1", "-c:a", "aac", "-b:a", "48k", "-movflags", "+faststart"]),
+    # Mono 22.05 kHz VBR q6 (~115 kbps avg), the audiobook-standard speech settings.
+    "mp3": ("mp3", ["-ac", "1", "-ar", "22050", "-c:a", "libmp3lame", "-q:a", "6"]),
+}
+
 
 def _fsync_path(path: Path) -> None:
     """Flush a file or directory to disk so a later rename survives a crash."""
@@ -379,58 +387,26 @@ class AudioExporter:
         output_path: Path,
         format: str,
     ) -> Optional[Path]:
-        """Convert audio to specified format using ffmpeg."""
+        """Encode to output_path via a temp file, so a crash never truncates it."""
+        if format not in ENCODINGS:
+            logger.error(f"Unknown format: {format}")
+            return None
+        muxer, codec_args = ENCODINGS[format]
+        tmp_path = output_path.with_name(output_path.name + TEMP_SUFFIX)
+        cmd = ["ffmpeg", "-y", "-i", str(input_path), *codec_args, "-f", muxer, str(tmp_path)]
         try:
-            codec_args = []
-
-            if format == "m4b":
-                # AAC audio in M4B container (audiobook format)
-                # Optimized for spoken word: mono, 48kbps AAC
-                # -movflags +faststart is critical for proper seeking
-                codec_args = [
-                    "-ac", "1",  # Mono
-                    "-c:a", "aac",
-                    "-b:a", "48k",  # 48kbps is plenty for speech
-                    "-movflags", "+faststart",
-                ]
-            elif format == "mp3":
-                # Audiobook-optimized MP3:
-                # - VBR quality 6 (~115kbps avg) - excellent for speech with variable complexity
-                # - 22050 Hz sample rate - standard for audiobooks, half the file size
-                # - Mono - speech doesn't need stereo
-                codec_args = [
-                    "-ac", "1",  # Mono
-                    "-ar", "22050",  # 22.05 kHz sample rate (audiobook standard)
-                    "-c:a", "libmp3lame",
-                    "-q:a", "6",  # VBR quality 6 (~115kbps avg, range 5=~130kbps to 7=~100kbps)
-                ]
-            else:
-                logger.error(f"Unknown format: {format}")
-                return None
-
-            cmd = [
-                "ffmpeg", "-y",
-                "-i", str(input_path),
-                *codec_args,
-                str(output_path)
-            ]
-
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-            )
-
-            if result.returncode == 0:
-                logger.info(f"✅ Exported: {output_path}")
-                return output_path
-            else:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            if result.returncode != 0:
                 logger.error(f"ffmpeg failed: {result.stderr}")
                 return None
-
+            _promote(tmp_path, output_path)
         except Exception as e:
             logger.error(f"Audio conversion failed: {e}")
             return None
+        finally:
+            tmp_path.unlink(missing_ok=True)
+        logger.info(f"✅ Exported: {output_path}")
+        return output_path
 
     def _sanitize_filename(self, name: str) -> str:
         """Make a filename safe for filesystem use."""
