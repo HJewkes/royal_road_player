@@ -140,6 +140,41 @@ def test_interrupted_stage_ignores_pruned_completed_chapter(tmp_path):
     assert pending_work.interrupted_stage(chapter) is None
 
 
+def _record_export(chapter_dir: Path, export_path: Path) -> None:
+    (chapter_dir / "metadata.json").write_text(
+        json.dumps({"completed_at": "2026-10-02T17:19:04", "export_path": str(export_path)})
+    )
+
+
+def test_completed_chapter_with_an_empty_export_resumes_at_export(tmp_path):
+    """A crash mid-encode after completed_at was written left a 0-byte mp3 (b8 ch17)."""
+    _make_book(tmp_path, 8, 17, 17)
+    chapter = _chapter(tmp_path, 8, 17)
+    _make_chunks(chapter, 12, 12)
+    mp3 = tmp_path / "Chapter 17.mp3"
+    mp3.write_bytes(b"")
+    _record_export(chapter, mp3)
+    assert pending_work.interrupted_stage(chapter) == "export"
+
+
+def test_completed_chapter_with_a_missing_export_resumes_at_export(tmp_path):
+    _make_book(tmp_path, 8, 17, 17)
+    chapter = _chapter(tmp_path, 8, 17)
+    _make_chunks(chapter, 12, 12)
+    _record_export(chapter, tmp_path / "gone.mp3")
+    assert pending_work.interrupted_stage(chapter) == "export"
+
+
+def test_completed_chapter_with_a_good_export_needs_nothing(tmp_path):
+    _make_book(tmp_path, 8, 17, 17)
+    chapter = _chapter(tmp_path, 8, 17)
+    _make_chunks(chapter, 12, 12)
+    mp3 = tmp_path / "Chapter 17.mp3"
+    mp3.write_bytes(b"ID3 audio")
+    _record_export(chapter, mp3)
+    assert pending_work.interrupted_stage(chapter) is None
+
+
 def test_interrupted_stage_ignores_undownloaded_chapter(tmp_path):
     _make_book(tmp_path, 7, 11, 10)
     assert pending_work.interrupted_stage(_chapter(tmp_path, 7, 11)) is None

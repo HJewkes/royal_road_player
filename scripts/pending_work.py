@@ -54,6 +54,15 @@ def _on_disk_max_book(fiction_dir: Path) -> int:
     return highest
 
 
+def _metadata(chapter_dir: Path) -> dict:
+    """The chapter's metadata.json, or {} if missing or unreadable."""
+    try:
+        with (chapter_dir / "metadata.json").open() as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
 def _is_completed(chapter_dir: Path) -> bool:
     """True if metadata.json carries the durable completion marker.
 
@@ -63,14 +72,23 @@ def _is_completed(chapter_dir: Path) -> bool:
     mid-TTS. Chapters exported before that marker existed have neither, but they
     all sit below autopull's book floor and are never examined here.
     """
-    metadata = chapter_dir / "metadata.json"
-    if not metadata.exists():
+    return _metadata(chapter_dir).get("completed_at") is not None
+
+
+def _export_is_broken(chapter_dir: Path) -> bool:
+    """True if the recorded export file is missing or empty.
+
+    completed_at lands at the backend's first export, before autopull's tail
+    repair and re-export, so a crash in that window leaves a "completed" chapter
+    with no usable mp3 (b8 ch17, 2026-10-02).
+    """
+    recorded = _metadata(chapter_dir).get("export_path")
+    if not recorded:
         return False
     try:
-        with metadata.open() as f:
-            return json.load(f).get("completed_at") is not None
-    except (OSError, ValueError):
-        return False
+        return Path(recorded).stat().st_size == 0
+    except OSError:
+        return True
 
 
 def _chunk_progress(chapter_dir: Path) -> tuple[int, int]:
@@ -86,10 +104,13 @@ def interrupted_stage(chapter_dir: Path) -> str | None:
 
     "chunk"     — normalized, but chunking never ran
     "generate"  — chunked, but at least one chunk still has no wav
-    "export"    — every chunk has audio, but the export never completed
+    "export"    — every chunk has audio, but the export never completed, or it
+                  completed and its recorded mp3 is now missing or empty
     """
-    if not (chapter_dir / "normalized.txt").exists() or _is_completed(chapter_dir):
+    if not (chapter_dir / "normalized.txt").exists():
         return None
+    if _is_completed(chapter_dir):
+        return "export" if _export_is_broken(chapter_dir) else None
     texts, wavs = _chunk_progress(chapter_dir)
     if texts == 0:
         return "chunk"
