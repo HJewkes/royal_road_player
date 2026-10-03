@@ -335,6 +335,11 @@ def detect_hallucinations(chunk_text: str, actual_full: str,
     return out
 
 
+# A final number has several valid readings ("2" as "two" or "second") that G2P
+# cannot predict, so its tail is unjudgeable and a repair can change the number (A-28).
+_ENDS_IN_DIGIT = re.compile(r"\d\W*$")
+
+
 def detect_tail_artifact(chunk_text: str, actual_full: str,
                          voice: Optional[str] = None,
                          min_phones: int = TAIL_STRAY_MIN_PHONES) -> Optional[dict]:
@@ -343,8 +348,11 @@ def detect_tail_artifact(chunk_text: str, actual_full: str,
     Only the final alignment opcode is considered, so this fires on audio that runs
     past the text and not on a mispronounced last word: the stray run must be longer
     than whatever expected phones it displaced, which keeps "paths" read as /ɑðz/
-    (a substitution the word detector already reports) out of the results.
+    (a substitution the word detector already reports) out of the results. Chunks
+    whose text ends in a digit are never flagged.
     """
+    if _ENDS_IN_DIGIT.search(chunk_text):
+        return None
     expected = clean_ipa(g2p(chunk_text, voice))
     actual = clean_ipa(actual_full)
     if not expected or not actual:

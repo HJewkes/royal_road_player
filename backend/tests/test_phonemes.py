@@ -202,6 +202,30 @@ def test_mispronounced_last_word_is_not_a_tail_artifact():
 
 
 @espeak
+def test_ordinal_reading_of_a_final_digit_is_not_a_tail_artifact():
+    """b8 ch15 chunk 1: "May 2" read correctly as "May second". G2P expands the
+    digit as a cardinal, so the reading looked like a stray, and the applied
+    repair take said "May 10th"."""
+    text = "Wednesday, May 2"
+    actual = clean_ipa(g2p("Wednesday, May second"))
+    assert detect_tail_artifact(text, actual) is None
+
+
+@espeak
+@pytest.mark.parametrize("text", ["the final score was 8", "the C A 74.", "added time 90+2", "rated 8]"])
+def test_chunks_ending_in_a_digit_are_never_tail_artifacts(text):
+    """The phone guard cannot see a changed final number, so a repair could only
+    trade one reading of it for another (A-28)."""
+    assert detect_tail_artifact(text, clean_ipa(g2p(text)) + "tʃə") is None
+
+
+@espeak
+def test_digit_inside_a_chunk_does_not_disable_tail_detection():
+    text = "he scored 2 goals before the break"
+    assert detect_tail_artifact(text, clean_ipa(g2p(text)) + "tʃə") is not None
+
+
+@espeak
 def test_clean_audio_has_no_hallucination():
     text = "absolutely perfect Heli eyed me"
     actual = "".join(g2p_sentence(text))
