@@ -1,0 +1,21 @@
+# Unattended pipeline run: scrape, normalize, chunk, generate, validate, export,
+# publish. audiobook-autopull.timer starts it; `make install-timer` links both.
+[Unit]
+Description=Audiobook autopull: pull new chapters and render them
+OnFailure=audiobook-autopull-failed.service
+
+[Service]
+Type=oneshot
+# GPU work on this host runs in gpu-jobs.slice, which freezes during a stream.
+Slice=gpu-jobs.slice
+WorkingDirectory=%h/projects/audiobook
+EnvironmentFile=-%h/.config/audiobook/autopull.env
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/bin/bash scripts/autopull.sh
+# A run that renders a whole chapter takes hours; never time it out.
+TimeoutStartSec=infinity
+LimitNOFILE=8192
+# KillMode=control-group (the default, spelled out) also kills the backend that
+# autopull.sh started once the oneshot exits. That is intended: it frees the
+# GPU's VRAM between runs.
+KillMode=control-group

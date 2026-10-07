@@ -19,7 +19,7 @@
 # $AUDIOBOOK_VENV, else venv-cu128, else venv311.
 # ============================================================================
 
-.PHONY: help setup setup-cuda check-cuda teardown rebuild dev dev-bg kill-dev test lint format clean frontend-setup frontend-dev frontend-build dev-all
+.PHONY: help setup setup-cuda check-cuda install-timer uninstall-timer teardown rebuild dev dev-bg kill-dev test lint format clean frontend-setup frontend-dev frontend-build dev-all
 
 # Default target
 help:
@@ -30,6 +30,8 @@ help:
 	@echo "    make setup          - Create venvs and install dependencies"
 	@echo "    make setup-cuda     - Create venv-cu128 (Linux CUDA) with uv"
 	@echo "    make check-cuda     - Smoke-import torch/TTS on CUDA in gpu-jobs.slice"
+	@echo "    make install-timer  - Link and enable the systemd autopull timer (Linux)"
+	@echo "    make uninstall-timer - Disable and unlink the systemd autopull timer"
 	@echo "    make teardown       - Clean everything for fresh start"
 	@echo "    make rebuild        - teardown + setup"
 	@echo ""
@@ -87,6 +89,26 @@ check-cuda:
 	systemd-run --user --slice=gpu-jobs.slice --wait --pipe --quiet --same-dir \
 		--setenv=AUDIOBOOK_VENV="$(AUDIOBOOK_VENV)" \
 		bash scripts/venv.sh scripts/check_cuda.py
+
+# Unattended autopull on Linux: link the units from deploy/systemd into the user
+# manager. Refuses without the env file, since autopull publishes by default.
+AUTOPULL_ENV := $(HOME)/.config/audiobook/autopull.env
+SYSTEMD_UNITS := $(CURDIR)/deploy/systemd
+
+install-timer:
+	@test -f "$(AUTOPULL_ENV)" || (echo "❌ $(AUTOPULL_ENV) not found. Start from deploy/systemd/autopull.env.example" && exit 1)
+	systemctl --user link "$(SYSTEMD_UNITS)/audiobook-autopull.service" \
+		"$(SYSTEMD_UNITS)/audiobook-autopull-failed.service" "$(SYSTEMD_UNITS)/audiobook-autopull.timer"
+	systemctl --user daemon-reload
+	systemctl --user enable --now audiobook-autopull.timer
+	@echo "✅ Timer enabled. Check it with: systemctl --user list-timers audiobook-autopull.timer"
+
+# disable also removes the symlinks that link created
+uninstall-timer:
+	-systemctl --user disable --now audiobook-autopull.timer
+	-systemctl --user disable audiobook-autopull.service audiobook-autopull-failed.service
+	systemctl --user daemon-reload
+	@echo "✅ Timer removed"
 
 # Run development server on the resolved venv (TTS needs venv311 or venv-cu128)
 dev:

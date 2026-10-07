@@ -1,0 +1,10 @@
+# Pushes a phone notification when audiobook-autopull.service fails. It covers
+# the kills (OOM, SIGKILL, timeout) that autopull.sh's own exit trap never sees.
+[Unit]
+Description=Audiobook autopull failure notifier
+
+[Service]
+Type=oneshot
+EnvironmentFile=-%h/.config/audiobook/autopull.env
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/bin/sh -c '[ -z "$${AUDIOBOOK_NTFY_URL:-}" ] || curl -sf -m 10 -H "Title: Audiobook autopull failed" -H "Priority: high" --data-raw "The systemd unit failed; see journalctl --user -u audiobook-autopull" "$${AUDIOBOOK_NTFY_URL}" >/dev/null 2>&1 || true'
