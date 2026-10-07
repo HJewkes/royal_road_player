@@ -197,7 +197,13 @@ def _text_after(path: Path, marker: str) -> str:
 
 
 def apply_commentary(chapter_dir: Path, preamble_raw: str, commentary_raw: str) -> list[str]:
-    """Apply and persist one chapter's decisions. Returns lines for the log."""
+    """Apply and persist one chapter's decisions. Returns lines for the log.
+
+    Raises ValueError on an answer that is not JSON: recording it as clean would
+    mark a chapter checked that never was.
+    """
+    if _load(preamble_raw) is None or _load(commentary_raw) is None:
+        raise ValueError("commentary verdict is not JSON; nothing applied or recorded")
     decisions = parse_decisions(preamble_raw, commentary_raw)
     chunks_dir = chapter_dir / "chunks"
     normalized_path = chapter_dir / "normalized.txt"
@@ -205,12 +211,11 @@ def apply_commentary(chapter_dir: Path, preamble_raw: str, commentary_raw: str) 
 
     records = build_records(chunks_dir, normalized, decisions) if normalized else []
     lines = apply_to_chunks(chunks_dir, decisions)
-    if not records:
-        return lines
-
-    normalized, missing = apply_recorded_removals(normalized, records)
-    lines.extend(f"WARNING: not in normalized.txt: {text[:60]!r}" for text in missing)
-    normalized_path.write_text(normalized)
+    if records:
+        normalized, missing = apply_recorded_removals(normalized, records)
+        lines.extend(f"WARNING: not in normalized.txt: {text[:60]!r}" for text in missing)
+        normalized_path.write_text(normalized)
+    # Written even when clean, so "checked, nothing removed" differs from "never checked".
     save_records(chapter_dir, records)
     lines.append(f"Recorded {len(records)} commentary removal(s) in commentary.json")
     return lines
@@ -223,7 +228,11 @@ def main() -> None:
     parser.add_argument("--commentary", default="{}")
     args = parser.parse_args()
 
-    for line in apply_commentary(args.chapter_dir, args.preamble, args.commentary):
+    try:
+        lines = apply_commentary(args.chapter_dir, args.preamble, args.commentary)
+    except ValueError as e:
+        sys.exit(f"ERROR: {e}")
+    for line in lines:
         print(line)
 
 

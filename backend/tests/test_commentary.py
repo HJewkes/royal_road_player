@@ -155,12 +155,26 @@ def test_applier_records_a_deleted_preamble_chunk(tmp_path):
     assert (chapter / "normalized.txt").read_text() == STORY + "\n"
 
 
-@pytest.mark.parametrize("preamble, commentary", [("[]", "{}"), ("garbage", "garbage")])
-def test_applier_writes_nothing_when_there_is_nothing_to_remove(tmp_path, preamble, commentary):
+def test_applier_records_a_clean_verdict_so_the_chapter_counts_as_checked(tmp_path):
+    """No record would look the same as "never checked", and resume re-runs
+    detection on a chapter with no record."""
     chapter = _chapter(tmp_path, STORY)
     before = _chunk_texts(chapter)
 
-    apply_commentary.apply_commentary(chapter, preamble, commentary)
+    apply_commentary.apply_commentary(chapter, "[]", "{}")
+
+    assert json.loads(commentary_path(chapter).read_text())["removed"] == []
+    assert _chunk_texts(chapter) == before
+    assert (chapter / "normalized.txt").read_text() == STORY
+
+
+@pytest.mark.parametrize("preamble, commentary", [("garbage", "{}"), ("[]", "garbage")])
+def test_applier_refuses_an_answer_that_is_not_json(tmp_path, preamble, commentary):
+    chapter = _chapter(tmp_path, STORY)
+    before = _chunk_texts(chapter)
+
+    with pytest.raises(ValueError):
+        apply_commentary.apply_commentary(chapter, preamble, commentary)
 
     assert not commentary_path(chapter).exists()
     assert _chunk_texts(chapter) == before
