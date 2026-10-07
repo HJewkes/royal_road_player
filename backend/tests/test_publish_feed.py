@@ -187,3 +187,38 @@ def test_dry_run_lists_replacements_without_uploading(monkeypatch, tmp_path, cap
     assert f"would replace mp3: {key}" in out
     assert "would upload mp3: test-series/book-01/chapter-002.mp3" in out
     assert "would upload feed: test-series/feed.xml" in out
+
+
+def _publish_unconfigured(monkeypatch, tmp_path: Path, argv: list[str], client: FakeR2) -> None:
+    settings = _settings(tmp_path).model_copy(update={"delivery_base_url": ""})
+    monkeypatch.setattr(publish_feed, "get_settings", lambda: settings)
+    monkeypatch.setattr(publish_feed, "_r2_client", lambda _s: client)
+    monkeypatch.setattr(publish_feed.sys, "argv", argv)
+    assert publish_feed.main() == 0
+
+
+def test_dry_run_without_delivery_config_says_nothing_was_compared(monkeypatch, tmp_path, capsys):
+    _export(tmp_path, b"audio")
+    client = FakeR2({})
+
+    _publish_unconfigured(monkeypatch, tmp_path, ["publish_feed.py", "--dry-run"], client)
+
+    out = capsys.readouterr().out
+    assert client.puts == []
+    assert "Dry run — delivery is not configured, so nothing was compared" in out
+    assert "nothing was uploaded" in out
+
+
+def test_dry_run_with_no_upload_names_the_flag(monkeypatch, tmp_path, capsys):
+    _export(tmp_path, b"audio")
+    client = FakeR2({})
+    settings = _settings(tmp_path)
+    monkeypatch.setattr(publish_feed, "get_settings", lambda: settings)
+    monkeypatch.setattr(publish_feed, "_r2_client", lambda _s: client)
+    monkeypatch.setattr(publish_feed.sys, "argv", ["publish_feed.py", "--dry-run", "--no-upload"])
+
+    assert publish_feed.main() == 0
+
+    out = capsys.readouterr().out
+    assert client.puts == []
+    assert "Dry run — --no-upload was given, so nothing was compared" in out
