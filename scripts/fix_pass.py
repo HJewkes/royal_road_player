@@ -225,6 +225,11 @@ def _apply_take(chunk, result):
         raise
 
 
+def _write_results(path, payload):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2))
+
+
 def _run_tails(args, disc, tts, recog):
     """Regenerate tail-artifact chunks and keep only takes that are strictly better."""
     target = (args.fiction_id, args.book, args.chapter)
@@ -247,8 +252,8 @@ def _run_tails(args, disc, tts, recog):
     cleared = sum(1 for r in results if r["kept"] and r["after_len"] == 0)
     print(f"\nCleared outright: {cleared}/{n}. Improved and kept: {kept}/{n}.")
     out = OUT.with_name("tail_fix_results.json")
-    out.write_text(json.dumps({"attempted": n, "cleared": cleared, "kept": kept,
-                               "results": results}, indent=2))
+    _write_results(out, {"attempted": n, "cleared": cleared, "kept": kept,
+                         "results": results})
     print(f"Wrote {out}")
 
 
@@ -294,9 +299,9 @@ def _run_words(args, disc, tts, recog):
         })
 
     rate = (100 * improved / attempted) if attempted else 0
-    OUT.write_text(json.dumps({"improvement_rate_pct": round(rate, 1),
-                               "attempted": attempted, "improved": improved,
-                               "results": results}, indent=2))
+    _write_results(OUT, {"improvement_rate_pct": round(rate, 1),
+                         "attempted": attempted, "improved": improved,
+                         "results": results})
     print(f"\nImprovement rate: {improved}/{attempted} = {rate:.0f}%")
     print(f"Wrote {OUT} ({OUT.stat().st_size // 1024} KB)")
 
