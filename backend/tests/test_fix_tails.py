@@ -187,3 +187,11 @@ def test_apply_leaves_no_temp_file_when_the_copy_fails(tmp_path):
 
     assert shipped.read_bytes() == b"OLD", "the shipped wav must be untouched"
     assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_write_results_creates_missing_logs_dir(tmp_path):
+    out = tmp_path / "logs" / "tail_fix_results.json"
+
+    fix_pass._write_results(out, {"attempted": 0})
+
+    assert out.exists()
