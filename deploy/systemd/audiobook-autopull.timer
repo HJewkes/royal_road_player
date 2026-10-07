@@ -1,0 +1,11 @@
+# Calendar minutes, matching the Mac plist (scripts/com.audiobook.autopull.plist).
+# Persistent=true runs a missed tick once after the host was down.
+[Unit]
+Description=Run audiobook autopull every 15 minutes
+
+[Timer]
+OnCalendar=*:01,16,31,46
+Persistent=true
+
+[Install]
+WantedBy=timers.target
