@@ -52,7 +52,78 @@ audiobook/
 └── exports/               # Final audio files
 ```
 
-## Prerequisites
+## Server (basement)
+
+The unattended pipeline runs on a Linux host with an NVIDIA GPU, driven by a systemd user timer. The Mac sections below are legacy.
+
+### Prerequisites
+
+```bash
+sudo apt install espeak-ng ffmpeg
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+### Setup
+
+```bash
+make setup-cuda   # creates venv-cu128 (Python 3.12 via uv, CUDA 12.8 torch, MCP deps)
+make check-cuda   # smoke-imports torch/TTS on CUDA, inside gpu-jobs.slice
+```
+
+`scripts/venv.sh` picks the venv for the server, tests and MCP server: `$AUDIOBOOK_VENV`, else `venv-cu128`, else `venv311`.
+
+### Autopull env file
+
+The unit reads `~/.config/audiobook/autopull.env` (systemd `EnvironmentFile`: `KEY=value`, no quotes, no spaces around `=`). Create it from the example and fill in the values yourself; never commit it:
+
+```bash
+mkdir -p ~/.config/audiobook
+cp deploy/systemd/autopull.env.example ~/.config/audiobook/autopull.env
+chmod 600 ~/.config/audiobook/autopull.env
+```
+
+Keys:
+
+- `AUTOPULL_PUBLISH` - `0` is shadow mode (render and build the feed locally, upload nothing); `1` publishes.
+- `AUDIOBOOK_MAX_CONCURRENT_CHUNKS` - parallel chunk renders.
+- `AUDIOBOOK_HOST` - backend bind address.
+- `AUDIOBOOK_NTFY_URL` - ntfy topic URL for phone notifications.
+- `CLAUDE_CODE_OAUTH_TOKEN` - from `claude setup-token`, for headless commentary detection.
+- `CLAUDE_CONFIG_DIR` - a claude config dir of its own, so headless `claude -p` loads none of your user hooks, plugins or CLAUDE.md.
+
+Other settings (R2, Patreon cookie, voice sample) stay in the project `.env`; see Configuration.
+
+### Enable the timer
+
+Stop any manually started backend first (`make kill-dev`), so the timer's run does not collide with it. Then:
+
+```bash
+make install-timer
+```
+
+`make install-timer` refuses while the env file is missing, because autopull publishes by default. It links the units from `deploy/systemd` and enables `audiobook-autopull.timer` (every 15 minutes, at minutes 01, 16, 31 and 46).
+
+Start in shadow mode (`AUTOPULL_PUBLISH=0`). Once a few runs look right, set `AUTOPULL_PUBLISH=1` in the env file; the next run picks it up. Remove the timer with `make uninstall-timer`.
+
+### Logs
+
+- `logs/autopull.log` - the run's own log.
+- `journalctl --user -u audiobook-autopull` - the unit's output, including kills the script never sees.
+- `systemctl --user list-timers audiobook-autopull.timer` - next and last run.
+
+A failed run pushes an ntfy notification when `AUDIOBOOK_NTFY_URL` is set.
+
+### Streaming (gpu-jobs.slice)
+
+The service runs in `gpu-jobs.slice`, which freezes during a Sunshine stream, so rendering pauses and resumes on its own. `make check-cuda` runs in the same slice.
+
+### Rollback to the Mac
+
+Run `make uninstall-timer` on the server, turn publishing off if needed, then load `scripts/com.audiobook.autopull.plist` on the Mac again (copy it to `~/Library/LaunchAgents/` and `launchctl load` it). Never run both schedulers with publishing on.
+
+## Mac setup (legacy)
+
+### Prerequisites
 
 - **Python 3.11** (required for TTS library compatibility)
 - **Python 3.14+** (for general development)
@@ -63,15 +134,15 @@ On macOS with Homebrew:
 brew install python@3.11 node
 ```
 
-## Quick Start
+### Quick Start
 
-### 1. Check System Requirements
+#### 1. Check System Requirements
 
 ```bash
 make check-system
 ```
 
-### 2. Setup
+#### 2. Setup
 
 This creates two virtual environments:
 - `venv` (Python 3.14+) - General dependencies
@@ -81,7 +152,7 @@ This creates two virtual environments:
 make setup
 ```
 
-### 3. Run the Server
+#### 3. Run the Server
 
 The server uses `venv311` which includes TTS support:
 
@@ -89,7 +160,7 @@ The server uses `venv311` which includes TTS support:
 make dev
 ```
 
-### 4. Run the Frontend
+#### 4. Run the Frontend
 
 ```bash
 make frontend-setup  # First time only
@@ -156,16 +227,16 @@ observe and drive the pipeline (tools: `audiobook_status`, `audiobook_pending`,
 running backend.
 
 ```bash
-./venv/bin/pip install -r mcp_server/requirements.txt   # one-time: mcp + httpx into venv
+./venv311/bin/pip install -r mcp_server/requirements.txt   # Mac, once: make setup already does this
 ```
 
-It is registered in `.mcp.json`, so Claude Code launches it automatically (`venv/bin/python
-mcp_server/audiobook_mcp.py`). The backend must be running (`make dev`). Config via env:
+It is registered in `.mcp.json`, so Claude Code launches it automatically through `scripts/venv.sh`
+(`venv-cu128`, else `venv311`). The backend must be running (`make dev`). Config via env:
 `AUDIOBOOK_API` (default `http://localhost:8000`), `AUDIOBOOK_FICTION_ID` (default `124774`).
 
 ## Dependencies
 
-The project uses two Python virtual environments:
+The Mac (legacy) setup uses two Python virtual environments; the server uses `venv-cu128` (see Server above):
 
 - **venv** (Python 3.14+): General dependencies (`backend/requirements.txt`)
   - FastAPI, web scraping, text processing, etc.
