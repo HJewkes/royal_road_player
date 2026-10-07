@@ -1,21 +1,25 @@
 # ============================================================================
 # Audiobook Makefile
 # ============================================================================
-# This project uses TWO virtual environments:
+# This project uses these virtual environments:
 #
 #   venv (Python 3.14+)
 #     - General dependencies (FastAPI, web scraping, text processing)
-#     - Used for: tests, linting, formatting
+#     - Used for: linting, formatting
 #
 #   venv311 (Python 3.11)
 #     - TTS dependencies (Coqui TTS requires Python 3.9-3.11)
 #     - Includes all general dependencies + TTS libraries
-#     - Used for: running the server (make dev, make dev-bg, make dev-all)
+#     - Used for: running the server on the Mac
 #
-# The server MUST use venv311 to have TTS functionality available.
+#   venv-cu128 (Python 3.12, Linux + NVIDIA)
+#     - TTS on CUDA 12.8, plus the MCP server (make setup-cuda)
+#
+# The server, tests and MCP server run on the venv that scripts/venv.sh picks:
+# $AUDIOBOOK_VENV, else venv-cu128, else venv311.
 # ============================================================================
 
-.PHONY: help setup teardown rebuild dev dev-bg kill-dev test lint format clean frontend-setup frontend-dev frontend-build dev-all
+.PHONY: help setup setup-cuda check-cuda teardown rebuild dev dev-bg kill-dev test lint format clean frontend-setup frontend-dev frontend-build dev-all
 
 # Default target
 help:
@@ -24,6 +28,8 @@ help:
 	@echo "  Setup:"
 	@echo "    make check-system   - Check system requirements (Python 3.11, Node.js)"
 	@echo "    make setup          - Create venvs and install dependencies"
+	@echo "    make setup-cuda     - Create venv-cu128 (Linux CUDA) with uv"
+	@echo "    make check-cuda     - Smoke-import torch/TTS on CUDA in gpu-jobs.slice"
 	@echo "    make teardown       - Clean everything for fresh start"
 	@echo "    make rebuild        - teardown + setup"
 	@echo ""
@@ -63,22 +69,34 @@ setup: check-system
 	@echo "Creating venv311 (Python 3.11) for TTS dependencies..."
 	@if [ -d "venv311" ]; then echo "⚠️  venv311 already exists, skipping creation"; else python3.11 -m venv venv311; fi
 	./venv311/bin/pip install --upgrade pip
-	./venv311/bin/pip install -r backend/requirements.txt -r backend/requirements-tts.txt
+	./venv311/bin/pip install -r backend/requirements.txt -r backend/requirements-tts.txt -r mcp_server/requirements.txt
 	@echo "✅ Setup complete!"
 	@echo "  - venv (Python 3.14+): General dependencies"
 	@echo "  - venv311 (Python 3.11): TTS dependencies (used by server)"
 
-# Run development server (uses venv311 for TTS support)
+# Linux CUDA venv: uv fetches Python 3.12 itself, so no system python is needed
+# best-match: the cu128 index also carries old copies of PyPI packages (requests)
+setup-cuda:
+	@command -v uv > /dev/null || (echo "❌ uv not found. Install: curl -LsSf https://astral.sh/uv/install.sh | sh" && exit 1)
+	@if [ -d "venv-cu128" ]; then echo "⚠️  venv-cu128 already exists, skipping creation"; else uv venv --python 3.12 venv-cu128; fi
+	cd backend && uv pip install --python ../venv-cu128/bin/python --index-strategy unsafe-best-match -r requirements-cu128.txt
+	@echo "✅ venv-cu128 ready. Check it with: make check-cuda"
+
+# GPU work on this host runs in gpu-jobs.slice, which freezes during a stream
+check-cuda:
+	systemd-run --user --slice=gpu-jobs.slice --wait --pipe --quiet --same-dir \
+		--setenv=AUDIOBOOK_VENV="$(AUDIOBOOK_VENV)" \
+		bash scripts/venv.sh scripts/check_cuda.py
+
+# Run development server on the resolved venv (TTS needs venv311 or venv-cu128)
 dev:
-	@if [ ! -d "venv311" ]; then echo "❌ venv311 not found. Run 'make setup' first." && exit 1; fi
-	@echo "Starting development server (using venv311 for TTS support)..."
-	cd backend && ../venv311/bin/python main.py
+	@echo "Starting development server..."
+	cd backend && bash ../scripts/venv.sh main.py
 
 # Run in background
 dev-bg:
-	@if [ ! -d "venv311" ]; then echo "❌ venv311 not found. Run 'make setup' first." && exit 1; fi
-	@echo "Starting development server in background (using venv311)..."
-	cd backend && ../venv311/bin/python main.py &
+	@echo "Starting development server in background..."
+	cd backend && bash ../scripts/venv.sh main.py &
 
 # Kill dev servers
 kill-dev:
@@ -88,10 +106,9 @@ kill-dev:
 	-pkill -f "npm run dev" || true
 	@echo "✅ Servers stopped"
 
-# Run tests (uses venv - doesn't need TTS)
+# Run tests on the resolved venv (they need no TTS, but every venv has pytest)
 test:
-	@if [ ! -d "venv" ]; then echo "❌ venv not found. Run 'make setup' first." && exit 1; fi
-	cd backend && ../venv/bin/pytest tests/ -v
+	cd backend && bash ../scripts/venv.sh -m pytest tests/ -v
 
 # Run linters (uses venv - doesn't need TTS)
 lint:
@@ -139,13 +156,12 @@ rebuild: teardown setup
 
 # Run both backend and frontend dev servers
 dev-all:
-	@if [ ! -d "venv311" ]; then echo "❌ venv311 not found. Run 'make setup' first." && exit 1; fi
 	@echo "Starting backend and frontend dev servers..."
-	@echo "📡 Backend: http://localhost:8000 (using venv311 for TTS)"
+	@echo "📡 Backend: http://localhost:8000"
 	@echo "🌐 Frontend: http://localhost:5173"
 	@echo "🛑 Press Ctrl+C to stop both servers"
 	@trap 'pkill -f "python main.py" 2>/dev/null; pkill -f "vite" 2>/dev/null; exit' EXIT INT TERM; \
-	(cd backend && ../venv311/bin/python main.py > /tmp/backend.log 2>&1) & \
+	(cd backend && bash ../scripts/venv.sh main.py > /tmp/backend.log 2>&1) & \
 	(cd frontend && npm run dev > /tmp/frontend.log 2>&1) & \
 	wait
 
