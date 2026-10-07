@@ -276,16 +276,18 @@ publish_chapter() {
 # improves four fifths (ch2 23/35 and 28/35, ch11 19/29 and 23/29 — stable across
 # both chapters). Runs BEFORE export so audio.wav is built from repaired chunks.
 #
-# Capped on purpose. Each chunk costs 3 CPU synthesis takes and this sits inside an
+# Capped on purpose. Each chunk costs 3 synthesis takes and this sits inside an
 # unattended 15-minute tick, so an uncapped pass on a bad chapter could stall the
-# run. Chunks left unfixed stay flagged for a later sweep; per-chunk outcome is a
+# run. 30 covers a typical chapter on the 5090 (3.8% raw tail rate, about 20 per
+# 530 chunks); on the Mac's CPU path it is roughly 65 minutes per chapter.
+# Chunks left unfixed stay flagged for a later sweep; per-chunk outcome is a
 # stochastic draw, so a second attempt often succeeds where the first did not.
 #
 # fix_pass loads XTTS itself rather than going through the API, so this briefly
 # holds a SECOND copy of the model alongside the backend's: measured 4.94 GB for
 # fix_pass against 36 GB of RAM here, which is comfortable. Re-check that before
 # running this on a smaller box. Set TAIL_REPAIR_LIMIT=0 to disable.
-TAIL_REPAIR_LIMIT="${TAIL_REPAIR_LIMIT:-12}"
+TAIL_REPAIR_LIMIT="${TAIL_REPAIR_LIMIT:-30}"
 repair_tails() {
   local book=$1 ch=$2
   if [ "$TAIL_REPAIR_LIMIT" -le 0 ]; then
