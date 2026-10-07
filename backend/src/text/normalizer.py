@@ -258,6 +258,12 @@ class TextNormalizer:
         # number reading below.
         text = self._STANDALONE_YEAR.sub(lambda m: self._format_year(m.group(1)), text)
 
+        # Digit-hyphen-word compounds: "24-hour" -> "twenty-four-hour". XTTS garbles
+        # the word after a digit-hyphen. Years were spelled above; a digit after the
+        # hyphen (scores "1-0", ranges "3-4") or a run like "4-4-2" is left alone.
+        text = self._HYPHEN_COMPOUND.sub(
+            lambda m: self._number_to_words(int(m.group(1))) + '-', text)
+
         # Large standalone numbers
         def number_replacer(match):
             num_str = match.group(0).replace(',', '')
@@ -280,6 +286,7 @@ class TextNormalizer:
         r'(?<![\d,.])\b(1[1-9]\d{2}|20\d{2})\b'
         r'(?!,\d|\.\d|\s*%|\s*(?:' + _UNITS + r')\b)',
         re.IGNORECASE)
+    _HYPHEN_COMPOUND = re.compile(r'(?<![\d,.\-])\b(\d+)-(?=[A-Za-z])')
 
     def normalize_dates(self, text: str) -> str:
         """Normalize dates to spoken form."""
