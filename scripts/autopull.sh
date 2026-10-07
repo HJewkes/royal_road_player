@@ -45,10 +45,23 @@ report_last_status() {
   esac
 }
 
-# Post a macOS notification (best-effort; works from a user LaunchAgent).
+# Push a notification (best-effort, never fails the run). Posts to
+# $AUDIOBOOK_NTFY_URL when set; otherwise uses osascript where it exists; with
+# neither, the log line is all there is.
 notify() {
-  local title=$1 msg=$2
-  osascript -e "display notification \"${msg}\" with title \"${title}\"" 2>/dev/null || true
+  local title=$1 msg=$2 priority=default
+  case "$title" in
+    *failed*|*blocked*) priority=high ;;
+  esac
+  if [ -n "${AUDIOBOOK_NTFY_URL:-}" ]; then
+    curl -sf -m 10 -H "Title: ${title}" -H "Priority: ${priority}" \
+      --data-raw "$msg" "$AUDIOBOOK_NTFY_URL" >/dev/null 2>&1 || true
+  elif command -v osascript >/dev/null 2>&1; then
+    osascript -e "display notification \"${msg}\" with title \"${title}\"" 2>/dev/null || true
+  else
+    log "NOTIFY: ${title} — ${msg}" || true
+  fi
+  return 0
 }
 
 # Runs on every exit AFTER the lock is acquired: release the lock and, on a
