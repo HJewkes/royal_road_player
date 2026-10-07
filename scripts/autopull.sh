@@ -54,11 +54,11 @@ notify() {
   esac
   if [ -n "${AUDIOBOOK_NTFY_URL:-}" ]; then
     curl -sf -m 10 -H "Title: ${title}" -H "Priority: ${priority}" \
-      -d "$msg" "$AUDIOBOOK_NTFY_URL" >/dev/null 2>&1 || true
+      --data-raw "$msg" "$AUDIOBOOK_NTFY_URL" >/dev/null 2>&1 || true
   elif command -v osascript >/dev/null 2>&1; then
     osascript -e "display notification \"${msg}\" with title \"${title}\"" 2>/dev/null || true
   else
-    log "NOTIFY: ${title} — ${msg}"
+    log "NOTIFY: ${title} — ${msg}" || true
   fi
   return 0
 }
