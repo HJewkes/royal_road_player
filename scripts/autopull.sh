@@ -318,10 +318,20 @@ resume_chapter() {
   case "$stage" in
     chunk)
       normalize_and_chunk "$book" "$ch"
-      detect_commentary "$book" "$ch"
+      detect_commentary "$book" "$ch" || return 0
       generate_audio "$book" "$ch"
       ;;
     generate)
+      # A run killed before its commentary check left no record. With no audio
+      # yet it is still safe to check; once chunks have audio, detection could
+      # delete rendered chunks, so warn and carry on rather than touch them.
+      if [ ! -f "$PROJECT_DIR/data/books/$FICTION_ID/book_$book/chapters/chapter_$ch/commentary.json" ]; then
+        if [ "$wavs" -eq 0 ]; then
+          detect_commentary "$book" "$ch" || return 0
+        else
+          log "WARNING: book $book chapter $ch has audio but no commentary record; generating without a commentary check"
+        fi
+      fi
       generate_audio "$book" "$ch"
       ;;
   esac
@@ -381,6 +391,43 @@ normalize_and_chunk() {
 }
 
 # --- Step 7: Commentary detection via Claude headless ---
+# Ask Claude for one JSON verdict and print it with any code fences stripped.
+# Runs from an empty dir under /tmp, outside the repo and $HOME, so no project
+# CLAUDE.md or .claude/ is discovered; --strict-mcp-config loads no MCP servers.
+# --bare is not an option: it refuses setup-token auth. A missing binary, a
+# non-zero exit or an answer that is not JSON returns non-zero with nothing on
+# stdout, and must never be read as "clean". Logs go to stderr: stdout is the
+# verdict.
+ask_claude() {
+  local prompt=$1 workdir out
+  workdir=$(mktemp -d /tmp/autopull-claude.XXXXXX) || return 1
+  if ! out=$(cd "$workdir" && "${CLAUDE_BIN:-claude}" -p "$prompt" \
+      --output-format text --strict-mcp-config --no-session-persistence \
+      < /dev/null 2>> "$LOG_FILE"); then
+    rm -rf "$workdir"
+    log "ERROR: ${CLAUDE_BIN:-claude} failed or is missing" >&2
+    return 1
+  fi
+  rm -rf "$workdir"
+  out=$(strip_fences "$out")
+  if ! printf '%s' "$out" | python3 -c \
+      'import json, sys; sys.exit(not isinstance(json.load(sys.stdin), (list, dict)))' \
+      2> /dev/null; then
+    log "ERROR: claude answered with something that is not a JSON verdict: ${out:0:200}" >&2
+    return 1
+  fi
+  printf '%s' "$out"
+}
+
+# No verdict means no record, so the next tick asks again. The chapter is held
+# back from generation meanwhile: shipping it unchecked could narrate commentary.
+commentary_check_failed() {
+  local book=$1 chapter=$2
+  log "ERROR: commentary check failed for book $book chapter $chapter; holding it before generation"
+  notify "Audiobook commentary check failed" "Book $book chapter $chapter held — see logs/autopull.log"
+  return 1
+}
+
 detect_commentary() {
   local book=$1
   local chapter=$2
@@ -428,7 +475,7 @@ $(cat "$f")
   # Be conservative — only flag content that is OBVIOUSLY author commentary
   # (e.g., "Thanks for your support!"), NOT chapter numbers, dates, or scene-setting.
   local preamble_result
-  preamble_result=$(claude -p "$(cat <<PROMPT
+  preamble_result=$(ask_claude "$(cat <<PROMPT
 You are checking the START of an audiobook chapter for author preamble that leaked in from the previous chapter.
 
 Here are the first 5 chunks of Book $book Chapter $chapter:
@@ -443,12 +490,12 @@ If everything is story content (THIS IS THE COMMON CASE), output: []
 
 Output ONLY the JSON, nothing else.
 PROMPT
-)" --output-format text < /dev/null 2>/dev/null || echo "[]")
+)") || commentary_check_failed "$book" "$chapter" || return 1
 
   # Claude call 2: check end of chapter for commentary
   # Look for the "…" separator — everything after it is typically commentary.
   local commentary_result
-  commentary_result=$(claude -p "$(cat <<PROMPT
+  commentary_result=$(ask_claude "$(cat <<PROMPT
 You are checking the END of an audiobook chapter for author commentary that should be removed before TTS.
 
 Common patterns:
@@ -478,11 +525,7 @@ If everything is story content, output: {}
 
 Output ONLY the JSON, nothing else.
 PROMPT
-)" --output-format text < /dev/null 2>/dev/null || echo "{}")
-
-  # Strip code fences before the JSON parsers see the output
-  preamble_result=$(strip_fences "$preamble_result")
-  commentary_result=$(strip_fences "$commentary_result")
+)") || commentary_check_failed "$book" "$chapter" || return 1
 
   log "Preamble check: $preamble_result"
   log "Commentary check: $commentary_result"
@@ -587,7 +630,7 @@ process_book() {
   local done_chapters=""
   for ch in $new_chapters; do
     log "--- Processing book $book chapter $ch ---"
-    detect_commentary "$book" "$ch"
+    detect_commentary "$book" "$ch" || continue
     generate_audio "$book" "$ch"
     publish_chapter "$book" "$ch" || continue
     done_chapters+=" $ch"
