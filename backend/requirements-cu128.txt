@@ -1,0 +1,24 @@
+# Linux CUDA venv (venv-cu128, Python 3.12): server, TTS and the MCP server.
+# Built by `make setup-cuda` with uv; checked by `make check-cuda`.
+# Reproduces the RTX 5090 spike: Blackwell needs CUDA 12.8 wheels (torch 2.8+).
+# The Mac keeps venv311 and requirements-tts.txt.
+#
+# Whisper is included: it installs beside numpy 2.5 (see its pin below).
+
+--extra-index-url https://download.pytorch.org/whl/cu128
+
+-r requirements.txt
+-r ../mcp_server/requirements.txt
+
+# Whisper STT for /api/validate. Resolves beside numpy 2.5 with no downgrade,
+# and its numba DTW path runs (checked on the spike stack).
+openai-whisper==20250625
+
+torch==2.8.0+cu128
+torchaudio==2.8.0+cu128
+
+# The idiap fork of Coqui TTS; it imports cleanly under transformers 4.57.
+coqui-tts==0.27.5
+
+# transformers 5 drops the generation APIs XTTS uses.
+transformers<5

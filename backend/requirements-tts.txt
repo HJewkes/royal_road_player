@@ -1,3 +1,6 @@
+# TTS dependencies for the Mac (venv311). Linux with an NVIDIA GPU uses
+# requirements-cu128.txt instead (venv-cu128, `make setup-cuda`).
+#
 # TTS dependencies - require Python 3.9-3.11
 # These are installed in venv311 (Python 3.11) by the Makefile setup target.
 # Do NOT install these in the main venv (Python 3.14+) as TTS is not compatible.
