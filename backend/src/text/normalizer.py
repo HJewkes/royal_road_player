@@ -252,6 +252,12 @@ class TextNormalizer:
                 return match.group(0)
         text = re.sub(r'\b(\d+)\.(\d+)(k|m|bn)?\b', decimal_replacer, text)
 
+        # Standalone years: in prose a bare 1100-2099 is a year far more often than a
+        # count ("since 1872" -> "eighteen seventy-two"). Money and decimals were
+        # spelled above; a thousands separator, percent or unit keeps the plain
+        # number reading below.
+        text = self._STANDALONE_YEAR.sub(lambda m: self._format_year(m.group(1)), text)
+
         # Large standalone numbers
         def number_replacer(match):
             num_str = match.group(0).replace(',', '')
@@ -266,6 +272,14 @@ class TextNormalizer:
         text = re.sub(r'\b\d{3,}\b', number_replacer, text)
 
         return text
+
+    _UNITS = (r'kg|kgs|kilos?|kilograms?|grams?|lbs?|pounds?|tons?|tonnes?|stone|'
+              r'km|kms|kilomet(?:er|re)s?|met(?:er|re)s?|cm|mm|miles?|yards?|yds|'
+              r'feet|foot|ft|inch(?:es)?|litres?|liters?|ml|mph|kph|percent')
+    _STANDALONE_YEAR = re.compile(
+        r'(?<![\d,.])\b(1[1-9]\d{2}|20\d{2})\b'
+        r'(?!,\d|\.\d|\s*%|\s*(?:' + _UNITS + r')\b)',
+        re.IGNORECASE)
 
     def normalize_dates(self, text: str) -> str:
         """Normalize dates to spoken form."""
@@ -363,18 +377,16 @@ class TextNormalizer:
         return months.get(month_abbr.lower()[:3], month_abbr)
 
     def _format_year(self, year: str) -> str:
-        """Format year as spoken."""
+        """Format year as spoken: 1872 -> eighteen seventy-two, 1905 -> nineteen
+        oh five, 2007 -> two thousand seven, 2019 -> twenty-nineteen."""
         year_int = int(year)
-        if year_int < 2000:
-            century = year_int // 100
-            remainder = year_int % 100
-            century_words = self._number_to_words(century)
-            if remainder == 0:
-                return f"{century_words} hundred"
-            return f"{century_words} {self._number_to_words(remainder)}"
-        else:
-            first_two = year_int // 100
-            last_two = year_int % 100
-            return f"{self._number_to_words(first_two)}-{self._number_to_words(last_two)}"
-
-
+        if 2000 <= year_int < 2010:
+            return self._number_to_words(year_int)
+        century, remainder = divmod(year_int, 100)
+        century_words = self._number_to_words(century)
+        if remainder == 0:
+            return f"{century_words} hundred"
+        if remainder < 10:
+            return f"{century_words} oh {self._number_to_words(remainder)}"
+        separator = ' ' if year_int < 2000 else '-'
+        return f"{century_words}{separator}{self._number_to_words(remainder)}"

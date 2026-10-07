@@ -161,3 +161,76 @@ class TestDecimalNormalization:
     def test_currency_decimal_still_correct(self):
         # Currency runs first; the decimal rule must not touch an already-expanded amount.
         assert self.n.normalize_numbers("£1.4m") == "one point four million pounds"
+
+
+class TestStandaloneYears:
+    """A bare 1100-2099 in prose reads as a year, not a cardinal."""
+
+    def setup_method(self):
+        self.n = TextNormalizer()
+
+    def test_since_year_reads_as_year(self):
+        out = self.n.normalize("like they have been doing since 1872. What's the most 1872 name")
+        assert out == (
+            "like they have been doing since eighteen seventy-two. "
+            "What's the most eighteen seventy-two name"
+        )
+
+    def test_quoted_year_reads_as_year(self):
+        out = self.n.normalize('"1902," she said. "Hirst and Rhodes')
+        assert out.startswith('"nineteen oh two," she said.')
+
+    def test_sentence_initial_year_reads_as_year(self):
+        out = self.n.normalize("1901 was Tottenham Hotspur as a non-league")
+        assert out == "nineteen oh one was Tottenham Hotspur as a non-league"
+
+    def test_year_before_apostrophe_word_reads_as_year(self):
+        out = self.n.normalize("every year since 1872, Gangster's Paradise")
+        assert out == "every year since eighteen seventy-two, Gangster's Paradise"
+
+    def test_year_at_sentence_end_reads_as_year(self):
+        assert self.n.normalize("Max: Joe Royle, 1995.") == "Max: Joe Royle, nineteen ninety-five."
+
+    def test_year_spellings_at_century_edges(self):
+        cases = {
+            "1100": "eleven hundred",
+            "1900": "nineteen hundred",
+            "1905": "nineteen oh five",
+            "2000": "two thousand",
+            "2007": "two thousand seven",
+            "2019": "twenty-nineteen",
+            "2099": "twenty-ninety-nine",
+        }
+        for digits, spoken in cases.items():
+            assert self.n.normalize_numbers(f"in {digits} it") == f"in {spoken} it"
+
+    def test_money_is_not_a_year(self):
+        assert self.n.normalize_numbers("$1995") == "one thousand nine hundred ninety-five dollars"
+
+    def test_measurement_is_not_a_year(self):
+        assert self.n.normalize_numbers("1995 kg") == "one thousand nine hundred ninety-five kg"
+        assert self.n.normalize_numbers("1995 miles") == "one thousand nine hundred ninety-five miles"
+
+    def test_percentage_is_not_a_year(self):
+        assert self.n.normalize_numbers("1995%") == "one thousand nine hundred ninety-five%"
+
+    def test_thousands_separator_is_not_a_year(self):
+        assert self.n.normalize_numbers("1,995") == "one thousand nine hundred ninety-five"
+
+    def test_part_of_larger_number_is_not_a_year(self):
+        assert self.n.normalize_numbers("21995") == "twenty-one thousand nine hundred ninety-five"
+        assert self.n.normalize_numbers("1995.5") == "one thousand nine hundred ninety-five point five"
+
+    def test_outside_year_range_stays_cardinal(self):
+        assert self.n.normalize_numbers("1050 and 2100") == (
+            "one thousand fifty and two thousand one hundred"
+        )
+
+    def test_bare_count_defaults_to_year(self):
+        # The normalizer has no count context, so a bare in-range integer is a year.
+        assert self.n.normalize_numbers("1500 men") == "fifteen hundred men"
+
+    def test_full_date_keeps_year_spelling(self):
+        assert self.n.normalize_dates("Monday, 5 May, 1995") == (
+            "Monday, fifth of May, nineteen ninety-five"
+        )
