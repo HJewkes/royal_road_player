@@ -224,8 +224,9 @@ backend/logs/
 *.log
 *.log.*
 
-# Local agent/tooling state and second TTS venv
+# Local agent/tooling state and the TTS venvs (Mac, Linux CUDA)
 venv311/
+venv-cu128/
 .brain/
 .claude/
 # Root-level dev screenshots (verification captures)
