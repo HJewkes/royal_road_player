@@ -234,3 +234,36 @@ class TestStandaloneYears:
         assert self.n.normalize_dates("Monday, 5 May, 1995") == (
             "Monday, fifth of May, nineteen ninety-five"
         )
+
+
+class TestHyphenCompounds:
+    """A number joined to a word by a hyphen is spelled, so XTTS reads the word cleanly."""
+
+    def setup_method(self):
+        self.n = TextNormalizer()
+
+    def test_small_number_compounds_are_spelled(self):
+        cases = {
+            "a 24-hour news channel": "a twenty-four-hour news channel",
+            "a 28-year-old striker": "a twenty-eight-year-old striker",
+            "a 6-point lead": "a six-point lead",
+            "an 8-game run": "an eight-game run",
+            "the 60-million-pound man": "the sixty-million-pound man",
+            "it finished 2-all.": "it finished two-all.",
+        }
+        for raw, spoken in cases.items():
+            assert self.n.normalize(raw) == spoken
+
+    def test_year_in_compound_uses_year_form(self):
+        assert self.n.normalize("a 1995-born winger") == "a nineteen ninety-five-born winger"
+        assert self.n.normalize("2028-style kits") == "twenty-twenty-eight-style kits"
+
+    def test_scores_and_ranges_keep_their_digits(self):
+        assert self.n.normalize("it ended 1-0 and then 3-4") == "it ended 1-0 and then 3-4"
+
+    def test_formation_run_is_left_alone(self):
+        assert self.n.normalize("a 4-4-2 shape") == "a 4-4-2 shape"
+        assert self.n.normalize("4-4-bloody-2") == "4-4-bloody-2"
+
+    def test_decimal_compound_keeps_decimal_reading(self):
+        assert self.n.normalize("a 2.5-hour drive") == "a two point five-hour drive"
