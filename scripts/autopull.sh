@@ -546,8 +546,15 @@ export_chapter() {
 # Rebuild the RSS feed(s) and push the new mp3 + feed to R2 so the phone's
 # podcast app auto-downloads it. Never fails the run: if delivery isn't
 # configured it just rebuilds the feed locally; any upload error is logged.
+# AUTOPULL_PUBLISH=0 is safe-run mode for a host that holds live R2 credentials
+# but must not publish yet: feeds are still rebuilt locally, nothing is uploaded.
 publish_feed() {
-  if "$PYTHON" "$SCRIPT_DIR/publish_feed.py" >> "$LOG_FILE" 2>&1; then
+  local args=()
+  if [ "${AUTOPULL_PUBLISH:-1}" = "0" ]; then
+    log "Feed publishing off (AUTOPULL_PUBLISH=0) — building feeds locally only"
+    args=(--no-upload)
+  fi
+  if "$PYTHON" "$SCRIPT_DIR/publish_feed.py" ${args[@]+"${args[@]}"} >> "$LOG_FILE" 2>&1; then
     log "Feed published"
   else
     log "WARNING: feed publish failed (non-fatal)"

@@ -11,6 +11,7 @@ already match the stored object is skipped) and feeds are small.
 Usage:
   publish_feed.py            # build locally; upload if configured
   publish_feed.py --no-upload  # build locally only
+  publish_feed.py --dry-run    # list what would upload against R2; upload nothing
 """
 import hashlib
 import sys
@@ -162,8 +163,59 @@ def _warn_on_key_collisions(episodes_by_slug: dict) -> None:
             print(f"    {p.name}", file=sys.stderr)
 
 
+def _pending_mp3s(all_episodes: dict, existing: dict, prefix: str) -> list[tuple[str, Path, bool]]:
+    """(key, local path, replaces an existing object) for every mp3 that differs from R2."""
+    pending = []
+    for episodes in all_episodes.values():
+        for ep in episodes:
+            key = prefixed(ep.object_key, prefix)
+            remote = existing.get(key)
+            if _needs_upload(ep.path, remote):
+                pending.append((key, ep.path, remote is not None))
+    return pending
+
+
+def _print_dry_run(pending: list, feed_keys: list[str]) -> None:
+    for key, _path, replaces in pending:
+        print(f"would {'replace' if replaces else 'upload'} mp3: {key}")
+    for key in feed_keys:
+        print(f"would upload feed: {key}")
+    replaced = sum(1 for *_, replaces in pending if replaces)
+    print(f"Dry run — {len(pending) - replaced} new mp3(s), {replaced} to replace, "
+          f"{len(feed_keys)} feed(s); nothing uploaded.")
+
+
+def _write_local_feeds(settings, feeds: dict[str, str], base_url: str, prefix: str) -> None:
+    feed_dir = _local_feed_dir(settings)
+    for slug, xml in feeds.items():
+        out = feed_dir / slug / "feed.xml"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(xml)
+        print(f"feed: {out}  ->  {base_url}/{prefixed(feed_key_for(slug), prefix)}")
+
+
+def _upload(client, bucket: str, pending: list, feeds: dict[str, str], prefix: str) -> None:
+    for key, path, replaces in pending:
+        with open(path, "rb") as fh:
+            client.put_object(Bucket=bucket, Key=key, Body=fh, ContentType="audio/mpeg")
+        print(f"{'re-uploaded' if replaces else 'uploaded'} mp3: {key}")
+
+    for slug, xml in feeds.items():
+        key = prefixed(feed_key_for(slug), prefix)
+        client.put_object(
+            Bucket=bucket, Key=key,
+            Body=xml.encode("utf-8"), ContentType="application/rss+xml",
+        )
+        print(f"uploaded feed: {key}")
+
+    replaced = sum(1 for *_, replaces in pending if replaces)
+    print(f"Done — {len(pending) - replaced} new mp3(s), {replaced} re-uploaded, "
+          f"{len(feeds)} feed(s).")
+
+
 def main() -> int:
     settings = get_settings()
+    dry_run = "--dry-run" in sys.argv
     do_upload = "--no-upload" not in sys.argv and _upload_configured(settings)
 
     base_url = settings.delivery_base_url or "https://REPLACE-ME.example"
@@ -171,12 +223,7 @@ def main() -> int:
     feeds = _build_feeds(settings, base_url, prefix)
 
     # Always write feeds locally for inspection.
-    feed_dir = _local_feed_dir(settings)
-    for slug, xml in feeds.items():
-        out = feed_dir / slug / "feed.xml"
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(xml)
-        print(f"feed: {out}  ->  {base_url}/{prefixed(feed_key_for(slug), prefix)}")
+    _write_local_feeds(settings, feeds, base_url, prefix)
 
     if not feeds:
         print("No exported chapters found — nothing to publish.")
@@ -195,37 +242,14 @@ def main() -> int:
         print(f"Upload skipped — R2 client/list failed: {exc}", file=sys.stderr)
         return 0
 
-    uploaded = 0
-    replaced = 0
     all_episodes = discover_episodes(settings.exports_dir)
     _warn_on_key_collisions(all_episodes)
-    for slug, episodes in all_episodes.items():
-        for ep in episodes:
-            key = prefixed(ep.object_key, prefix)
-            remote = existing.get(key)
-            if not _needs_upload(ep.path, remote):
-                continue
-            with open(ep.path, "rb") as fh:
-                client.put_object(
-                    Bucket=settings.r2_bucket, Key=key,
-                    Body=fh, ContentType="audio/mpeg",
-                )
-            if remote is None:
-                uploaded += 1
-                print(f"uploaded mp3: {key}")
-            else:
-                replaced += 1
-                print(f"re-uploaded mp3: {key}")
+    pending = _pending_mp3s(all_episodes, existing, prefix)
+    if dry_run:
+        _print_dry_run(pending, [prefixed(feed_key_for(slug), prefix) for slug in feeds])
+        return 0
 
-    for slug, xml in feeds.items():
-        key = prefixed(feed_key_for(slug), prefix)
-        client.put_object(
-            Bucket=settings.r2_bucket, Key=key,
-            Body=xml.encode("utf-8"), ContentType="application/rss+xml",
-        )
-        print(f"uploaded feed: {key}")
-
-    print(f"Done — {uploaded} new mp3(s), {replaced} re-uploaded, {len(feeds)} feed(s).")
+    _upload(client, settings.r2_bucket, pending, feeds, prefix)
     return 0
 
 
