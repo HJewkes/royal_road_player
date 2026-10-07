@@ -170,3 +170,20 @@ def test_no_collision_reported_when_every_key_is_unique(tmp_path):
     episodes = {"s": [Ep("s/book-01/chapter-001.mp3", tmp_path / "a.mp3"),
                       Ep("s/book-01/chapter-002.mp3", tmp_path / "b.mp3")]}
     assert pf.find_key_collisions(episodes) == {}
+
+
+def test_dry_run_lists_replacements_without_uploading(monkeypatch, tmp_path, capsys):
+    key = _export(tmp_path, b"corrected audio")
+    folder = tmp_path / "exports" / "Test Series - Book 1"
+    (folder / "Test Series - Book 1 - Chapter 2.mp3").write_bytes(b"brand new")
+    client = FakeR2({key: b"stale audio!!!!"})
+    monkeypatch.setattr(publish_feed.sys, "argv", ["publish_feed.py", "--dry-run"])
+
+    _publish(monkeypatch, tmp_path, client)
+
+    out = capsys.readouterr().out
+    assert client.puts == []
+    assert client.stored[key] == b"stale audio!!!!"
+    assert f"would replace mp3: {key}" in out
+    assert "would upload mp3: test-series/book-01/chapter-002.mp3" in out
+    assert "would upload feed: test-series/feed.xml" in out
