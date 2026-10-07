@@ -213,6 +213,15 @@ def _upload(client, bucket: str, pending: list, feeds: dict[str, str], prefix: s
           f"{len(feeds)} feed(s).")
 
 
+def _skip_reason(settings) -> str:
+    reasons = []
+    if "--no-upload" in sys.argv:
+        reasons.append("--no-upload was given")
+    if not _upload_configured(settings):
+        reasons.append("delivery is not configured")
+    return " and ".join(reasons)
+
+
 def main() -> int:
     settings = get_settings()
     dry_run = "--dry-run" in sys.argv
@@ -230,6 +239,9 @@ def main() -> int:
         return 0
 
     if not do_upload:
+        if dry_run:
+            print(f"Dry run — {_skip_reason(settings)}, so nothing was compared "
+                  "against R2 and nothing was uploaded.")
         if not _upload_configured(settings):
             print("Delivery not configured (set AUDIOBOOK_DELIVERY_BASE_URL + R2_*); "
                   "built feeds locally only.")
