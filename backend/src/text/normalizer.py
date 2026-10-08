@@ -44,8 +44,8 @@ class TextNormalizer:
         text = self.normalize_punctuation(text)
         text = self.normalize_acronyms(text)
         text = self.normalize_time_formats(text)
-        text = self.normalize_numbers(text)
         text = self.normalize_dates(text)
+        text = self.normalize_numbers(text)
         text = self.normalize_whitespace(text)
 
         return text
@@ -255,8 +255,8 @@ class TextNormalizer:
         # Standalone years: in prose a bare 1100-2099 is a year far more often than a
         # count ("since 1872" -> "eighteen seventy-two"). Money and decimals were
         # spelled above; a thousands separator, percent or unit keeps the plain
-        # number reading below.
-        text = self._STANDALONE_YEAR.sub(lambda m: self._format_year(m.group(1)), text)
+        # number reading below, and a count context reads as a cardinal.
+        text = self._STANDALONE_YEAR.sub(self._year_or_count, text)
 
         # Digit-hyphen-word compounds: "24-hour" -> "twenty-four-hour". XTTS garbles
         # the word after a digit-hyphen. Years were spelled above; a digit after the
@@ -287,29 +287,51 @@ class TextNormalizer:
         r'(?!,\d|\.\d|\s*%|\s*(?:' + _UNITS + r')\b)',
         re.IGNORECASE)
     _HYPHEN_COMPOUND = re.compile(r'(?<![\d,.\-])\b(\d+)-(?=[A-Za-z])')
+    # A year-range number counts something when a count noun follows it or a
+    # count phrase leads into it ("1330 points", "I would have got 1330").
+    _COUNT_NOUN_AFTER = re.compile(
+        r'\s+(?:points|votes|goals|fans|people|supporters|matches|games|players|tickets)\b',
+        re.IGNORECASE)
+    _COUNT_CUE_BEFORE = re.compile(r'\b(?:a total of|score of|got)\s+$', re.IGNORECASE)
+
+    def _year_or_count(self, match: re.Match) -> str:
+        """Spell a standalone 1100-2099 as a year, or as a cardinal in a count context."""
+        number, text = match.group(1), match.string
+        if (self._COUNT_NOUN_AFTER.match(text, match.end())
+                or self._COUNT_CUE_BEFORE.search(text, max(0, match.start() - 20), match.start())):
+            return self._number_to_words(int(number))
+        return self._format_year(number)
+
+    _MONTH = (r'(January|February|March|April|May|June|July|August|September|October|'
+              r'November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sept?|Oct|Nov|Dec)\.?')
+    _DAY = r'(\d{1,2})(?:st|nd|rd|th)?'
+    _DATE_YEAR = r'(1[1-9]\d{2}|20\d{2})\b(?![,.]\d)'
+    _DAY_FIRST_DATE = re.compile(r'\b' + _DAY + r'(?:\s+of)?\s+' + _MONTH + r',?\s+' + _DATE_YEAR)
+    _MONTH_FIRST_DATE = re.compile(r'\b' + _MONTH + r'\s+' + _DAY + r'\b,?\s+' + _DATE_YEAR)
 
     def normalize_dates(self, text: str) -> str:
-        """Normalize dates to spoken form."""
-        def date_replacer(match):
-            day = match.group(2)
-            month = match.group(3)
-            year = match.group(4)
-            try:
-                day_ordinal = self._number_to_ordinal(int(day))
-                month_name = self._get_month_name(month)
-                year_spoken = self._format_year(year)
-                prefix = match.group(1) or ''
-                return f"{prefix}{day_ordinal} of {month_name}, {year_spoken}"
-            except ValueError:
-                return match.group(0)
+        """Speak full dates, keeping the source's day/month order: '5 May, 1995' ->
+        'fifth of May, nineteen ninety-five'; 'May 23, 2028' -> 'May twenty-third,
+        twenty twenty-eight'. Runs before normalize_numbers, which would otherwise
+        spell the year first and leave the day in digits."""
+        def day_first(match):
+            return self._speak_date(match, match.group(1), match.group(2), match.group(3),
+                                    '{day} of {month}, {year}')
 
-        text = re.sub(
-            r'((?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),\s+)?(\d{1,2})\s+(\w+),\s+(\d{4})',
-            date_replacer,
-            text,
-            flags=re.IGNORECASE
-        )
-        return text
+        def month_first(match):
+            return self._speak_date(match, match.group(2), match.group(1), match.group(3),
+                                    '{month} {day}, {year}')
+
+        text = self._DAY_FIRST_DATE.sub(day_first, text)
+        return self._MONTH_FIRST_DATE.sub(month_first, text)
+
+    def _speak_date(self, match: re.Match, day: str, month: str, year: str, form: str) -> str:
+        """Fill a date template with spoken parts; an impossible day is left as written."""
+        if not 1 <= int(day) <= 31:
+            return match.group(0)
+        return form.format(day=self._number_to_ordinal(int(day)),
+                           month=self._get_month_name(month),
+                           year=self._format_year(year))
 
     def normalize_whitespace(self, text: str) -> str:
         """Normalize whitespace while preserving paragraphs."""
@@ -385,7 +407,8 @@ class TextNormalizer:
 
     def _format_year(self, year: str) -> str:
         """Format year as spoken: 1872 -> eighteen seventy-two, 1905 -> nineteen
-        oh five, 2007 -> two thousand seven, 2019 -> twenty-nineteen."""
+        oh five, 2007 -> two thousand seven, 2019 -> twenty nineteen. The century and
+        the rest stay separate words: XTTS babbles after 'twenty-twenty-six'."""
         year_int = int(year)
         if 2000 <= year_int < 2010:
             return self._number_to_words(year_int)
@@ -395,5 +418,4 @@ class TextNormalizer:
             return f"{century_words} hundred"
         if remainder < 10:
             return f"{century_words} oh {self._number_to_words(remainder)}"
-        separator = ' ' if year_int < 2000 else '-'
-        return f"{century_words}{separator}{self._number_to_words(remainder)}"
+        return f"{century_words} {self._number_to_words(remainder)}"
