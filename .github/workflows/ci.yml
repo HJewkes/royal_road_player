@@ -8,6 +8,7 @@ on:
 jobs:
   backend-tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -18,7 +19,10 @@ jobs:
           cache-dependency-path: backend/requirements.txt
 
       - name: Install espeak-ng
-        run: sudo apt-get update && sudo apt-get install -y espeak-ng
+        timeout-minutes: 10
+        run: |
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends espeak-ng
 
       - name: Install backend dependencies
         run: pip install -r backend/requirements.txt
