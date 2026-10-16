@@ -198,8 +198,8 @@ class TestStandaloneYears:
             "1905": "nineteen oh five",
             "2000": "two thousand",
             "2007": "two thousand seven",
-            "2019": "twenty-nineteen",
-            "2099": "twenty-ninety-nine",
+            "2019": "twenty nineteen",
+            "2099": "twenty ninety-nine",
         }
         for digits, spoken in cases.items():
             assert self.n.normalize_numbers(f"in {digits} it") == f"in {spoken} it"
@@ -235,6 +235,69 @@ class TestStandaloneYears:
             "Monday, fifth of May, nineteen ninety-five"
         )
 
+    def test_years_from_2010_are_two_separate_words(self):
+        out = self.n.normalize("If I spent five minutes on each call I would still be in 2026.")
+        assert out.endswith("I would still be in twenty twenty-six.")
+
+    def test_count_noun_after_reads_as_cardinal(self):
+        cases = {
+            "1330 points": "one thousand three hundred thirty points",
+            "1200 votes": "one thousand two hundred votes",
+            "1500 supporters": "one thousand five hundred supporters",
+        }
+        for raw, spoken in cases.items():
+            assert self.n.normalize(raw) == spoken
+
+    def test_count_phrase_before_reads_as_cardinal(self):
+        out = self.n.normalize(
+            "By playing, I would earn something like 95 experience points. "
+            "As a pure manager, I would have got 1330.")
+        assert out.endswith("I would have got one thousand three hundred thirty.")
+        assert self.n.normalize("a total of 1450") == "a total of one thousand four hundred fifty"
+        assert self.n.normalize("a score of 1100") == "a score of one thousand one hundred"
+
+
+class TestFullDates:
+    """A full date comes out fully spoken, in the order the source wrote it."""
+
+    def setup_method(self):
+        self.n = TextNormalizer()
+
+    def test_month_first_dates(self):
+        cases = {
+            "Tuesday, May 23, 2028": "Tuesday, May twenty-third, twenty twenty-eight",
+            "Monday, September 18, 2028": "Monday, September eighteenth, twenty twenty-eight",
+            "Friday, January 5, 2029": "Friday, January fifth, twenty twenty-nine",
+            "Tuesday, January 9, 2029": "Tuesday, January ninth, twenty twenty-nine",
+            "on January 5th, 2029": "on January fifth, twenty twenty-nine",
+            "Sept. 1 1995": "September first, nineteen ninety-five",
+        }
+        for raw, spoken in cases.items():
+            assert self.n.normalize(raw) == spoken
+
+    def test_day_first_dates(self):
+        cases = {
+            "5 May, 1995": "fifth of May, nineteen ninety-five",
+            "23 May 2028": "twenty-third of May, twenty twenty-eight",
+            "the 23rd May 2028": "the twenty-third of May, twenty twenty-eight",
+            "on the 1st of January 2029": "on the first of January, twenty twenty-nine",
+            "2 Feb 2007": "second of February, two thousand seven",
+        }
+        for raw, spoken in cases.items():
+            assert self.n.normalize(raw) == spoken
+
+    def test_full_date_leaves_no_digits(self):
+        out = self.n.normalize("Tuesday, May 23, 2028\n\nIt was 5 May, 1995 all over again.")
+        assert not any(ch.isdigit() for ch in out)
+
+    def test_partial_dates_and_non_months_are_not_dates(self):
+        assert self.n.normalize("Tuesday, July 11") == "Tuesday, July 11"
+        assert self.n.normalize("September 2028, I think") == "September twenty twenty-eight, I think"
+        assert self.n.normalize("won 3 games, 1995 style") == "won 3 games, nineteen ninety-five style"
+
+    def test_impossible_day_is_left_to_the_numbers_pass(self):
+        assert self.n.normalize("May 45, 2028") == "May 45, twenty twenty-eight"
+
 
 class TestHyphenCompounds:
     """A number joined to a word by a hyphen is spelled, so XTTS reads the word cleanly."""
@@ -256,7 +319,7 @@ class TestHyphenCompounds:
 
     def test_year_in_compound_uses_year_form(self):
         assert self.n.normalize("a 1995-born winger") == "a nineteen ninety-five-born winger"
-        assert self.n.normalize("2028-style kits") == "twenty-twenty-eight-style kits"
+        assert self.n.normalize("2028-style kits") == "twenty twenty-eight-style kits"
 
     def test_scores_and_ranges_keep_their_digits(self):
         assert self.n.normalize("it ended 1-0 and then 3-4") == "it ended 1-0 and then 3-4"
