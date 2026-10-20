@@ -9,12 +9,17 @@ it beats the shipped audio by a margin; ties/worse are discarded (never ship a w
 concatenation-swap). Emits logs/fix_results.json with full-chunk before/after mp3 for
 the demo and the overall improvement rate.
 
+Every take re-renders with the engine the chapter's stamp names, so a repair never
+mixes engines; a chapter whose engine cannot run on this host is refused.
+
   ./venv311/bin/python scripts/fix_pass.py [--limit N] [--takes K]
+  ./venv311/bin/python scripts/fix_pass.py --early-stops --apply --book 8 --chapter 2
 """
 import argparse
 import base64
 import io
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -24,6 +29,10 @@ sys.path.insert(0, str(BACKEND))
 
 from src.discovery import ChunkDiscovery  # noqa: E402
 from src.tts import get_tts_engine  # noqa: E402
+from src.tts.chatterbox import ChatterboxUnavailable  # noqa: E402
+from src.tts.early_stop import take_shortfall  # noqa: E402
+from src.tts.engines import chunk_seed, get_chapter_engine, render_profile  # noqa: E402
+from src.tts.verified import SEED_STRIDE  # noqa: E402
 from src.validation.defects import tokenize  # noqa: E402
 from src.validation.phonemes import (  # noqa: E402
     XTTS_FAULT_THRESHOLD, chunk_word_verdicts, get_phoneme_recognizer, load_slice,
@@ -33,13 +42,46 @@ DATASET = BACKEND.parent / "data" / "test_set" / "tts_defects.jsonl"
 OUT = BACKEND.parent / "logs" / "fix_results.json"
 MARGIN = 0.06  # after must beat before by this to count as an improvement
 
-# Perturbed re-rolls: one reseed at defaults, then decoder variations that the
-# param study found rescue stochastic mangles. First entry == checkpoint defaults.
-PARAM_TAKES = [
-    ("reseed", {}),
-    ("temp0.85", {"temperature": 0.85}),
-    ("rep2.0", {"repetition_penalty": 2.0}),
-]
+# Perturbed re-rolls per engine. XTTS: one reseed at defaults, then decoder
+# variations that the param study found rescue stochastic mangles; it is unseeded,
+# so "reseed" relies on its randomness. Chatterbox is seeded, so a take only differs
+# if its seed does: "seed" here is a retake number, resolved by _take_params.
+PARAM_TAKES = {
+    "xtts": [
+        ("reseed", {}),
+        ("temp0.85", {"temperature": 0.85}),
+        ("rep2.0", {"repetition_penalty": 2.0}),
+    ],
+    "chatterbox": [
+        ("seed+1", {"seed": 1}),
+        ("seed+2", {"seed": 2}),
+        ("temp0.7", {"seed": 3, "temperature": 0.7}),
+    ],
+}
+
+# The render-time verify loop already tried retakes 0..retries of every chunk seed,
+# and a seeded take is reproducible, so repair retakes start well past them.
+REPAIR_RETAKE_BASE = 1000
+
+
+def _take_params(engine, chunk_index, n):
+    """The first `n` (label, synthesize kwargs) takes for `engine`, seeds made absolute."""
+    out = []
+    for label, params in PARAM_TAKES[engine][:n]:
+        params = dict(params)
+        if "seed" in params:
+            retake = REPAIR_RETAKE_BASE + params["seed"]
+            params["seed"] = chunk_seed(chunk_index) + retake * SEED_STRIDE
+        out.append((label, params))
+    return out
+
+
+def _load_engine(disc, fiction_id, book, chapter):
+    """(name, engine) for the chapter's stamp; exits if this host cannot run it."""
+    try:
+        return get_chapter_engine(disc, fiction_id, book, chapter, factory=get_tts_engine)
+    except ChatterboxUnavailable as exc:
+        sys.exit(f"Refusing to repair: {exc}")
 
 # Recurring proper nouns worth prioritising (from the 5-chapter audit).
 PRIORITY = {"etihad", "bochum", "salerno", "lazaar", "fogerty", "miina", "heli",
@@ -189,8 +231,8 @@ def _best_tail_take(chunk, before, args, tts, recog):
     """
     shipped_dist = _word_distances(chunk.text, chunk.audio_path, recog)
     takes = []
-    for label, params in PARAM_TAKES[:args.takes]:
-        wav = Path(tempfile.mkstemp(suffix=".wav")[1])
+    for label, params in _take_params(args.engine, chunk.index, args.takes):
+        wav = _new_take_path()
         tts.synthesize(chunk.text, wav, **params)
         key, art, broke = _tail_take(chunk, wav, recog, shipped_dist)
         takes.append((key, label, wav, art, broke))
@@ -203,6 +245,46 @@ def _best_tail_take(chunk, before, args, tts, recog):
         "kept": nbroke == 0 and nstray < before["length"],
         "context": chunk.text[-60:].strip(), "wav": str(wav),
     }
+
+
+def _select_early_stops(disc, target, profile, limit):
+    """Chunks whose take is too short for their text, worst shortfall first."""
+    out = []
+    for chunk in disc.list_chunks(*target):
+        if not chunk.has_audio:
+            continue
+        shortfall = take_shortfall(chunk.text, chunk.audio_path, profile)
+        if shortfall is not None:
+            out.append((chunk, shortfall))
+    out.sort(key=lambda t: -t[1])
+    return out[:limit]
+
+
+def _best_early_stop_take(chunk, before, args, tts, recog, profile):
+    """Regenerate one truncated chunk; keep the best take only if it is longer for
+    its text and breaks no word, the same regression rule as the tail pass."""
+    shipped_dist = _word_distances(chunk.text, chunk.audio_path, recog)
+    takes = []
+    for label, params in _take_params(args.engine, chunk.index, args.takes):
+        wav = _new_take_path()
+        tts.synthesize(chunk.text, wav, **params)
+        shortfall = take_shortfall(chunk.text, wav, profile) or 0.0
+        broke = _regressions(shipped_dist, _word_distances(chunk.text, wav, recog))
+        takes.append(((len(broke), shortfall), label, wav, broke))
+    takes.sort(key=lambda t: t[0])
+    (nbroke, after), label, wav, broke = takes[0]
+    return {
+        "chunk": chunk.index, "before_shortfall": round(before, 3),
+        "after_shortfall": round(after, 3), "take": label, "broke_words": broke,
+        "kept": nbroke == 0 and after < before,
+        "context": chunk.text[-60:].strip(), "wav": str(wav),
+    }
+
+
+def _new_take_path():
+    fd, name = tempfile.mkstemp(suffix=".wav")
+    os.close(fd)
+    return Path(name)
 
 
 def _apply_take(chunk, result):
@@ -257,7 +339,36 @@ def _run_tails(args, disc, tts, recog):
     print(f"Wrote {out}")
 
 
-def _run_words(args, disc, tts, recog):
+def _run_early_stops(args, disc, tts, recog):
+    """Regenerate truncated chunks with new seeds and keep only takes that are longer."""
+    target = (args.fiction_id, args.book, args.chapter)
+    profile = render_profile(args.engine)
+    if profile is None:
+        sys.exit(f"{args.engine} has no early-stop guard; nothing to repair")
+    selected = _select_early_stops(disc, target, profile, args.limit)
+    print(f"Early-stop fix pass over {len(selected)} truncated chunks, {args.takes} takes each\n")
+
+    results = []
+    for chunk, before in selected:
+        r = _best_early_stop_take(chunk, before, args, tts, recog, profile)
+        results.append(r)
+        verdict = (("FULL" if r["after_shortfall"] == 0 else f"shortfall {r['after_shortfall']:.2f}")
+                   if r["kept"] else
+                   (f"rejected (broke {r['broke_words']})" if r["broke_words"] else "no gain"))
+        if r["kept"] and args.apply:
+            _apply_take(chunk, r)
+            verdict += " [APPLIED]"
+        print(f"  chunk {r['chunk']:3d} shortfall {r['before_shortfall']:.2f} -> [{r['take']}] {verdict}")
+
+    n, kept = len(results), sum(1 for r in results if r["kept"])
+    full = sum(1 for r in results if r["kept"] and r["after_shortfall"] == 0)
+    print(f"\nRendered in full: {full}/{n}. Improved and kept: {kept}/{n}.")
+    out = OUT.with_name("early_stop_fix_results.json")
+    _write_results(out, {"attempted": n, "full": full, "kept": kept, "results": results})
+    print(f"Wrote {out}")
+
+
+def _run_words(args, disc, recog):
     """The original path: rescue a flagged WORD in a curated bad chunk."""
     selected = _select(args.limit)
     print(f"Fix pass over {len(selected)} bad chunks, {args.takes} takes each\n")
@@ -267,6 +378,7 @@ def _run_words(args, disc, tts, recog):
         chunk = disc.get_chunk("124774", book, ch, idx)
         if not chunk or not chunk.has_audio:
             continue
+        engine, tts = _load_engine(disc, "124774", book, ch)
         words = sorted(meta["words"])
         before, bworst = _score(chunk.text, chunk.audio_path, words, recog)
         if before < XTTS_FAULT_THRESHOLD:
@@ -274,8 +386,8 @@ def _run_words(args, disc, tts, recog):
             continue
         attempted += 1
         takes = []
-        for label, params in PARAM_TAKES[:args.takes]:
-            wav = Path(tempfile.mkstemp(suffix=".wav")[1])
+        for label, params in _take_params(engine, idx, args.takes):
+            wav = _new_take_path()
             tts.synthesize(chunk.text, wav, **params)
             score, worst = _score(chunk.text, wav, words, recog)
             takes.append((score, label, wav, worst))
@@ -311,21 +423,26 @@ def _run_words(args, disc, tts, recog):
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--limit", type=int, default=9, help="chunks to attempt")
-    ap.add_argument("--takes", type=int, default=len(PARAM_TAKES), help="regeneration takes")
-    ap.add_argument("--tails", action="store_true",
-                    help="fix tail artifacts in a chapter instead of dataset word defects")
+    ap.add_argument("--takes", type=int, default=3, help="regeneration takes")
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--tails", action="store_true",
+                      help="fix tail artifacts in a chapter instead of dataset word defects")
+    mode.add_argument("--early-stops", action="store_true",
+                      help="re-render chunks too short for their text (engines with a guard)")
     ap.add_argument("--apply", action="store_true",
-                    help="with --tails, overwrite the chunk wav for kept takes "
-                         "(default is report-only; re-export rebuilds audio.wav)")
+                    help="with --tails or --early-stops, overwrite the chunk wav for kept "
+                         "takes (default is report-only; re-export rebuilds audio.wav)")
     ap.add_argument("--fiction-id", default="124774")
     ap.add_argument("--book", type=int, default=8)
     ap.add_argument("--chapter", type=int, default=2)
     args = ap.parse_args()
 
-    disc, tts, recog = ChunkDiscovery(), get_tts_engine(), get_phoneme_recognizer()
-    if args.tails:
-        return _run_tails(args, disc, tts, recog)
-    return _run_words(args, disc, tts, recog)
+    disc, recog = ChunkDiscovery(), get_phoneme_recognizer()
+    if not (args.tails or args.early_stops):
+        return _run_words(args, disc, recog)
+    args.engine, tts = _load_engine(disc, args.fiction_id, args.book, args.chapter)
+    run = _run_tails if args.tails else _run_early_stops
+    return run(args, disc, tts, recog)
 
 
 if __name__ == "__main__":

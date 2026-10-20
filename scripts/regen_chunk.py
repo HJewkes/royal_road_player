@@ -2,7 +2,8 @@
 """Verify a pronunciation-lexicon fix by regenerating a chunk and re-scanning it.
 
 For each target chunk this reads the source text, applies the pronunciation
-lexicon, and — if that changed anything — re-synthesizes the audio with XTTS and
+lexicon, and — if that changed anything — re-synthesizes the audio with the
+engine the chapter's stamp names (refusing one this host cannot run) and
 re-runs the two-stage STT defect scan against the ORIGINAL word. It prints the
 before/after so you can see whether the respelling actually fixed the mangle.
 
@@ -29,6 +30,8 @@ from src.config import get_settings  # noqa: E402
 from src.discovery import ChunkDiscovery  # noqa: E402
 from src.text.lexicon import get_lexicon  # noqa: E402
 from src.tts import get_tts_engine  # noqa: E402
+from src.tts.chatterbox import ChatterboxUnavailable  # noqa: E402
+from src.tts.engines import chunk_seed, get_chapter_engine  # noqa: E402
 from src.validation.defects import confirm_defects, detect_defects  # noqa: E402
 from src.validation.stt import get_stt_service  # noqa: E402
 
@@ -65,7 +68,15 @@ def _targets_from_json(path, lexicon):
     return out
 
 
-def _process(target, disc, tts, base_stt, confirm_stt, lexicon, in_place):
+def _chapter_tts(disc, fiction_id, book, ch):
+    """The engine the chapter was rendered with; exits if this host cannot run it."""
+    try:
+        return get_chapter_engine(disc, fiction_id, book, ch, factory=get_tts_engine)[1]
+    except ChatterboxUnavailable as exc:
+        sys.exit(f"Refusing to regenerate: {exc}")
+
+
+def _process(target, disc, base_stt, confirm_stt, lexicon, in_place):
     fiction_id, book, ch, idx = target
     chunk = disc.get_chunk(fiction_id, book, ch, idx)
     if chunk is None or not chunk.has_audio:
@@ -78,7 +89,7 @@ def _process(target, disc, tts, base_stt, confirm_stt, lexicon, in_place):
 
     before = _two_stage(chunk.text, chunk.audio_path, base_stt, confirm_stt)
     out_wav = chunk.audio_path if in_place else Path(tempfile.mkstemp(suffix=".wav")[1])
-    tts.synthesize(fixed, out_wav)
+    _chapter_tts(disc, fiction_id, book, ch).synthesize(fixed, out_wav, seed=chunk_seed(idx))
     after = _two_stage(chunk.text, out_wav, base_stt, confirm_stt)
 
     print(f"  ch{idx:03d}: {'overwrote' if in_place else 'temp'} {out_wav.name}")
@@ -112,11 +123,10 @@ def main():
         return
 
     print(f"Regenerating {len(targets)} chunk(s){' IN PLACE' if args.in_place else ' (temp, non-destructive)'}\n")
-    tts = get_tts_engine()
     base_stt = get_stt_service()
     confirm_stt = get_stt_service(settings.whisper_confirm_model)
     for target in targets:
-        _process(target, disc, tts, base_stt, confirm_stt, lexicon, args.in_place)
+        _process(target, disc, base_stt, confirm_stt, lexicon, args.in_place)
 
 
 if __name__ == "__main__":

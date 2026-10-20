@@ -24,6 +24,8 @@ sys.path.insert(0, str(BACKEND))
 
 from src.config import get_settings  # noqa: E402
 from src.discovery import ChunkDiscovery  # noqa: E402
+from src.tts.early_stop import spoken_letters, take_shortfall, wav_duration  # noqa: E402
+from src.tts.engines import render_profile  # noqa: E402
 from src.validation.defects import (  # noqa: E402
     confirm_defects, context_snippet, detect_defects, is_unusual_word, tokenize,
 )
@@ -143,6 +145,24 @@ def _tail_finding(artifact, chunk, base):
             "position": 1.0}
 
 
+def _early_stop_finding(chunk, profile, base):
+    """A take too short for its text: the engine stopped before the last words.
+
+    Read from the wav header alone, no model. Not filtered by --min-severity:
+    the guard's threshold is already past the fastest full take ever measured,
+    so any shortfall at all means lost text.
+    """
+    shortfall = take_shortfall(chunk.text, chunk.audio_path, profile)
+    if shortfall is None:
+        return None
+    speech_s = wav_duration(chunk.audio_path) - profile.trailing_pad_s
+    pace = spoken_letters(chunk.text) / max(speech_s, 1e-3)
+    return {**base, "kind": "early_stop", "expected": "(end of chunk)",
+            "heard": f"{speech_s:.2f}s of speech, {pace:.1f} letters/s",
+            "severity": shortfall, "causes": ["early_stop"], "audio_start": None,
+            "audio_end": None, "context": chunk.text[-60:].strip(), "position": 1.0}
+
+
 def _hallucination_finding(halluc, base):
     return {**base, "kind": "hallucination", "expected": "(no text)",
             "heard": f"/{halluc['phones']}/", "severity": halluc["severity"],
@@ -167,10 +187,20 @@ def _describe(chunk, faults, verdicts, base, min_sev, base_stt, confirm_stt):
 
 
 def _scan_chapter(fiction_id, book, ch, base_stt, confirm_stt, discovery, min_sev, recognizer):
-    """Phoneme-detect every rendered chunk in one chapter; Whisper only the flagged."""
+    """Phoneme-detect every rendered chunk in one chapter; Whisper only the flagged.
+
+    Chapters whose stamp engine has an early-stop threshold (Chatterbox) are also
+    checked for truncated takes.
+    """
     findings = []
+    profile = render_profile(discovery.read_engine_stamp(fiction_id, book, ch)["engine"])
     chunks = [c for c in discovery.list_chunks(fiction_id, book, ch) if c.has_audio]
     for chunk in chunks:
+        base = {"fiction_id": fiction_id, "book": book, "chapter": ch,
+                "chunk": chunk.index, "wav": str(chunk.audio_path)}
+        early_stop = _early_stop_finding(chunk, profile, base) if profile else None
+        if early_stop:
+            findings.append(early_stop)
         verdicts, hallucinations, tail = _detect(chunk, recognizer)
         faults = [v for v in verdicts if v["source"] == "xtts" and v["distance"] >= min_sev]
         hallucinations = [h for h in hallucinations if h["severity"] >= min_sev]
@@ -178,8 +208,6 @@ def _scan_chapter(fiction_id, book, ch, base_stt, confirm_stt, discovery, min_se
             tail = None
         if not faults and not hallucinations and not tail:
             continue
-        base = {"fiction_id": fiction_id, "book": book, "chapter": ch,
-                "chunk": chunk.index, "wav": str(chunk.audio_path)}
         findings.extend(_describe(chunk, faults, verdicts, base, min_sev,
                                   base_stt, confirm_stt))
         findings.extend(_hallucination_finding(h, base) for h in hallucinations)
