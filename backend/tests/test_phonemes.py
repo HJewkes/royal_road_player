@@ -155,6 +155,41 @@ def test_detect_hallucination_flags_inserted_babble():
     assert halluc[0]["length"] >= 5
 
 
+# Long enough (over 200 phones) for difflib's autojunk heuristic to engage, as a
+# 450-character Chatterbox chunk is.
+LONG_CHUNK = (
+    "The morning train pulled out of the station slowly, and the old porter waved "
+    "his lantern at the empty platform. Nobody on board seemed to notice. A woman "
+    "in a grey coat read her newspaper while the boy beside her counted the fields "
+    "and the cows and the fences rolling by, until the city lights faded behind "
+    "the hills and the long valley opened up before them."
+)
+
+
+def _recognizer_slips(phones: list[str]) -> list[str]:
+    """The read-back of a correct take: every fourth word loses its last phone,
+    as a recognizer clipping codas does."""
+    return [w[:-1] if i % 4 == 3 and len(w) > 2 else w for i, w in enumerate(phones)]
+
+
+@espeak
+def test_long_correct_chunk_has_no_hallucination():
+    """Regression: on a chunk this long the default autojunk alignment collapsed
+    and reported correctly read text as one huge inserted run."""
+    actual = "".join(_recognizer_slips(g2p_sentence(LONG_CHUNK)))
+    assert len(actual) > 200
+    assert detect_hallucinations(LONG_CHUNK, actual) == []
+
+
+@espeak
+def test_long_chunk_still_flags_inserted_babble():
+    parts = _recognizer_slips(g2p_sentence(LONG_CHUNK))
+    parts.insert(len(parts) // 2, "wʌnʃɹi")
+    halluc = detect_hallucinations(LONG_CHUNK, "".join(parts))
+    assert len(halluc) == 1
+    assert "wʌnʃɹi" in halluc[0]["phones"]
+
+
 @espeak
 def test_tail_artifact_flags_phantom_syllable_after_last_word():
     """XTTS appends a syllable the text never had — ch2 chunk 387 ends "...ASAP."
