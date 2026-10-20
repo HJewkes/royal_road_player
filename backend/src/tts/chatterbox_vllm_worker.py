@@ -9,8 +9,9 @@ VllmBatchRenderer (batch.py) drives it over a pipe.
 
 Protocol: once loaded it writes {"ready": true}. Each request line holds the
 reference, the sampling kwargs, `diffusion_steps`, the post-processing numbers
-and `items` [{index, text, out}]. The port generates `max_batch` items' speech
-tokens at a time with T3; its one-take-at-a-time S3Gen is swapped for
+and `items` [{index, text, out, seed?}]. The port generates `max_batch` items'
+speech tokens at a time with T3, an item with a seed sampling on its own
+generator (SeededT3); its one-take-at-a-time S3Gen is swapped for
 BatchedS3Gen (s3gen_batch.py), which decodes them in padded sub-batches. Each
 take is sped up by `tempo` (ffmpeg atempo), watermarked with Perth as stock
 chatterbox-tts does, then loudness-normalised and padded by finish_take, and
@@ -115,6 +116,32 @@ class SpeechTokenCollector:
         return speech_tokens, None
 
 
+class SeededT3:
+    """Stands in for the port's vLLM engine inside generate_with_conds: one seed per prompt.
+
+    The port builds a single SamplingParams for the whole call; this hands vLLM a
+    copy per prompt carrying that item's seed, so a retake gets a fresh draw. A
+    None seed leaves the prompt on vLLM's shared generator, as before.
+    """
+
+    def __init__(self, llm, seeds: list):
+        self.llm, self.seeds = llm, seeds
+
+    def generate(self, prompts, sampling_params, **kwargs):
+        if len(prompts) != len(self.seeds):
+            raise RuntimeError(f"{len(self.seeds)} seeds for {len(prompts)} prompts")
+        per_prompt = [_with_seed(sampling_params, seed) for seed in self.seeds]
+        return self.llm.generate(prompts, sampling_params=per_prompt, **kwargs)
+
+
+def _with_seed(sampling_params, seed):
+    if seed is None:
+        return sampling_params
+    seeded = sampling_params.clone()
+    seeded.seed = int(seed)
+    return seeded
+
+
 class BatchWorker:
     def __init__(self, max_batch: int, watermark: bool, results):
         self.max_batch, self.results = max_batch, results
@@ -138,23 +165,23 @@ class BatchWorker:
 
     def _render_batch(self, items: list[dict]) -> None:
         began = time.perf_counter()
-        wavs = self._generate([item["text"] for item in items])
+        wavs = self._generate([item["text"] for item in items], [item.get("seed") for item in items])
         if len(wavs) != len(items):
             raise RuntimeError(f"port returned {len(wavs)} takes for {len(items)} texts")
         for item, wav in zip(items, wavs):
             self.emit({"index": item["index"], **self._finish(item, wav)})
         print(f"batch of {len(items)} in {time.perf_counter() - began:.1f}s", file=sys.stderr, flush=True)
 
-    def _generate(self, texts: list[str]) -> list:
+    def _generate(self, texts: list[str], seeds: list) -> list:
         ref, cond_emb = self.model.get_audio_conditionals(self.request["reference"])
-        collector, port_s3gen = SpeechTokenCollector(), self.model.s3gen
-        self.model.s3gen = collector
+        collector, port_s3gen, port_t3 = SpeechTokenCollector(), self.model.s3gen, self.model.t3
+        self.model.s3gen, self.model.t3 = collector, SeededT3(port_t3, seeds)
         try:
             self.model.generate_with_conds(
                 texts, s3gen_ref=ref, cond_emb=cond_emb, diffusion_steps=self.diffusion_steps, **self.kwargs
             )
         finally:
-            self.model.s3gen = port_s3gen
+            self.model.s3gen, self.model.t3 = port_s3gen, port_t3
         t3_done = time.perf_counter()
         wavs = self.s3gen.wavs(collector.tokens, ref, self.diffusion_steps)
         print(f"S3Gen for {len(texts)} takes in {time.perf_counter() - t3_done:.1f}s", file=sys.stderr, flush=True)

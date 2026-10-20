@@ -7,10 +7,13 @@ Chatterbox, sits behind a process boundary: a worker that stays loaded across
 chapters, a chapter's request line in, a reply line per take out.
 
 render_chapter_batched then checks every take with the early-stop guard (the
-vLLM profile's own threshold) and the hallucination detector, and re-renders
-the flagged ones, plus any the batch failed, on the stock engine through
-synthesize_verified. If the batch worker cannot run at all, the whole chapter
-renders on stock.
+vLLM profile's own threshold) and the hallucination detector, and sends the
+flagged ones, plus any the batch failed, back to the same warm worker as one
+mini-batch with a fresh seed each, for up to chatterbox_vllm_retake_rounds
+rounds. Whatever is still flagged after that re-renders on the stock engine
+through synthesize_verified. If the batch worker cannot run at all, the whole
+chapter renders on stock; if it dies during a retake round, the chunks that
+round did not finish go to stock.
 """
 
 import json
@@ -22,6 +25,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from typing import Optional, Protocol
 
@@ -29,7 +33,7 @@ from src.config import get_settings
 from src.tts.chatterbox import pump_lines
 from src.tts.early_stop import take_shortfall
 from src.tts.profiles import T1, VllmProfile
-from src.tts.verified import synthesize_verified
+from src.tts.verified import SEED_STRIDE, synthesize_verified
 from src.validation.phonemes import detect_hallucinations, load_slice
 
 logger = logging.getLogger(__name__)
@@ -61,7 +65,9 @@ class TakeResult:
 class BatchRenderer(Protocol):
     profile: VllmProfile
 
-    def render_chapter(self, chunks: list[tuple[int, str]], out_dir: Path) -> list[TakeResult]: ...
+    def render_chapter(
+        self, chunks: list[tuple[int, str]], out_dir: Path, seeds: Optional[dict[int, int]] = None
+    ) -> list[TakeResult]: ...
 
 
 class _WorkerError(RuntimeError):
@@ -89,13 +95,16 @@ class VllmBatchRenderer:
         self._spawned_with: Optional[tuple] = None
         self._replies: queue.Queue = queue.Queue()
 
-    def render_chapter(self, chunks: list[tuple[int, str]], out_dir: Path) -> list[TakeResult]:
+    def render_chapter(
+        self, chunks: list[tuple[int, str]], out_dir: Path, seeds: Optional[dict[int, int]] = None
+    ) -> list[TakeResult]:
+        """Render chunks to out_dir/NNN.wav; a chunk in seeds samples with that seed, the rest unseeded."""
         self._check_runnable()
         out_dir = Path(out_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
         paths = {index: (out_dir / f"{index:03d}.wav").resolve() for index, _ in chunks}
         replies: dict[int, dict] = {}
-        failure = self._render(self._request(chunks, paths), replies)
+        failure = self._render(self._request(chunks, paths, seeds or {}), replies)
         takes = [_take(index, paths[index], replies.get(index)) for index, _ in chunks]
         if failure:
             raise BatchRenderError(failure, takes)
@@ -112,7 +121,7 @@ class VllmBatchRenderer:
             process.kill()
             process.wait()
 
-    def _request(self, chunks: list[tuple[int, str]], paths: dict[int, Path]) -> dict:
+    def _request(self, chunks: list[tuple[int, str]], paths: dict[int, Path], seeds: dict[int, int]) -> dict:
         s, p = self.settings, self.profile
         return {
             "reference": str(Path(self.reference).resolve()),
@@ -121,7 +130,7 @@ class VllmBatchRenderer:
             "tempo": s.chatterbox_vllm_tempo,
             "target_lufs": p.target_lufs,
             "trailing_pad_s": p.trailing_pad_s,
-            "items": [{"index": index, "text": text, "out": str(paths[index])} for index, text in chunks],
+            "items": [_item(index, text, paths[index], seeds.get(index)) for index, text in chunks],
         }
 
     def _render(self, request: dict, replies: dict[int, dict]) -> Optional[str]:
@@ -215,22 +224,52 @@ class VllmBatchRenderer:
             raise VllmUnavailable("set AUDIOBOOK_CHATTERBOX_VLLM_DIR to the chatterbox-vllm clone")
 
 
+def _item(index: int, text: str, out: Path, seed: Optional[int]) -> dict:
+    item = {"index": index, "text": text, "out": str(out)}
+    return item if seed is None else {**item, "seed": seed}
+
+
 def _take(index: int, path: Path, reply: Optional[dict]) -> TakeResult:
     if reply is None:
         return TakeResult(index, path, ok=False, error="no result from the batch worker")
     return TakeResult(index, path, ok=bool(reply.get("ok")), audio_s=reply.get("audio_s"), error=reply.get("error"))
 
 
+Flags = dict[str, list[int]]
+
+
+def _no_flags() -> Flags:
+    return {"early_stop": [], "hallucination": [], "failed": []}
+
+
 @dataclass
 class BatchReport:
+    """What a chapter's batch render did.
+
+    rounds[0] holds the takes the batch flagged and rounds[n] those still flagged
+    after vLLM retake round n; retakes holds the ones that went on to stock, by
+    the reason their last vLLM take was flagged for.
+    """
+
     batch_s: float = 0.0
+    vllm_retake_s: float = 0.0
     retake_s: float = 0.0
     batch_failed: Optional[str] = None
-    retakes: dict[str, list[int]] = field(default_factory=lambda: {"early_stop": [], "hallucination": [], "failed": []})
+    retake_failed: Optional[str] = None
+    rounds: list[Flags] = field(default_factory=list)
+    retakes: Flags = field(default_factory=_no_flags)
 
     @property
     def retake_count(self) -> int:
-        return sum(len(indices) for indices in self.retakes.values())
+        return _count(self.retakes)
+
+    @property
+    def round_counts(self) -> list[int]:
+        return [_count(flags) for flags in self.rounds]
+
+
+def _count(flags: Flags) -> int:
+    return sum(len(indices) for indices in flags.values())
 
 
 def render_chapter_batched(
@@ -240,28 +279,66 @@ def render_chapter_batched(
     stock_factory: Callable[[], object],
     recognizer=None,
     seed_for: Callable[[int], int] = lambda index: index,
+    retake_rounds: Optional[int] = None,
 ) -> BatchReport:
-    """Render every chunk to out_dir/NNN.wav: the batch first, then stock for whatever it got wrong."""
+    """Render every chunk to out_dir/NNN.wav: the batch, vLLM retake rounds, then stock for what is left."""
     report = BatchReport()
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    texts = dict(chunks)
+    check = partial(_flags, texts, renderer.profile, recognizer)
+
     began = time.perf_counter()
+    takes, report.batch_failed = _render_or_fail(renderer, chunks, out_dir)
+    report.batch_s = time.perf_counter() - began
+    if report.batch_failed:
+        logger.error(f"Batch render failed; its unfinished chunks render on stock Chatterbox: {report.batch_failed}")
+    report.rounds.append(check(takes))
+
+    if not report.batch_failed:
+        rounds = get_settings().chatterbox_vllm_retake_rounds if retake_rounds is None else retake_rounds
+        _retake_in_vllm(report, renderer, texts, out_dir, check, seed_for, rounds)
+    report.retakes = report.rounds[-1]
+    _retake_on_stock(report, texts, out_dir, stock_factory, recognizer, seed_for)
+    return report
+
+
+def _render_or_fail(renderer: BatchRenderer, chunks, out_dir: Path, seeds=None) -> tuple[list[TakeResult], Optional[str]]:
+    """The renderer's takes, and its failure if it had one; takes it never finished come back failed."""
     try:
-        takes = renderer.render_chapter(chunks, out_dir)
+        return renderer.render_chapter(chunks, out_dir, seeds), None
     except (VllmUnavailable, BatchRenderError) as exc:
-        logger.error(f"Batch render failed; its unfinished chunks render on stock Chatterbox: {exc}")
-        report.batch_failed = str(exc)
         takes = getattr(exc, "takes", None) or [
             TakeResult(index, out_dir / f"{index:03d}.wav", ok=False, error=str(exc)) for index, _ in chunks
         ]
-    report.batch_s = time.perf_counter() - began
+        return takes, str(exc)
 
-    texts = dict(chunks)
-    for take, reason in zip(takes, _retake_reasons(takes, texts, renderer.profile, recognizer)):
+
+def _retake_in_vllm(report: BatchReport, renderer, texts: dict, out_dir: Path, check, seed_for, rounds: int) -> None:
+    """Re-render the flagged takes on the warm worker, all of a round in one request, a fresh seed each."""
+    began = time.perf_counter()
+    for round_number in range(1, rounds + 1):
+        still_flagged = {index for indices in report.rounds[-1].values() for index in indices}
+        flagged = [index for index in texts if index in still_flagged]
+        if not flagged:
+            break
+        logger.info(f"vLLM retake round {round_number}: {report.rounds[-1]}")
+        seeds = {index: seed_for(index) + round_number * SEED_STRIDE for index in flagged}
+        takes, report.retake_failed = _render_or_fail(renderer, [(index, texts[index]) for index in flagged], out_dir, seeds)
+        report.rounds.append(check(takes))
+        if report.retake_failed:
+            logger.error(f"vLLM retake round {round_number} failed; its unfinished chunks go to stock: {report.retake_failed}")
+            break
+    report.vllm_retake_s = time.perf_counter() - began
+
+
+def _flags(texts: dict, profile: VllmProfile, recognizer, takes: list[TakeResult]) -> Flags:
+    """Each take that needs a retake, filed under its reason, in take order."""
+    flags = _no_flags()
+    for take, reason in zip(takes, _retake_reasons(takes, texts, profile, recognizer)):
         if reason:
-            report.retakes[reason].append(take.index)
-    _retake_on_stock(report, texts, out_dir, stock_factory, recognizer, seed_for)
-    return report
+            flags[reason].append(take.index)
+    return flags
 
 
 def _retake_reasons(takes: list[TakeResult], texts: dict, profile: VllmProfile, recognizer) -> list[Optional[str]]:
@@ -271,9 +348,9 @@ def _retake_reasons(takes: list[TakeResult], texts: dict, profile: VllmProfile, 
     go to it together so it can batch them.
     """
     reasons = [_render_fault(take, texts[take.index], profile) for take in takes]
-    if recognizer is None:
-        return reasons
     heard = [take for take, reason in zip(takes, reasons) if reason is None]
+    if recognizer is None or not heard:
+        return reasons
     phones = recognizer.recognize_batch([load_slice(take.path, None, None) for take in heard])
     babbled = {take.index for take, take_phones in zip(heard, phones) if detect_hallucinations(texts[take.index], take_phones)}
     return ["hallucination" if take.index in babbled else reason for take, reason in zip(takes, reasons)]

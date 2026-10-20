@@ -5,8 +5,11 @@ The fake interpreter runs a copy of the real batch worker with stub
 `s3gen_batch.py` beside it. The stub model logs what it was built and called with
 (pid, cwd, CHATTERBOX_CFG_SCALE, kwargs) and hands its S3Gen one sample-long
 "token" per output sample; the stub BatchedS3Gen turns those into a sine. The
-length follows the text at a natural pace, unless the text asks to be cut short.
-A text saying "crash here" fails its batch; one saying "die here" kills the worker.
+length follows the text at a natural pace, unless the text asks to be cut short,
+or says "short once" and was sampled unseeded (the first batch, not a retake).
+The stub's vLLM engine reports the seed each prompt sampled with. A text saying
+"crash here" fails its batch; "die here" kills the worker, and "die on retake"
+kills it when that text comes back seeded.
 """
 
 import json
@@ -25,6 +28,7 @@ from src.config import get_settings
 from src.tts.batch import WORKER, VllmBatchRenderer, render_chapter_batched
 from src.tts.early_stop import spoken_letters, take_shortfall
 from src.tts.profiles import T1
+from src.tts.verified import SEED_STRIDE
 
 SAMPLE_RATE = 24000
 NATURAL_LETTERS_PER_S = 14.0
@@ -38,7 +42,7 @@ runpy.run_path(worker, run_name="__main__")
 '''
 
 STUB_TTS = '''
-import json, os
+import copy, json, os
 import numpy as np
 
 # vLLM logs to stdout as soon as it is imported.
@@ -52,10 +56,24 @@ def _log(event):
         log.write(json.dumps(event) + "\\n")
 
 
-def _seconds(text):
-    if "cut short" in text:
+def _seconds(text, seed):
+    if "cut short" in text or ("short once" in text and seed is None):
         return 1.0
     return sum(ch.isalnum() for ch in text) / {pace}
+
+
+class SamplingParams:
+    def __init__(self, **kwargs):
+        self.seed = kwargs.get("seed")
+
+    def clone(self):
+        return copy.copy(self)
+
+
+class LLM:
+    def generate(self, prompts, sampling_params):
+        per_prompt = sampling_params if isinstance(sampling_params, list) else [sampling_params] * len(prompts)
+        return [params.seed for params in per_prompt]
 
 
 class PortS3Gen:
@@ -67,7 +85,7 @@ class ChatterboxTTS:
     sr = 24000
 
     def __init__(self):
-        self.s3gen = PortS3Gen()
+        self.s3gen, self.t3 = PortS3Gen(), LLM()
 
     @classmethod
     def from_pretrained(cls, **kwargs):
@@ -80,13 +98,14 @@ class ChatterboxTTS:
         return {{"reference": audio_prompt_path}}, "cond_emb"
 
     def generate_with_conds(self, prompts, s3gen_ref, cond_emb, **kwargs):
-        _log({{"event": "generate", "prompts": prompts, **kwargs}})
+        seeds = self.t3.generate(prompts, sampling_params=SamplingParams(temperature=kwargs["temperature"]))
+        _log({{"event": "generate", "prompts": prompts, "seeds": seeds, **kwargs}})
         if any("crash here" in p for p in prompts):
             raise RuntimeError("CUDA error: out of memory")
-        if any("die here" in p for p in prompts):
+        if any("die here" in p or ("die on retake" in p and seed is not None) for p, seed in zip(prompts, seeds)):
             os._exit(1)
-        for p in prompts:
-            tokens = np.zeros(int(self.sr * _seconds(p)))
+        for p, seed in zip(prompts, seeds):
+            tokens = np.zeros(int(self.sr * _seconds(p, seed)))
             self.s3gen.inference(speech_tokens=tokens, ref_dict=s3gen_ref, n_timesteps=kwargs["diffusion_steps"])
         return []
 
@@ -467,3 +486,108 @@ def test_failed_takes_never_reach_the_recognizer(vllm, tmp_path, heard):
 
     assert recognizer.batches == [[4, 5]]
     assert report.retakes == {"early_stop": [], "hallucination": [4], "failed": [6, 7]}
+
+
+def _generates(vllm) -> list[dict]:
+    return [event for event in vllm.log() if event["event"] == "generate"]
+
+
+def _natural_s(text: str) -> float:
+    return spoken_letters(text) / NATURAL_LETTERS_PER_S + T1.trailing_pad_s
+
+
+SHORT_ONCE = [
+    (7, "The ferry left at noon, short once, and nobody aboard looked back at the town."),
+    (8, "Mara closed the ledger, short once, and went up on deck to watch the harbour lights."),
+]
+ALWAYS_SHORT = (9, "The storm came in sideways and only the shutters rattled, cut short.")
+DIES_ON_RETAKE = (10, "The lamp guttered, short once, and the die on retake was only the wind.")
+
+
+def test_flagged_takes_are_retaken_in_one_vllm_batch_with_distinct_seeds(vllm, tmp_path):
+    """Catches retaking each flagged chunk in its own request, sending retakes unseeded
+    (SeededT3 dropped, or no seed on the item), and reusing one seed for every chunk."""
+    stock = FakeStock()
+
+    report = render_chapter_batched(CHUNKS + SHORT_ONCE, tmp_path / "chunks", vllm(), lambda: stock,
+                                    seed_for=lambda i: 999 + i, retake_rounds=2)
+
+    batch, retake = _generates(vllm)
+    assert batch["seeds"] == [None] * 5
+    assert retake["prompts"] == [text for _, text in SHORT_ONCE]
+    assert retake["seeds"] == [1006 + SEED_STRIDE, 1007 + SEED_STRIDE]
+    assert report.round_counts == [2, 0]
+    assert report.retake_count == 0 and stock.calls == []
+
+
+def test_chunk_that_passes_a_round_is_not_retaken_again(vllm, tmp_path):
+    """Catches re-flagging each round from the batch's verdicts rather than the last round's:
+    the chunk that passed round 1 would be retaken in round 2."""
+    stock = FakeStock()
+
+    report = render_chapter_batched(CHUNKS + [SHORT_ONCE[0], ALWAYS_SHORT], tmp_path / "chunks", vllm(),
+                                    lambda: stock, seed_for=lambda i: 999 + i, retake_rounds=2)
+
+    rounds = [event["seeds"] for event in _generates(vllm)[1:]]
+    assert rounds == [[1006 + SEED_STRIDE, 1008 + SEED_STRIDE], [1008 + 2 * SEED_STRIDE]]
+    assert report.rounds == [{"early_stop": [7, 9], "hallucination": [], "failed": []},
+                             {"early_stop": [9], "hallucination": [], "failed": []},
+                             {"early_stop": [9], "hallucination": [], "failed": []}]
+    assert stock.calls == [(ALWAYS_SHORT[1], 1008)]
+
+
+@pytest.mark.parametrize("rounds", [0, 1, 2])
+def test_chunks_still_flagged_after_the_last_round_go_to_stock(vllm, tmp_path, rounds):
+    """Catches an off-by-one in the round count, ignoring retake_rounds, and dropping
+    the stock pass for chunks vLLM never got right."""
+    stock = FakeStock()
+
+    report = render_chapter_batched(CHUNKS + [ALWAYS_SHORT], tmp_path / "chunks", vllm(), lambda: stock,
+                                    seed_for=lambda i: 999 + i, retake_rounds=rounds)
+
+    assert len(_generates(vllm)) == 1 + rounds
+    assert report.round_counts == [1] * (1 + rounds)
+    assert report.retakes == {"early_stop": [9], "hallucination": [], "failed": []}
+    assert stock.calls == [(ALWAYS_SHORT[1], 1008)]
+    assert _seconds(tmp_path / "chunks" / "009.wav") > 4.0
+
+
+def test_worker_death_mid_retake_sends_the_rest_to_stock(vllm, tmp_path):
+    """Catches sending every chunk of the dead round to stock (losing the retake it finished),
+    and carrying on to another round after the worker died."""
+    stock = FakeStock()
+
+    report = render_chapter_batched(CHUNKS + [SHORT_ONCE[0], DIES_ON_RETAKE], tmp_path / "chunks",
+                                    vllm(chatterbox_vllm_max_batch=1), lambda: stock, retake_rounds=2)
+
+    assert report.batch_failed is None and "worker exited" in report.retake_failed
+    assert report.rounds[1:] == [{"early_stop": [], "hallucination": [], "failed": [10]}]
+    assert [text for text, _ in stock.calls] == [DIES_ON_RETAKE[1]]
+    assert _seconds(tmp_path / "chunks" / "007.wav") == pytest.approx(_natural_s(SHORT_ONCE[0][1]), abs=0.01)
+
+
+def test_retakes_land_on_their_own_chunks_in_chunk_order(vllm, tmp_path):
+    """Catches a retake written to another chunk's file or rendered from another chunk's text,
+    and a retake round that reorders the chunks it sends."""
+    chunks = [(12, SHORT_ONCE[1][1]), (3, CHUNKS[0][1]), (8, SHORT_ONCE[0][1])]
+
+    report = render_chapter_batched(chunks, tmp_path / "chunks", vllm(), FakeStock, retake_rounds=1)
+
+    assert _generates(vllm)[1]["prompts"] == [chunks[0][1], chunks[2][1]]
+    assert report.rounds[0]["early_stop"] == [12, 8]
+    for index, text in chunks:
+        assert _seconds(tmp_path / "chunks" / f"{index:03d}.wav") == pytest.approx(_natural_s(text), abs=0.01)
+
+
+def test_retake_rounds_run_the_hallucination_check_in_one_batch(vllm, tmp_path, heard):
+    """Catches a retake round that skips the recognizer (a babbled retake would pass) or
+    hands it the round's takes one at a time."""
+    recognizer = heard(babbled={4})
+    stock = FakeStock()
+
+    report = render_chapter_batched(CHUNKS + [SHORT_ONCE[0]], tmp_path / "chunks", vllm(), lambda: stock,
+                                    recognizer=recognizer, retake_rounds=2)
+
+    assert recognizer.batches == [[4, 5, 6], [4, 7], [4]]
+    assert report.retakes == {"early_stop": [], "hallucination": [4], "failed": []}
+    assert [text for text, _ in stock.calls] == [CHUNKS[0][1]]
