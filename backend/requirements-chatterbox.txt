@@ -1,0 +1,17 @@
+# Chatterbox venv (venv-chatterbox, Python 3.11, Linux + NVIDIA): only the render
+# worker (src/tts/chatterbox_worker.py) runs here. Its transformers 5 and numpy<2
+# cannot share venv-cu128, so the server drives it over a pipe.
+# Built by `make setup-chatterbox` with uv; checked by `make check-chatterbox`.
+
+--extra-index-url https://download.pytorch.org/whl/cu128
+
+# Pins torch==2.6.0, which has no sm_120 (RTX 5090) kernels:
+# overrides-chatterbox.txt lifts it to 2.8.0+cu128.
+chatterbox-tts==0.1.7
+
+# Perth, the watermarker, still imports pkg_resources.
+setuptools<81
+
+pyloudnorm==0.2.0
+soundfile==0.14.0
+praat-parselmouth==0.4.7
