@@ -330,3 +330,50 @@ class TestHyphenCompounds:
 
     def test_decimal_compound_keeps_decimal_reading(self):
         assert self.n.normalize("a 2.5-hour drive") == "a two point five-hour drive"
+
+
+class TestRemoveDrmWarnings:
+    """Royal Road's rotating anti-theft notices are stripped; story prose is kept."""
+
+    MISSED_BEFORE = [
+        "Stolen from Royal Road, this story should be reported if encountered on Amazon.",
+        "If you spot this story on Amazon, know that it has been stolen.",
+        "Support creative writers by reading their stories on Royal Road, not stolen versions.",
+        "Head to Royal Road for the genuine story.",
+    ]
+    STORY_SENTENCES = [
+        "He ordered new boots from Amazon and they arrived on Tuesday.",
+        "The expedition followed the Amazon for three weeks.",
+        "She reported the result to the manager before kick-off.",
+        "He posted his first story on Royal Road when he was sixteen.",
+    ]
+
+    def setup_method(self):
+        self.n = TextNormalizer()
+
+    def test_strips_notices_the_fixed_patterns_missed(self):
+        for notice in self.MISSED_BEFORE:
+            raw = f"The ball rolled wide.\n\n{notice}\n\nThe crowd groaned."
+            out = self.n.remove_drm_warnings(raw)
+            assert notice not in out, notice
+            assert "The ball rolled wide." in out and "The crowd groaned." in out
+
+    def test_strips_notice_glued_inside_a_paragraph(self):
+        raw = "He shot. Head to Royal Road for the genuine story. It went in."
+        assert self.n.remove_drm_warnings(raw) == "He shot. It went in."
+
+    def test_keeps_story_sentences_that_mention_amazon_or_royal_road(self):
+        for sentence in self.STORY_SENTENCES:
+            assert self.n.remove_drm_warnings(sentence) == sentence
+
+    def test_existing_fixed_pattern_still_applies(self):
+        raw = "This tale has been pilfered from Royal Road. The whistle blew."
+        assert self.n.remove_drm_warnings(raw).strip() == "The whistle blew."
+
+    def test_long_sentence_naming_royal_road_is_kept(self):
+        sentence = (
+            "Years later he would tell anyone who listened that the original idea came to him "
+            "on a wet Tuesday in Stockport while he scrolled Royal Road on the bus home from a "
+            "shift that had gone on far too long."
+        )
+        assert self.n.remove_drm_warnings(sentence) == sentence

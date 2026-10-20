@@ -113,12 +113,43 @@ class TextNormalizer:
 
         for pattern in patterns:
             text = re.sub(pattern, '', text, flags=re.MULTILINE)
+        text = '\n'.join(self._drop_watermark_sentences(line) for line in text.split('\n'))
 
         # Clean up extra whitespace
         text = re.sub(r'\n{3,}', '\n\n', text)
         text = re.sub(r' +', ' ', text)
 
         return text
+
+    # Royal Road rotates its anti-theft wording, so match on cues rather than exact phrasing.
+    _ROYAL_ROAD = re.compile(r'(?i)\broyal\s*road\b')
+    _AMAZON = re.compile(r'(?i)\bamazon\b')
+    _THEFT = re.compile(
+        r'(?i)\b(?:stolen|steal\w*|pilfer\w*|unlawful\w*|unauthori[sz]ed|'
+        r'misappropriat\w*|lifted|pirat\w*|report\w*)\b'
+    )
+    _SITE_CUE = re.compile(
+        r'(?i)\b(?:genuine|original|authentic|support\w*|true\s+home|visit\w*|'
+        r'head\s+(?:over\s+)?to)\b'
+    )
+    _WORK = re.compile(r'(?i)\b(?:story|stories|tale|narrative|novel|content|book|fiction|chapter)\b')
+    _WATERMARK_MAX_WORDS = 30
+
+    def _is_watermark_sentence(self, sentence: str) -> bool:
+        if len(sentence.split()) > self._WATERMARK_MAX_WORDS:
+            return False
+        if self._ROYAL_ROAD.search(sentence):
+            return bool(self._THEFT.search(sentence) or self._SITE_CUE.search(sentence))
+        return bool(
+            self._AMAZON.search(sentence)
+            and self._THEFT.search(sentence)
+            and self._WORK.search(sentence)
+        )
+
+    def _drop_watermark_sentences(self, line: str) -> str:
+        sentences = re.split(r'(?<=[.!?…])\s+', line)
+        kept = [s for s in sentences if not self._is_watermark_sentence(s)]
+        return ' '.join(kept) if len(kept) != len(sentences) else line
 
     def normalize_punctuation(self, text: str) -> str:
         """Normalize punctuation for better TTS pronunciation."""
