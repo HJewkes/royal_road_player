@@ -242,6 +242,7 @@ venv-cu128/
 
 # Audio files (runtime generated)
 *.wav
+!assets/voices/*.wav
 *.mp3
 *.ogg
 *.flac
