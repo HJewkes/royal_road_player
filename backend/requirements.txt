@@ -10,6 +10,8 @@ requests>=2.31.0
 # Audio processing
 pydub>=0.25.0
 scipy>=1.11.0
+# Chatterbox takes are normalised to -20 LUFS (src/tts/chatterbox_audio.py)
+pyloudnorm>=0.1.1
 
 # Data models
 pydantic>=2.5.0

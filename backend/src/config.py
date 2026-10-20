@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     voice_sample_path: str = str(Path(__file__).parent.parent.parent / "data" / "voice_samples" / "british_male_p241.wav")
     tts_language: str = "en"
 
+    # Chatterbox renders in a worker under its own venv (make setup-chatterbox);
+    # empty means it is not installed on this host. Its P4 numbers live in tts/profiles.py.
+    chatterbox_python: str = ""
+    chatterbox_reference_path: str = str(Path(__file__).parent.parent.parent / "assets" / "voices" / "ref_p241_clean.wav")
+
     # Self-healing synthesis: after each chunk, a vocab-free phoneme model checks for
     # a hallucinated outburst (phantom audio with no matching text) and re-rolls the
     # stochastic take until clean. Adds a phoneme pass per chunk (+~1s) and re-rolls
