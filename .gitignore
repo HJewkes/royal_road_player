@@ -228,6 +228,8 @@ backend/logs/
 venv311/
 venv-cu128/
 venv-chatterbox/
+venv-chatterbox-vllm/
+/chatterbox-vllm/
 .brain/
 .claude/
 # Root-level dev screenshots (verification captures)

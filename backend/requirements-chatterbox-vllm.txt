@@ -1,0 +1,25 @@
+# chatterbox-vllm venv (venv-chatterbox-vllm, Python 3.12, Linux + NVIDIA): only the
+# batch worker (src/tts/chatterbox_vllm_worker.py) runs here, with cwd at the clone.
+# Built by `make setup-chatterbox-vllm`, which installs the clone (pinned commit) on top.
+#
+# The clone's uv.lock resolves torch 2.7.1 from PyPI, the cu126 build with no sm_120
+# kernels, so never `uv sync` it; --torch-backend cu128 picks the cu128 build. An
+# unpinned resolve pulls transformers 5 and huggingface-hub 1, which the port predates.
+
+torch==2.7.1
+torchaudio==2.7.1
+vllm==0.10.0
+transformers==4.57.1
+tokenizers==0.22.1
+diffusers==0.35.2
+peft==0.17.1
+numpy==2.2.6
+huggingface-hub==0.35.3
+
+# Perth re-applies the watermark stock chatterbox-tts puts on every take; it still
+# imports pkg_resources.
+resemble-perth==1.0.1
+setuptools<81
+
+pyloudnorm==0.2.0
+soundfile==0.14.0

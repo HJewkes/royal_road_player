@@ -36,6 +36,23 @@ class Settings(BaseSettings):
     chatterbox_python: str = ""
     chatterbox_reference_path: str = str(Path(__file__).parent.parent.parent / "assets" / "voices" / "ref_p241_clean.wav")
 
+    # Optional fast path: whole chapters rendered in batches by chatterbox-vllm
+    # (make setup-chatterbox-vllm), under its own venv and with cwd at its clone.
+    # Empty python means it is not installed; flagged takes and failures re-render
+    # on stock Chatterbox. Sampling numbers are profiles.T1.
+    chatterbox_vllm_python: str = ""
+    chatterbox_vllm_dir: str = ""
+    chatterbox_vllm_cfg: float = 0.5
+    chatterbox_vllm_diffusion_steps: int = 10
+    chatterbox_vllm_max_batch: int = 48
+    # vLLM speaks ~9-10% slower than stock; each vLLM take is sped up by this
+    # before loudness and the pad. Stock takes never are.
+    chatterbox_vllm_tempo: float = 1.05
+    # Stock chatterbox-tts watermarks every take with Perth; the port does not, so
+    # the worker re-applies it. Off only by explicit choice.
+    chatterbox_vllm_watermark: bool = True
+    chatterbox_vllm_timeout_s: float = 7200.0
+
     # Self-healing synthesis: after each chunk, a vocab-free phoneme model checks for
     # a hallucinated outburst (phantom audio with no matching text) and re-rolls the
     # stochastic take until clean. Adds a phoneme pass per chunk (+~1s) and re-rolls
