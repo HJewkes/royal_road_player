@@ -7,9 +7,11 @@ arrives as env CHATTERBOX_CFG_SCALE, never as a kwarg. It imports nothing from
 `src`; VllmBatchRenderer (batch.py) drives it.
 
 The request holds the reference, the sampling kwargs, `diffusion_steps`,
-`max_batch`, the post-processing numbers and `items` [{index, text, out}]. Each
-take is sped up by `tempo` (ffmpeg atempo), watermarked with Perth as stock
-chatterbox-tts does, then loudness-normalised and padded by finish_take, and
+`max_batch`, the post-processing numbers and `items` [{index, text, out}]. The
+port generates the batch's speech tokens with T3; its one-take-at-a-time S3Gen
+is swapped for BatchedS3Gen (s3gen_batch.py), which decodes them in padded
+sub-batches. Each take is sped up by `tempo` (ffmpeg atempo), watermarked with
+Perth as stock chatterbox-tts does, then loudness-normalised and padded by finish_take, and
 written PCM_16. One JSON line per item goes to RESULTS as each batch finishes:
 {index, ok, audio_s, raw_lufs} or {index, ok: false, error}. A batch that fails
 to generate ends the run with no lines for its items.
@@ -31,12 +33,16 @@ import numpy as np
 from chatterbox_vllm.tts import ChatterboxTTS
 
 MAX_MODEL_LEN = 1500
+# Padded speech tokens (reference prompt included) per S3Gen sub-batch; bounds its VRAM.
+S3GEN_MAX_PADDED_TOKENS = 4000
+# Autocast dtype for the S3Gen flow; None keeps the port's fp32.
+S3GEN_FLOW_DTYPE = "float16"
 SAMPLING_KWARGS = ("exaggeration", "temperature", "min_p", "top_p", "repetition_penalty")
 
 
-def _load_audio_helpers():
-    path = Path(__file__).with_name("chatterbox_audio.py")
-    spec = importlib.util.spec_from_file_location("chatterbox_audio", path)
+def _load_sibling(name: str):
+    path = Path(__file__).with_name(f"{name}.py")
+    spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -75,15 +81,29 @@ def write_pcm16(out: Path, audio: np.ndarray, sample_rate: int) -> None:
     os.replace(partial, out)
 
 
+class SpeechTokenCollector:
+    """Stands in for the port's S3Gen inside generate_with_conds: keeps T3's tokens, decodes nothing."""
+
+    def __init__(self):
+        self.tokens = []
+
+    def inference(self, speech_tokens, **_kwargs):
+        self.tokens.append(speech_tokens)
+        return speech_tokens, None
+
+
 class BatchWorker:
     def __init__(self, request: dict, results):
         self.request, self.results = request, results
-        self.audio = _load_audio_helpers()
+        self.audio = _load_sibling("chatterbox_audio")
         self.watermarker = _load_watermarker(bool(request["watermark"]))
         batch = int(request["max_batch"])
         self.model = ChatterboxTTS.from_pretrained(max_batch_size=batch, max_model_len=MAX_MODEL_LEN, max_num_seqs=batch)
+        self.s3gen = _load_sibling("s3gen_batch").BatchedS3Gen(
+            self.model.s3gen, S3GEN_MAX_PADDED_TOKENS, S3GEN_FLOW_DTYPE
+        )
         self.kwargs = {key: float(request["sampling"][key]) for key in SAMPLING_KWARGS}
-        self.kwargs["diffusion_steps"] = int(request["diffusion_steps"])
+        self.diffusion_steps = int(request["diffusion_steps"])
 
     def run(self) -> None:
         items, batch = self.request["items"], int(self.request["max_batch"])
@@ -93,14 +113,27 @@ class BatchWorker:
 
     def _render_batch(self, items: list[dict]) -> None:
         began = time.perf_counter()
-        wavs = self.model.generate(
-            [item["text"] for item in items], audio_prompt_path=self.request["reference"], **self.kwargs
-        )
+        wavs = self._generate([item["text"] for item in items])
         if len(wavs) != len(items):
             raise RuntimeError(f"port returned {len(wavs)} takes for {len(items)} texts")
         for item, wav in zip(items, wavs):
             self._emit({"index": item["index"], **self._finish(item, wav)})
         print(f"batch of {len(items)} in {time.perf_counter() - began:.1f}s", file=sys.stderr, flush=True)
+
+    def _generate(self, texts: list[str]) -> list:
+        ref, cond_emb = self.model.get_audio_conditionals(self.request["reference"])
+        collector, port_s3gen = SpeechTokenCollector(), self.model.s3gen
+        self.model.s3gen = collector
+        try:
+            self.model.generate_with_conds(
+                texts, s3gen_ref=ref, cond_emb=cond_emb, diffusion_steps=self.diffusion_steps, **self.kwargs
+            )
+        finally:
+            self.model.s3gen = port_s3gen
+        t3_done = time.perf_counter()
+        wavs = self.s3gen.wavs(collector.tokens, ref, self.diffusion_steps)
+        print(f"S3Gen for {len(texts)} takes in {time.perf_counter() - t3_done:.1f}s", file=sys.stderr, flush=True)
+        return wavs
 
     def _finish(self, item: dict, wav) -> dict:
         try:
