@@ -90,6 +90,22 @@ check-cuda:
 		--setenv=AUDIOBOOK_VENV="$(AUDIOBOOK_VENV)" \
 		bash scripts/venv.sh scripts/check_cuda.py
 
+# Chatterbox venv (Python 3.11): only the render worker runs here; see
+# backend/requirements-chatterbox.txt. Point AUDIOBOOK_CHATTERBOX_PYTHON at its python.
+CHATTERBOX_VENV ?= venv-chatterbox
+.PHONY: setup-chatterbox check-chatterbox
+
+setup-chatterbox:
+	@command -v uv > /dev/null || (echo "❌ uv not found. Install: curl -LsSf https://astral.sh/uv/install.sh | sh" && exit 1)
+	@if [ -d "$(CHATTERBOX_VENV)" ]; then echo "⚠️  $(CHATTERBOX_VENV) already exists, skipping creation"; else uv venv --python 3.11 "$(CHATTERBOX_VENV)"; fi
+	cd backend && uv pip install --python "$(abspath $(CHATTERBOX_VENV))/bin/python" --index-strategy unsafe-best-match \
+		-r requirements-chatterbox.txt --override overrides-chatterbox.txt
+	@echo "✅ $(CHATTERBOX_VENV) ready. Check it with: make check-chatterbox"
+
+check-chatterbox:
+	systemd-run --user --slice=gpu-jobs.slice --wait --pipe --quiet --same-dir \
+		"$(abspath $(CHATTERBOX_VENV))/bin/python" -I scripts/check_chatterbox.py
+
 # Unattended autopull on Linux: link the units from deploy/systemd into the user
 # manager. Refuses without the env file, since autopull publishes by default.
 AUTOPULL_ENV := $(HOME)/.config/audiobook/autopull.env
