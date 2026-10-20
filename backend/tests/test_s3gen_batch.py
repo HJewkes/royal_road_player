@@ -54,3 +54,22 @@ def test_each_take_keeps_its_own_frames_after_the_prompt_and_before_the_padding(
     spans = take_mel_spans([3, 7], prompt_mel_len=500)
 
     assert spans == [(500, 506), (500, 514)]
+
+
+def test_lookahead_sees_zeros_past_each_take_and_the_hook_comes_off_after():
+    torch = pytest.importorskip("torch")
+    from src.tts.s3gen_batch import _zero_padding_before_lookahead
+
+    seen = []
+    encoder = torch.nn.Module()
+    encoder.pre_lookahead_layer = torch.nn.Module()
+    encoder.pre_lookahead_layer.forward = lambda xs: seen.append(xs) or xs
+    token_mask = torch.tensor([[1.0, 1.0, 1.0], [1.0, 0.0, 0.0]]).unsqueeze(-1)
+    embedded = torch.ones(2, 3, 4)
+
+    with _zero_padding_before_lookahead(encoder, token_mask):
+        encoder.pre_lookahead_layer(embedded)
+    encoder.pre_lookahead_layer(embedded)
+
+    assert seen[0][0].eq(1).all() and seen[0][1, 0].eq(1).all() and seen[0][1, 1:].eq(0).all()
+    assert seen[1].eq(1).all()
