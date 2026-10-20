@@ -26,13 +26,13 @@ def test_take_far_too_short_for_its_text_is_flagged():
 
     shortfall = _shortfall(text, 10.0)  # 30 letters/s
 
-    assert shortfall == pytest.approx(1 - 10.0 / (300 / 21.5))
+    assert shortfall == pytest.approx(1 - 10.0 / (300 / P4.max_letters_per_sec))
 
 
 def test_fast_but_complete_take_passes():
     text = _text_with_letters(300)
 
-    assert _shortfall(text, 300 / 19.0) is None  # the fastest full take observed
+    assert _shortfall(text, 300 / 18.84) is None  # the fastest full take at cfg 0.3
 
 
 def test_short_text_never_flagged():

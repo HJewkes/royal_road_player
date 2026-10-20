@@ -164,7 +164,7 @@ def test_three_letter_word_needs_more_than_one_wrong_phone(tmp_path):
 
 
 # 90 alphanumeric letters, written for this test: a full take needs at least
-# 90 / 21.5 = 4.19 s of speech.
+# 90 / 20.7 = 4.35 s of speech.
 LONG_TEXT = "The green boat drifted far out to sea. " * 3
 
 
@@ -195,7 +195,7 @@ def test_scan_reports_early_stop_for_chatterbox_chapter(tmp_path):
     early = [f for f in findings if f["kind"] == "early_stop"]
     assert len(early) == 1
     assert early[0]["causes"] == ["early_stop"]
-    assert early[0]["severity"] == pytest.approx(1 - 2.0 / (90 / 21.5), abs=1e-3)
+    assert early[0]["severity"] == pytest.approx(1 - 2.0 / (90 / P4.max_letters_per_sec), abs=1e-3)
 
 
 @espeak

@@ -34,9 +34,9 @@ class ChatterboxProfile:
 
 # P4: cfg 0.3 was chosen by ear over 0.5 on an 11-chunk passage (175 vs 184 wpm,
 # recall 0.942). The 0.25 s pad is the gap the listening renders used.
-# 21.5 letters/s: full takes at cfg 0.5 peaked at 19.7 (median ~15, 764 chunks)
-# and the one truncated take read at 25.6. cfg 0.3 speaks slower, so this is
-# loose for P4 until it is recalibrated on a cfg 0.3 chapter.
+# 20.7 letters/s = 1.10 x the fastest kept take of a cfg 0.3 chapter render
+# (2026-10-20, 355 chunks, 330 of them >= min_letters): median 14.21, p99 17.67,
+# max 18.84. The two truncated takes in that render read at ~26.2 and ~24.7.
 P4 = ChatterboxProfile(
     name="p4",
     exaggeration=0.5,
@@ -47,6 +47,6 @@ P4 = ChatterboxProfile(
     top_p=1.0,
     target_lufs=-20.0,
     trailing_pad_s=0.25,
-    max_letters_per_sec=21.5,
+    max_letters_per_sec=20.7,
     min_letters=40,
 )

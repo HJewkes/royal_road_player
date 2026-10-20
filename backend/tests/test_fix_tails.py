@@ -203,7 +203,7 @@ def test_write_results_creates_missing_logs_dir(tmp_path):
 
 
 # 56 alphanumeric letters, written for this test: a full take needs at least
-# 56 / 21.5 = 2.6 s of speech.
+# 56 / 20.7 = 2.7 s of speech.
 LONG_TEXT = "we need to get him here before the storm reaches the harbour"
 
 
