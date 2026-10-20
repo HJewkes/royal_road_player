@@ -113,6 +113,8 @@ def _synthesize_batched(chunks, chunks_dir: Path, tts, renderer: VllmBatchRender
     print(f"  batch {report.batch_s:.0f}s; flagged per round {report.round_counts} "
           f"(vLLM retakes {report.vllm_retake_s:.0f}s); {report.retake_count} stock retake(s) in "
           f"{report.retake_s:.0f}s: {report.retakes}", flush=True)
+    for number, flags in enumerate(report.rounds):
+        print(f"    {'batch' if number == 0 else f'round {number}'} flagged {flags}", flush=True)
 
 
 def _rerender(fid: str, book: int, ch: int, engine: str, tts, renderer, args):
