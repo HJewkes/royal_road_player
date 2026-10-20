@@ -15,8 +15,9 @@ best-guess cause. Three independent signals are combined:
 
 import re
 from dataclasses import dataclass, field
-from difflib import SequenceMatcher
 from typing import Optional
+
+from src.validation.alignment import exact_matcher
 
 try:
     import jellyfish
@@ -182,7 +183,7 @@ def phonetic_distance(a: str, b: str) -> float:
 
 
 def _char_distance(a: str, b: str) -> float:
-    return 1.0 - SequenceMatcher(None, a, b).ratio()
+    return 1.0 - exact_matcher(a, b).ratio()
 
 
 def is_unusual_word(word: str) -> bool:
@@ -381,7 +382,7 @@ def detect_defects(expected_text: str, rich: dict) -> list[Defect]:
     exp = _canon_tokens(tokenize(expected_text))
     hyp = _canon_hyps(_build_hyp_words(rich))
     n_exp = len(expected_text)
-    matcher = SequenceMatcher(None, [t.norm for t in exp], [h.norm for h in hyp])
+    matcher = exact_matcher([t.norm for t in exp], [h.norm for h in hyp])
     defects: list[Defect] = []
 
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():

@@ -2,8 +2,9 @@
 
 import re
 from dataclasses import dataclass, field
-from difflib import SequenceMatcher
 from typing import Optional
+
+from src.validation.alignment import exact_matcher
 
 
 @dataclass
@@ -84,7 +85,7 @@ def compare_texts(
     norm_actual = normalize_text(actual)
 
     # Calculate similarity using SequenceMatcher
-    similarity = SequenceMatcher(None, norm_expected, norm_actual).ratio()
+    similarity = exact_matcher(norm_expected, norm_actual).ratio()
 
     passed = similarity >= threshold
     issues = []

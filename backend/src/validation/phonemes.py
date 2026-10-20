@@ -20,6 +20,8 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Optional
 
+from src.validation.alignment import exact_matcher
+
 logger = logging.getLogger(__name__)
 
 # wav2vec2 model whose output phoneme set matches espeak-ng's G2P output.
@@ -78,7 +80,7 @@ def _phone_matcher(a: str, b: str) -> SequenceMatcher:
     XTTS chunks this was calibrated on mostly stayed under that length; the
     450-character Chatterbox chunks run to over 300 phones.
     """
-    return SequenceMatcher(None, a, b, autojunk=False)
+    return exact_matcher(a, b)
 
 
 def phoneme_distance(expected: str, actual: str) -> float:

@@ -25,6 +25,7 @@ from pathlib import Path
 BACKEND = Path(__file__).resolve().parent.parent / "backend"
 sys.path.insert(0, str(BACKEND))
 
+from src.validation.alignment import exact_matcher  # noqa: E402
 from src.validation.defects import tokenize  # noqa: E402
 
 HALLUC = BACKEND.parent / "logs" / "halluc"
@@ -44,11 +45,10 @@ def _g2p_reliable(text: str) -> bool:
 def _whisper_insertion_chars(chunk_text, rich) -> int:
     """Chars of words Whisper INSERTED (aligned to no source position) — true
     insertions only, not substitutions, so clean chunks don't spuriously corroborate."""
-    from difflib import SequenceMatcher
     exp = [t.norm for t in tokenize(chunk_text)]
     heard = [t.norm for w in rich.get("words", []) for t in tokenize(w.get("word", ""))]
     total = 0
-    for tag, i1, i2, j1, j2 in SequenceMatcher(None, exp, heard).get_opcodes():
+    for tag, i1, i2, j1, j2 in exact_matcher(exp, heard).get_opcodes():
         if tag == "insert":
             total += sum(len(w) for w in heard[j1:j2] if len(w) >= 3)
     return total
