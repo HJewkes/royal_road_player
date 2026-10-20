@@ -23,5 +23,5 @@ def finish_take(
         if np.isfinite(measured):  # a silent take measures -inf too
             raw_lufs = measured
             wav = pyloudnorm.normalize.loudness(wav, raw_lufs, target_lufs)
-    pad = np.zeros(int(round(pad_s * sample_rate)))
+    pad = np.zeros(round(pad_s * sample_rate))
     return np.clip(np.concatenate([wav, pad]), -1.0, 1.0).astype(np.float32), raw_lufs
