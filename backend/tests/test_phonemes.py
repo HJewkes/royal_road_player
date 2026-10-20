@@ -9,7 +9,7 @@ import pytest
 from src.config import get_settings
 from src.validation.phonemes import (
     admissible_phones, chunk_word_verdicts, clean_ipa, detect_hallucinations,
-    detect_tail_artifact, g2p, g2p_sentence, g2p_voice, phone_match_distance,
+    detect_tail_artifact, g2p, g2p_sentence, g2p_voice, in_length_batches, phone_match_distance,
     phoneme_distance, PhonemeRecognizer, XTTS_FAULT_THRESHOLD,
     XTTS_FAULT_THRESHOLD_SHORT,
 )
@@ -355,3 +355,80 @@ def test_degenerate_span_from_duplicate_prefix_is_inconclusive_not_xtts():
                 chunk_word_verdicts(text, actual, targets=["Okafor"])}
     assert verdicts["okafor"]["source"] == "inconclusive"
     assert verdicts["okafor"]["source"] != "xtts"
+
+
+class _GroupRecorder:
+    """A recognize_group that records each group it gets and labels every item by its own content."""
+
+    def __init__(self):
+        self.groups: list[list[str]] = []
+
+    def __call__(self, group):
+        self.groups.append(list(group))
+        return [f"phones of {item}" for item in group]
+
+
+def test_batched_recognition_returns_results_in_input_order():
+    """Catches writing results back in the length-sorted group order instead of each item's position."""
+    batch = ["bb", "dddd", "a", "ccc"]
+
+    results = in_length_batches(batch, _GroupRecorder(), max_padded=8)
+
+    assert results == [f"phones of {item}" for item in batch]
+
+
+def test_every_group_fits_the_padding_budget_and_no_item_is_lost():
+    """Catches sizing a group by its newest (shortest) member rather than its longest,
+    and grouping in input order, either of which lets a padded pass overrun the budget."""
+    batch = ["x" * n for n in (1, 10, 5, 4, 4, 1, 10, 3)]
+    recorder = _GroupRecorder()
+
+    in_length_batches(batch, recorder, max_padded=12)
+
+    assert all(len(group) * max(map(len, group)) <= 12 for group in recorder.groups if len(group) > 1)
+    assert sorted(item for group in recorder.groups for item in group) == sorted(batch)
+
+
+def test_an_item_longer_than_the_budget_is_recognized_alone():
+    """Catches dropping an item that cannot fit any group."""
+    recorder = _GroupRecorder()
+
+    results = in_length_batches(["x" * 20, "yy"], recorder, max_padded=12)
+
+    assert results == ["phones of " + "x" * 20, "phones of yy"]
+    assert recorder.groups == [["x" * 20], ["yy"]]
+
+
+def _tiny_recognizer(tmp_path):
+    """A PhonemeRecognizer holding a small random wav2vec2 shaped like the real one
+    (layer-norm feature extractor, so padding is masked rather than baked in)."""
+    transformers = pytest.importorskip("transformers")
+    torch = pytest.importorskip("torch")
+    torch.manual_seed(0)
+    vocab = tmp_path / "vocab.json"
+    phones = {phone: 4 + i for i, phone in enumerate("abdefhiklmnoprstuvwz")}
+    vocab.write_text(json.dumps({"<pad>": 0, "<s>": 1, "</s>": 2, "<unk>": 3, **phones}))
+    config = transformers.Wav2Vec2Config(
+        vocab_size=24, hidden_size=32, num_hidden_layers=2, num_attention_heads=2, intermediate_size=64,
+        conv_dim=(16,) * 7, feat_extract_norm="layer", do_stable_layer_norm=True,
+        num_conv_pos_embeddings=16, num_conv_pos_embedding_groups=4, pad_token_id=0,
+    )
+    recognizer = PhonemeRecognizer.__new__(PhonemeRecognizer)
+    recognizer._processor = transformers.Wav2Vec2Processor(
+        feature_extractor=transformers.Wav2Vec2FeatureExtractor(return_attention_mask=True),
+        tokenizer=transformers.Wav2Vec2CTCTokenizer(str(vocab), word_delimiter_token=None),
+    )
+    recognizer._model = recognizer._cuda_model = transformers.Wav2Vec2ForCTC(config).eval()
+    return recognizer
+
+
+def test_padded_pass_decodes_each_take_as_if_alone(tmp_path):
+    """Catches running the pass without the attention mask, and decoding the padding
+    frames past a short take's end."""
+    recognizer = _tiny_recognizer(tmp_path)
+    torch = pytest.importorskip("torch")
+    takes = [torch.randn(n).numpy() for n in (16000, 4000, 9000)]
+
+    padded = recognizer._recognize_padded(takes)
+
+    assert padded == [recognizer._recognize_raw(take) for take in takes]
