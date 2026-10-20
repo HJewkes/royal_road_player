@@ -5,7 +5,7 @@ from typing import Optional, Union
 from src.config import get_settings
 from src.text import chunking_for
 from src.tts.chatterbox import ChatterboxEngine, ChatterboxUnavailable
-from src.tts.profiles import P4, ChatterboxProfile
+from src.tts.profiles import P4, T1, ChatterboxProfile, VllmProfile
 from src.tts.xtts import XTTSEngine
 
 ENGINES = ("xtts", "chatterbox")
@@ -46,9 +46,15 @@ def reset_tts_engine() -> None:
         _chatterbox = None
 
 
-def render_profile(name: str) -> Optional[ChatterboxProfile]:
-    """The render profile an engine runs with; XTTS has none, so no early-stop guard."""
-    return P4 if name == "chatterbox" else None
+def render_profile(name: str, profile: Optional[str] = None) -> Union[ChatterboxProfile, VllmProfile, None]:
+    """The render profile a chapter runs with, from its stamp's engine and profile.
+
+    XTTS has none, so no early-stop guard. A Chatterbox chapter stamped "t1" was
+    rendered through the vLLM batch path and takes T1's threshold.
+    """
+    if name != "chatterbox":
+        return None
+    return T1 if profile == T1.name else P4
 
 
 def get_chapter_engine(discovery, fiction_id: str, book: int, chapter: int, factory=get_tts_engine):
@@ -71,9 +77,13 @@ def chunk_seed(chunk_index: int) -> int:
     return CHUNK_SEED_BASE + chunk_index
 
 
-def engine_stamp(name: str) -> dict:
-    """The chapter provenance record that `ChunkDiscovery.save_chunks` writes."""
+def engine_stamp(name: str, batch: bool = False) -> dict:
+    """The chapter provenance record that `ChunkDiscovery.save_chunks` writes.
+
+    `batch` marks a chapter rendered through chatterbox-vllm; engine and chunking
+    stay the same, so restamping does not clear audio.
+    """
     stamp = {"engine": name, "chunking": chunking_for(name).name}
     if name == "chatterbox":
-        stamp["profile"] = P4.name
+        stamp["profile"] = T1.name if batch else P4.name
     return stamp

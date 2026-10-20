@@ -80,9 +80,9 @@ class VllmProfile:
 
 # T1: the owner's chatterbox-vllm settings (2026-10-20), with CFG 0.5 set in
 # Settings.chatterbox_vllm_cfg. vLLM speech is ~9-10% slower than stock, so its
-# guard is calibrated on its own output: 18.7 letters/s = 1.10 x the fastest of
-# 43 cfg 0.5 / rep 1.2 takes >= min_letters, measured after the 1.05 tempo step
-# and without the pad (median 14.11, p90 16.04, max 16.96).
+# guard is calibrated on its own output: 20.4 letters/s = 1.10 x 18.57, the max
+# over 324 ch18 vLLM takes >= min_letters, measured after the 1.05 tempo step
+# and without the pad.
 T1 = VllmProfile(
     name="t1",
     exaggeration=0.5,
@@ -92,6 +92,6 @@ T1 = VllmProfile(
     repetition_penalty=1.2,
     target_lufs=-20.0,
     trailing_pad_s=0.25,
-    max_letters_per_sec=18.7,
+    max_letters_per_sec=20.4,
     min_letters=40,
 )

@@ -155,7 +155,7 @@ def main():
 
     chunk_results = TextChunker(chunking_for(engine)).chunk(text)
     chunksd.save_chunks(fid, book, ch, [(c.index, c.text) for c in chunk_results],
-                        stamp=engine_stamp(engine))
+                        stamp=engine_stamp(engine, batch=args.batch))
     n = len(chunk_results)
     print(f"Chunked -> {n} chunks ({engine})", flush=True)
 
