@@ -19,7 +19,7 @@ import pytest
 
 from src.config import get_settings
 from src.tts.batch import WORKER, VllmBatchRenderer, render_chapter_batched
-from src.tts.early_stop import spoken_letters
+from src.tts.early_stop import spoken_letters, take_shortfall
 from src.tts.profiles import T1
 
 SAMPLE_RATE = 24000
@@ -283,3 +283,94 @@ def test_unconfigured_vllm_renders_the_chapter_on_stock(tmp_path):
 
     assert "AUDIOBOOK_CHATTERBOX_VLLM_PYTHON" in report.batch_failed
     assert len(stock.calls) == len(CHUNKS)
+
+
+class FakeRecognizer:
+    """Hears babble in the takes it is told to and records every batch it is handed.
+
+    batch.load_slice is patched to hand over the take's path, so a "sample array" here is a path.
+    """
+
+    def __init__(self, babbled: set[int]):
+        self.babbled = babbled
+        self.batches: list[list[int]] = []
+
+    def recognize(self, path) -> str:
+        stem = Path(path).stem
+        return "babble" if stem.isdigit() and int(stem) in self.babbled else "clean"
+
+    def recognize_batch(self, paths) -> list[str]:
+        self.batches.append([int(Path(path).stem) for path in paths])
+        return [self.recognize(path) for path in paths]
+
+
+@pytest.fixture
+def heard(monkeypatch):
+    """Route takes to a FakeRecognizer by path, with babble flagged wherever it hears it.
+
+    Stock retakes, which land in temp files, always read back clean.
+    """
+    for module in ("src.tts.batch", "src.tts.verified"):
+        monkeypatch.setattr(f"{module}.load_slice", lambda path, start, end: path)
+        monkeypatch.setattr(f"{module}.detect_hallucinations",
+                            lambda text, phones, **kwargs: ["babble"] if phones == "babble" else [])
+    return FakeRecognizer
+
+
+def _per_take_reasons(takes, texts, recognizer):
+    """The pre-batching rule: each take checked alone, failed then early_stop then babble."""
+    reasons = {}
+    for take in takes:
+        if not take.ok or not take.path.exists():
+            reasons[take.index] = "failed"
+        elif take_shortfall(texts[take.index], take.path, T1) is not None:
+            reasons[take.index] = "early_stop"
+        elif recognizer.recognize(take.path) == "babble":
+            reasons[take.index] = "hallucination"
+    return reasons
+
+
+# The early-stop take sits mid-chapter, so the takes the recognizer hears are not a prefix of the chapter.
+CUT_SHORT_MIDWAY = [
+    CHUNKS[0],
+    (5, "The ferry left at noon and nobody aboard looked back at the town, cut short."),
+    CHUNKS[2],
+    (7, "The storm came in sideways and only the shutters rattled through the night."),
+]
+
+
+def test_batched_verdicts_match_the_per_take_rule(vllm, tmp_path, heard):
+    """Catches a babbled early-stop take being filed as a hallucination (checks reordered),
+    zipping the recognized subset back against every take, and retaking out of chunk order."""
+    recognizer = heard(babbled={4, 5, 7})
+    takes = vllm().render_chapter(CUT_SHORT_MIDWAY, tmp_path / "reference")
+    stock = FakeStock()
+
+    report = render_chapter_batched(CUT_SHORT_MIDWAY, tmp_path / "chunks", vllm(), lambda: stock, recognizer=recognizer)
+
+    expected = _per_take_reasons(takes, dict(CUT_SHORT_MIDWAY), recognizer)
+    assert {index: reason for reason, indices in report.retakes.items() for index in indices} == expected
+    assert report.retakes == {"early_stop": [5], "hallucination": [4, 7], "failed": []}
+    assert [text for text, _ in stock.calls] == [CUT_SHORT_MIDWAY[i][1] for i in (0, 1, 3)]
+
+
+def test_takes_reach_the_recognizer_in_one_batch_in_take_order(vllm, tmp_path, heard):
+    """Catches recognizing takes one call at a time, and sending a take that already
+    failed its early-stop check to the recognizer."""
+    recognizer = heard(babbled=set())
+
+    render_chapter_batched(CUT_SHORT_MIDWAY, tmp_path / "chunks", vllm(), FakeStock, recognizer=recognizer)
+
+    assert recognizer.batches == [[4, 6, 7]]
+
+
+def test_failed_takes_never_reach_the_recognizer(vllm, tmp_path, heard):
+    """Catches sending a take the batch never wrote to the recognizer."""
+    chunks = CHUNKS + [(7, "The storm came in sideways and the crash here was only the shutters.")]
+    recognizer = heard(babbled={4})
+
+    report = render_chapter_batched(chunks, tmp_path / "chunks", vllm(chatterbox_vllm_max_batch=2), FakeStock,
+                                    recognizer=recognizer)
+
+    assert recognizer.batches == [[4, 5]]
+    assert report.retakes == {"early_stop": [], "hallucination": [4], "failed": [6, 7]}

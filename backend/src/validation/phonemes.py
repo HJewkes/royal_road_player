@@ -16,6 +16,7 @@ the espeak phoneme inventory, so they are directly comparable.
 import logging
 import re
 import subprocess
+from collections.abc import Callable
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Optional
@@ -114,6 +115,32 @@ def phone_match_distance(expected: str, actual_full: str) -> float:
     return best
 
 
+# Padded audio per batched recognizer pass. Attention activations grow with
+# takes x frames^2, so this bounds GPU memory whatever a chapter's take lengths.
+# On a 355-take chapter, 120s peaked at 2.1 GB and ran as fast as 480s (6.5 GB).
+BATCH_MAX_PADDED_S = 120.0
+
+
+def in_length_batches(batch: list, recognize_group: Callable[[list], list], max_padded: int) -> list:
+    """recognize_group's result for each item of `batch`, in batch order.
+
+    Items go to recognize_group longest first, in groups whose size padded to
+    their longest member stays within max_padded; one over-long item goes alone.
+    Sorting keeps similar lengths together, so little of each pass is padding.
+    """
+    groups: list[list[int]] = []
+    for position in sorted(range(len(batch)), key=lambda i: -len(batch[i])):
+        if groups and (len(groups[-1]) + 1) * len(batch[groups[-1][0]]) <= max_padded:
+            groups[-1].append(position)
+        else:
+            groups.append([position])
+    results: list = [None] * len(batch)
+    for group in groups:
+        for position, result in zip(group, recognize_group([batch[i] for i in group]), strict=True):
+            results[position] = result
+    return results
+
+
 class PhonemeRecognizer:
     """Vocabulary-free phoneme transcription of audio via wav2vec2 CTC."""
 
@@ -121,6 +148,7 @@ class PhonemeRecognizer:
         self.model_name = model_name
         self._model = None
         self._processor = None
+        self._cuda_model = None
         from src.config import get_settings
         self.cache_dir = get_settings().cache_dir / "phonemes"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -149,6 +177,43 @@ class PhonemeRecognizer:
             logits = self._model(inputs.input_values).logits
         pred = torch.argmax(logits, dim=-1)
         return self._processor.batch_decode(pred)[0]
+
+    def recognize_batch(self, batch: list) -> list[str]:
+        """recognize() for many takes at once, in padded, masked fp16 passes on the GPU.
+
+        A chapter's takes recognized one at a time on the CPU cost as long as the
+        batch render that made them. Without CUDA this is recognize() per take.
+        """
+        import torch
+        if not torch.cuda.is_available():
+            return [self.recognize(samples) for samples in batch]
+        raw = in_length_batches(batch, self._recognize_padded, int(BATCH_MAX_PADDED_S * TARGET_SR))
+        # chatterbox-vllm sizes itself from the GPU memory left unused, so hand back
+        # the passes' cached activations before the next chapter's worker starts.
+        torch.cuda.empty_cache()
+        return [clean_ipa(phones) for phones in raw]
+
+    def _recognize_padded(self, batch: list) -> list[str]:
+        """Raw decodes of one padded pass; each row decodes only its own frames."""
+        import torch
+        model = self._gpu_model()
+        inputs = self._processor(batch, sampling_rate=TARGET_SR, return_tensors="pt",
+                                 padding=True, return_attention_mask=True)
+        mask = inputs.attention_mask.to(model.device)
+        with torch.inference_mode():
+            logits = model(inputs.input_values.to(model.device, model.dtype), attention_mask=mask).logits
+        frames = model._get_feat_extract_output_lengths(mask.sum(-1)).tolist()
+        pred = logits.argmax(dim=-1).cpu()
+        return [self._processor.decode(pred[row, :n]) for row, n in enumerate(frames)]
+
+    def _gpu_model(self):
+        if self._cuda_model is None:
+            import torch
+            from transformers import Wav2Vec2ForCTC
+            self._load()
+            self._cuda_model = Wav2Vec2ForCTC.from_pretrained(self.model_name, dtype=torch.float16).to("cuda")
+            self._cuda_model.eval()
+        return self._cuda_model
 
     def recognize_wav(self, wav_path: Path, use_cache: bool = True) -> str:
         """Whole-file phoneme transcription, cached by file content hash.

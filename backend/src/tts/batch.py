@@ -168,21 +168,33 @@ def render_chapter_batched(
     report.batch_s = time.perf_counter() - began
 
     texts = dict(chunks)
-    for take in takes:
-        reason = _retake_reason(take, texts[take.index], renderer.profile, recognizer)
+    for take, reason in zip(takes, _retake_reasons(takes, texts, renderer.profile, recognizer)):
         if reason:
             report.retakes[reason].append(take.index)
     _retake_on_stock(report, texts, out_dir, stock_factory, recognizer, seed_for)
     return report
 
 
-def _retake_reason(take: TakeResult, text: str, profile: VllmProfile, recognizer) -> Optional[str]:
+def _retake_reasons(takes: list[TakeResult], texts: dict, profile: VllmProfile, recognizer) -> list[Optional[str]]:
+    """Each take's retake reason, in take order: failed, then early_stop, then hallucination.
+
+    Only the takes that pass the first two checks reach the recognizer, and they
+    go to it together so it can batch them.
+    """
+    reasons = [_render_fault(take, texts[take.index], profile) for take in takes]
+    if recognizer is None:
+        return reasons
+    heard = [take for take, reason in zip(takes, reasons) if reason is None]
+    phones = recognizer.recognize_batch([load_slice(take.path, None, None) for take in heard])
+    babbled = {take.index for take, take_phones in zip(heard, phones) if detect_hallucinations(texts[take.index], take_phones)}
+    return ["hallucination" if take.index in babbled else reason for take, reason in zip(takes, reasons)]
+
+
+def _render_fault(take: TakeResult, text: str, profile: VllmProfile) -> Optional[str]:
     if not take.ok or not take.path.exists():
         return "failed"
     if take_shortfall(text, take.path, profile) is not None:
         return "early_stop"
-    if recognizer is not None and detect_hallucinations(text, recognizer.recognize(load_slice(take.path, None, None))):
-        return "hallucination"
     return None
 
 
