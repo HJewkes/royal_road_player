@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings
@@ -25,6 +26,7 @@ class Settings(BaseSettings):
     events_log: Path = Path(__file__).parent.parent.parent / "logs" / "events.jsonl"
 
     # TTS settings
+    tts_engine: Literal["xtts", "chatterbox"] = "xtts"
     tts_model: str = "tts_models/multilingual/multi-dataset/xtts_v2"
     voice_sample_path: str = str(Path(__file__).parent.parent.parent / "data" / "voice_samples" / "british_male_p241.wav")
     tts_language: str = "en"

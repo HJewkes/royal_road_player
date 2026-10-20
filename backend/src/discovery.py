@@ -10,6 +10,7 @@ All state is derived from the filesystem structure:
       - normalized.txt (normalized)
       - chunks/
         - 001.txt, 001.wav (chunk text and audio)
+        - engine.json (engine + chunker the chunks were made for)
       - validation.json (validation results)
       - audio.wav (concatenated chapter audio)
 """
@@ -37,6 +38,10 @@ from src.models import (
 from src.utils import sanitize_filename
 
 logger = logging.getLogger(__name__)
+
+ENGINE_STAMP_FILE = "engine.json"
+LEGACY_ENGINE_STAMP = {"engine": "xtts", "chunking": "xtts-250"}
+STAMP_IDENTITY_KEYS = ("engine", "chunking")
 
 
 class BookDiscovery:
@@ -573,13 +578,28 @@ class ChunkDiscovery:
             error=error,
         )
 
-    def save_chunks(self, fiction_id: str, book_number: int, chapter_number: int, chunks: list[tuple[int, str]]) -> int:
+    def save_chunks(
+        self,
+        fiction_id: str,
+        book_number: int,
+        chapter_number: int,
+        chunks: list[tuple[int, str]],
+        stamp: Optional[dict] = None,
+    ) -> int:
         """Save chunk text files. chunks is list of (index, text) tuples.
 
-        Returns the number of stale artifacts removed from a previous, longer run.
+        `stamp` (see `src.tts.engine_stamp`) records which engine and chunker the
+        chapter is for. When it differs from the chapter's previous stamp, all
+        audio and error files are deleted first, so a chapter never mixes engines.
+
+        Returns the number of stale artifacts removed.
         """
         chunks_dir = self.get_chunks_dir(fiction_id, book_number, chapter_number)
         chunks_dir.mkdir(parents=True, exist_ok=True)
+
+        cleared = 0
+        if stamp is not None:
+            cleared = self._apply_stamp(chunks_dir, stamp)
 
         for index, text in chunks:
             txt_file = chunks_dir / f"{index:03d}.txt"
@@ -587,8 +607,36 @@ class ChunkDiscovery:
                 f.write(text)
 
         if not chunks:
-            return 0
-        return self._remove_stale_chunks(chunks_dir, max(index for index, _ in chunks))
+            return cleared
+        return cleared + self._remove_stale_chunks(chunks_dir, max(index for index, _ in chunks))
+
+    def read_engine_stamp(self, fiction_id: str, book_number: int, chapter_number: int) -> dict:
+        """The chapter's engine stamp. Chapters chunked before stamps existed are XTTS."""
+        chunks_dir = self.get_chunks_dir(fiction_id, book_number, chapter_number)
+        return self._read_stamp(chunks_dir)
+
+    @staticmethod
+    def _read_stamp(chunks_dir: Path) -> dict:
+        stamp_file = chunks_dir / ENGINE_STAMP_FILE
+        if not stamp_file.exists():
+            return dict(LEGACY_ENGINE_STAMP)
+        return json.loads(stamp_file.read_text())
+
+    def _apply_stamp(self, chunks_dir: Path, stamp: dict) -> int:
+        """Write `stamp`, first deleting audio rendered under a different one."""
+        previous = self._read_stamp(chunks_dir)
+        cleared = 0
+        # Only engine and chunker decide whether old audio is still valid; extra
+        # keys may be added to stamps later without invalidating every chapter.
+        if any(previous.get(key) != stamp.get(key) for key in STAMP_IDENTITY_KEYS):
+            for path in chunks_dir.iterdir():
+                if path.suffix in (".wav", ".error"):
+                    path.unlink()
+                    cleared += 1
+            if cleared:
+                logger.info(f"Engine stamp changed {previous} -> {stamp}; removed {cleared} files in {chunks_dir}")
+        (chunks_dir / ENGINE_STAMP_FILE).write_text(json.dumps(stamp))
+        return cleared
 
     @staticmethod
     def _remove_stale_chunks(chunks_dir: Path, highest_index: int) -> int:

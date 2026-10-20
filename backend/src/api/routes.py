@@ -42,9 +42,10 @@ from src.export import get_exporter
 from src.models import BookStatus, BookSummary, ChapterSummary, OperationResult, QueueStatus
 from src.queue import Job, get_job_queue, get_download_queue
 from src.scraper import get_scraper
-from src.text import TextChunker, TextNormalizer, TableConverter, StatBlockConverter
+from src.text import TextChunker, TextNormalizer, TableConverter, StatBlockConverter, chunking_for
 from src.text.commentary import apply_recorded_removals, load_records
 from src.text.renderings import UnrenderedSpecBlockError, render_or_raise
+from src.tts.engines import engine_stamp
 from src.tts.pool import RenderPool
 from src.utils import (
     extract_series_name,
@@ -832,7 +833,9 @@ async def chunk_chapters(request: ChunkRequest):
     """Chunk normalized text for TTS."""
     chapter_discovery = get_chapter_discovery()
     chunk_discovery = get_chunk_discovery()
-    chunker = TextChunker()
+    engine = get_settings().tts_engine
+    chunker = TextChunker(chunking_for(engine))
+    stamp = engine_stamp(engine)
 
     chapters = chapter_discovery.list_chapters(request.fiction_id, request.book_number)
     if request.chapter_numbers:
@@ -853,7 +856,7 @@ async def chunk_chapters(request: ChunkRequest):
         # Save chunks
         chunks_data = [(c.index, c.text) for c in chunk_results]
         stale_removed += chunk_discovery.save_chunks(
-            request.fiction_id, request.book_number, chapter_sum.chapter_number, chunks_data
+            request.fiction_id, request.book_number, chapter_sum.chapter_number, chunks_data, stamp
         )
         total_chunks += len(chunk_results)
 
@@ -877,16 +880,24 @@ async def queue_generation(request: GenerateRequest):
     """Queue chapters for audio generation."""
     chunk_discovery = get_chunk_discovery()
     queue = get_job_queue()
+    engine = get_settings().tts_engine
 
     chapters = get_chapter_discovery().list_chapters(request.fiction_id, request.book_number)
     if request.chapter_numbers:
         chapters = [c for c in chapters if c.chapter_number in request.chapter_numbers]
 
     jobs_added = 0
+    skipped: list[int] = []
     for chapter_sum in chapters:
         pending = chunk_discovery.get_pending_chunks(
             request.fiction_id, request.book_number, chapter_sum.chapter_number
         )
+        stamp = chunk_discovery.read_engine_stamp(
+            request.fiction_id, request.book_number, chapter_sum.chapter_number
+        )
+        if pending and stamp["engine"] != engine:
+            skipped.append(chapter_sum.chapter_number)
+            continue
 
         chunks_data = [(c.index, c.text) for c in pending]
         added = queue.add_chapter(
@@ -897,10 +908,16 @@ async def queue_generation(request: GenerateRequest):
         )
         jobs_added += added
 
+    message = f"Queued {jobs_added} chunks for generation"
+    if skipped:
+        message += (
+            f"; skipped chapters {skipped}: chunked for another engine than {engine!r}."
+            " Re-chunk them to render with this engine."
+        )
     return OperationResult(
         success=True,
-        message=f"Queued {jobs_added} chunks for generation",
-        data={"count": jobs_added},
+        message=message,
+        data={"count": jobs_added, "skipped_engine_mismatch": skipped},
     )
 
 
