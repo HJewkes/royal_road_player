@@ -5,11 +5,13 @@ detector, so the re-roll behaviour is tested without loading any models.
 """
 
 import os
+import wave
 from pathlib import Path
 
 import pytest
 
 from src.tts import verified
+from src.tts.profiles import P4
 from src.tts.verified import synthesize_verified
 
 
@@ -116,3 +118,80 @@ def test_takes_are_deleted_after_the_winner_is_copied_out(monkeypatch, tmp_path)
 
     assert out.exists()
     assert list(tmpdir.iterdir()) == []
+
+
+# 330 letters in 11 sentences, written for this test: at most 21.5 letters/s, so
+# a full take lasts at least 15.3 s of speech.
+LONG_TEXT = "The green boat drifted far out to sea. " * 11
+
+
+class SeededTTS:
+    """A Chatterbox-like engine: seeded, P4 profile, real wavs of scripted lengths."""
+
+    profile = P4
+
+    def __init__(self, speech_seconds):
+        self.speech_seconds = list(speech_seconds)
+        self.seeds = []
+
+    def synthesize(self, text, out, seed=None, **kw):
+        self.seeds.append(seed)
+        audio_s = self.speech_seconds.pop(0) + P4.trailing_pad_s
+        with wave.open(str(out), "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(1000)
+            wav.writeframes(b"\0\0" * round(audio_s * 1000))
+        return Path(out), 0.5  # generation wall time, unrelated to audio length
+
+
+def _kept_seconds(out):
+    with wave.open(str(out), "rb") as wav:
+        return wav.getnframes() / wav.getframerate() - P4.trailing_pad_s
+
+
+def test_reroll_uses_a_new_seed_each_attempt(monkeypatch, tmp_path):
+    _stub_detect(monkeypatch, [[{"severity": 0.5, "length": 6}]] * 2 + [[]])
+    tts = SeededTTS([18.0, 18.0, 18.0])
+
+    synthesize_verified(tts, LONG_TEXT, tmp_path / "o.wav", recognizer=FakeRecog(), seed=1004)
+
+    assert tts.seeds == [1004, 1004 + verified.SEED_STRIDE, 1004 + 2 * verified.SEED_STRIDE]
+
+
+def test_early_stopped_take_is_rerolled_and_full_take_kept(monkeypatch, tmp_path):
+    _stub_detect(monkeypatch, [[], []])
+    tts, out = SeededTTS([9.0, 18.0]), tmp_path / "o.wav"
+
+    synthesize_verified(tts, LONG_TEXT, out, recognizer=FakeRecog(), seed=1)
+
+    assert len(tts.seeds) == 2
+    assert _kept_seconds(out) == pytest.approx(18.0)
+
+
+def test_never_keeps_truncated_take_over_hallucinated_one(monkeypatch, tmp_path):
+    _stub_detect(monkeypatch, [[], [{"severity": 0.9, "length": 12}], []])
+    tts, out = SeededTTS([9.0, 18.0, 12.0]), tmp_path / "o.wav"
+
+    synthesize_verified(tts, LONG_TEXT, out, recognizer=FakeRecog(), retries=2, seed=1)
+
+    assert _kept_seconds(out) == pytest.approx(18.0)
+
+
+def test_least_truncated_take_kept_when_every_take_stops_early(monkeypatch, tmp_path):
+    _stub_detect(monkeypatch, [[], [], []])
+    tts, out = SeededTTS([6.0, 12.0, 9.0]), tmp_path / "o.wav"
+
+    synthesize_verified(tts, LONG_TEXT, out, recognizer=FakeRecog(), retries=2, seed=1)
+
+    assert _kept_seconds(out) == pytest.approx(12.0)
+
+
+def test_xtts_guard_is_off(monkeypatch, tmp_path):
+    _stub_detect(monkeypatch, [[]])
+    tts = SeededTTS([3.0])
+    tts.profile = None
+
+    synthesize_verified(tts, LONG_TEXT, tmp_path / "o.wav", recognizer=FakeRecog())
+
+    assert len(tts.seeds) == 1
