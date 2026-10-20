@@ -106,7 +106,7 @@ def test_chunk_route_stamps_chapter_with_active_engine(api):
     _chunk(api)
 
     stamp = api.routes.get_chunk_discovery().read_engine_stamp("1", 1, 1)
-    assert stamp == {"engine": "chatterbox", "chunking": "chatterbox-450"}
+    assert stamp == {"engine": "chatterbox", "chunking": "chatterbox-450", "profile": "p4"}
 
 
 def test_generate_skips_mismatched_chapter(api):

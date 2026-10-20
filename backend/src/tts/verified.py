@@ -8,6 +8,10 @@ phoneme model (``PhonemeRecognizer``) checks for injected phones; a clean take i
 kept immediately, otherwise it re-rolls up to ``retries`` times and keeps the
 least-severe take. Used by the background processor so every rendered chunk
 self-heals without a separate clean pass.
+
+Engines with an early-stop threshold (Chatterbox) also re-roll a take whose
+audio is too short for its text. Chatterbox is seeded, so each re-roll gets
+its own seed; an identical seed would only reproduce the same defect.
 """
 
 import logging
@@ -17,6 +21,7 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
+from src.tts.early_stop import early_stop_shortfall, wav_duration
 from src.validation.phonemes import (
     detect_hallucinations,
     get_phoneme_recognizer,
@@ -24,6 +29,10 @@ from src.validation.phonemes import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Chunk seeds are consecutive (999 + chunk index), so a stride of 1 would replay
+# the next chunk's first take; a large prime keeps every retake seed distinct.
+SEED_STRIDE = 100_003
 
 
 def _new_take_path() -> Path:
@@ -46,48 +55,45 @@ def synthesize_verified(
     recognizer=None,
     retries: int = 5,
     min_run: int = 5,
+    seed: Optional[int] = None,
     **inference_kwargs,
 ) -> tuple[Path, float]:
-    """Synthesize ``text`` to ``output_path``, re-rolling babbled takes.
+    """Synthesize ``text`` to ``output_path``, re-rolling babbled or truncated takes.
 
     Returns (output_path, duration_seconds), matching ``tts.synthesize``. The first
-    hallucination-free take wins; if every attempt babbles, the least-severe take is
-    kept so a chunk is never dropped. Falls back to a plain single take if the
-    phoneme recognizer can't be loaded.
+    take with no hallucination and no early stop wins; if every attempt is flawed,
+    the least-bad take is kept so a chunk is never dropped. Attempt n renders with
+    ``seed + n * SEED_STRIDE``. Falls back to a plain single take if the phoneme
+    recognizer can't be loaded.
     """
     if recognizer is None:
         try:
             recognizer = get_phoneme_recognizer()
         except Exception as exc:  # model/deps unavailable — degrade gracefully
             logger.warning(f"Verify unavailable ({exc}); single take.")
-            return tts.synthesize(text, output_path, **inference_kwargs)
+            return tts.synthesize(text, output_path, seed=seed, **inference_kwargs)
 
-    best_path: Optional[Path] = None
-    best_sev = float("inf")
-    best_duration = 0.0
+    best: Optional[tuple[tuple[float, float], Path, float]] = None
     takes: list[Path] = []
-
     try:
         for attempt in range(retries + 1):
             tmp = _new_take_path()
             takes.append(tmp)
-            _, duration = tts.synthesize(text, tmp, **inference_kwargs)
-            halluc = detect_hallucinations(
-                text, recognizer.recognize(load_slice(tmp, None, None)), min_run=min_run
-            )
-            if not halluc:
+            _, duration = tts.synthesize(text, tmp, seed=_take_seed(seed, attempt), **inference_kwargs)
+            flaws = _take_flaws(tts, text, tmp, recognizer, min_run)
+            if flaws is None:
                 shutil.copy(tmp, output_path)
                 if attempt:
                     logger.info(f"Verified-clean after {attempt} re-roll(s): {output_path.name}")
                 return output_path, duration
-            sev = max(h["severity"] for h in halluc)
-            if sev < best_sev:
-                best_path, best_sev, best_duration = tmp, sev, duration
+            if best is None or flaws < best[0]:
+                best = (flaws, tmp, duration)
 
+        (shortfall, severity), best_path, best_duration = best
         shutil.copy(best_path, output_path)
         logger.warning(
-            f"Still babbling after {retries} re-rolls (severity {best_sev:.2f}); "
-            f"kept least-bad take: {output_path.name}"
+            f"No clean take after {retries} re-rolls (early-stop shortfall {shortfall:.2f}, "
+            f"hallucination severity {severity:.2f}); kept least-bad take: {output_path.name}"
         )
         return output_path, best_duration
     finally:
@@ -95,3 +101,32 @@ def synthesize_verified(
         # temp dir with one wav per chunk for the life of the machine.
         for take in takes:
             take.unlink(missing_ok=True)
+
+
+def _take_seed(seed: Optional[int], attempt: int) -> Optional[int]:
+    return None if seed is None else seed + attempt * SEED_STRIDE
+
+
+def _take_flaws(tts, text: str, take: Path, recognizer, min_run: int) -> Optional[tuple[float, float]]:
+    """None for a clean take, else (early-stop shortfall, hallucination severity).
+
+    Lower is better, and the shortfall leads: any truncated take ranks below any
+    babbling one, because truncation loses text outright.
+    """
+    shortfall = _early_stop(tts, text, take)
+    halluc = detect_hallucinations(
+        text, recognizer.recognize(load_slice(take, None, None)), min_run=min_run
+    )
+    if shortfall is None and not halluc:
+        return None
+    return shortfall or 0.0, max((h["severity"] for h in halluc), default=0.0)
+
+
+def _early_stop(tts, text: str, take: Path) -> Optional[float]:
+    """The take's early-stop shortfall under its engine's profile; XTTS has no guard."""
+    profile = getattr(tts, "profile", None)
+    if getattr(profile, "max_letters_per_sec", None) is None:
+        return None
+    # The engine's trailing pad is silence it appended, not speech.
+    speech_s = wav_duration(take) - profile.trailing_pad_s
+    return early_stop_shortfall(text, speech_s, profile.max_letters_per_sec, profile.min_letters)

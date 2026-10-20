@@ -1,6 +1,7 @@
 """Chapter engine stamps and the TTS engine factory."""
 
 import json
+import sys
 
 import pytest
 
@@ -31,7 +32,7 @@ def test_save_chunks_writes_stamp(discovery):
     discovery.save_chunks("1", 1, 1, CHUNKS, CHATTERBOX)
 
     stamp = json.loads((_chunks_dir(discovery) / "engine.json").read_text())
-    assert stamp == {"engine": "chatterbox", "chunking": "chatterbox-450"}
+    assert stamp == {"engine": "chatterbox", "chunking": "chatterbox-450", "profile": "p4"}
 
 
 def test_restamping_with_new_engine_clears_audio(discovery):
@@ -90,8 +91,35 @@ def test_engine_defaults_to_xtts(monkeypatch):
     assert Settings(_env_file=None).tts_engine == "xtts"
 
 
-def test_factory_refuses_chatterbox_until_it_is_wired_in():
-    with pytest.raises(NotImplementedError, match="Chatterbox"):
+def _chatterbox_settings(monkeypatch, **overrides):
+    from src.config import Settings
+    from src.tts import chatterbox, engines
+
+    monkeypatch.setattr(engines, "_chatterbox", None)
+    monkeypatch.setattr(chatterbox, "get_settings", lambda: Settings(_env_file=None, **overrides))
+
+
+def test_factory_builds_chatterbox_when_its_venv_is_configured(monkeypatch, tmp_path):
+    from src.tts.chatterbox import ChatterboxEngine
+
+    reference = tmp_path / "reference.wav"
+    reference.write_bytes(b"wav")
+    _chatterbox_settings(
+        monkeypatch, chatterbox_python=sys.executable, chatterbox_reference_path=str(reference)
+    )
+
+    engine = get_tts_engine("chatterbox")
+
+    assert isinstance(engine, ChatterboxEngine)
+    assert get_tts_engine("chatterbox") is engine
+
+
+def test_factory_refuses_chatterbox_without_its_interpreter(monkeypatch):
+    from src.tts.chatterbox import ChatterboxUnavailable
+
+    _chatterbox_settings(monkeypatch, chatterbox_python="")
+
+    with pytest.raises(ChatterboxUnavailable, match="AUDIOBOOK_CHATTERBOX_PYTHON"):
         get_tts_engine("chatterbox")
 
 

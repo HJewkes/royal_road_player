@@ -70,6 +70,10 @@ class ChatterboxEngine:
             raise ChatterboxWorkerError(f"Chatterbox failed {output_path.name}: {reply.get('error')}")
         return output_path, time.perf_counter() - start
 
+    def load_model(self) -> None:
+        """Start the worker and load the model now rather than on the first chunk."""
+        self._ensure_worker()
+
     def close(self) -> None:
         process, self._process = self._process, None
         if process is None or process.poll() is not None:

@@ -45,7 +45,7 @@ from src.scraper import get_scraper
 from src.text import TextChunker, TextNormalizer, TableConverter, StatBlockConverter, chunking_for
 from src.text.commentary import apply_recorded_removals, load_records
 from src.text.renderings import UnrenderedSpecBlockError, render_or_raise
-from src.tts.engines import engine_stamp
+from src.tts.engines import chunk_seed, engine_stamp
 from src.tts.pool import RenderPool
 from src.utils import (
     extract_series_name,
@@ -117,12 +117,13 @@ async def start_processor():
     queue = get_job_queue()
     exporter = get_exporter()
 
-    # Each worker loads its own XTTS model and phoneme recognizer on first use.
+    # Each worker loads its own engine and phoneme recognizer on first use.
     pool = _render_pool = RenderPool(
         workers=max(1, settings.max_concurrent_chunks),
         threads_per_worker=settings.tts_threads_per_worker,
         verify=settings.verify_synthesis,
         retries=settings.verify_max_retries,
+        engine=settings.tts_engine,
     )
 
     def process_job(job: Job) -> tuple[Path, float]:
@@ -130,7 +131,10 @@ async def start_processor():
         chunks_dir = get_chunk_discovery().get_chunks_dir(
             job.fiction_id, job.book_number, job.chapter_number
         )
-        return pool.render(job.text, chunks_dir / f"{job.chunk_index:03d}.wav")
+        # A fixed seed per chunk makes a Chatterbox chapter reproducible; XTTS ignores it.
+        return pool.render(
+            job.text, chunks_dir / f"{job.chunk_index:03d}.wav", seed=chunk_seed(job.chunk_index)
+        )
 
     async def on_chapter_complete(fiction_id: str, book_number: int, chapter_number: int):
         """Export chapter when all chunks complete."""
