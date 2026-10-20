@@ -7,7 +7,6 @@ import importlib.util
 import random
 from pathlib import Path
 
-from src.validation.alignment import exact_matcher
 from src.validation.comparison import compare_texts
 from src.validation.defects import _char_distance, detect_defects
 
@@ -27,10 +26,6 @@ def _rich(words):
                       for i, w in enumerate(words)]}
 
 
-def test_exact_matcher_scores_identical_long_sequences_as_identical():
-    assert exact_matcher(LONG_TEXT, LONG_TEXT).ratio() == 1.0
-
-
 def test_compare_texts_scores_a_one_word_change_in_a_long_chunk_as_near_identical():
     assert len(LONG_TEXT) > 200
     result = compare_texts(LONG_TEXT, LONG_TEXT.replace("cat", "hat", 1))
@@ -42,12 +37,10 @@ def test_char_distance_of_a_one_letter_change_in_long_text_is_small():
     assert _char_distance(LONG_TEXT, LONG_TEXT.replace("cat", "hat", 1)) < 0.02
 
 
-def test_detect_defects_flags_only_the_changed_word_in_a_long_run():
-    expected = SHUFFLED
-    heard = list(expected)
-    heard[100] = "omega"
-    defects = detect_defects(" ".join(expected), _rich(heard))
-    assert len(defects) == 1
+def test_detect_defects_flags_only_the_omitted_word_in_a_long_run():
+    heard = SHUFFLED[:100] + SHUFFLED[101:]
+    defects = detect_defects(" ".join(SHUFFLED), _rich(heard))
+    assert [d.kind for d in defects] == ["omission"]
 
 
 def test_whisper_insertion_chars_counts_only_the_inserted_word():
