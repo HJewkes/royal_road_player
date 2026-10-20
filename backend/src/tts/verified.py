@@ -21,7 +21,7 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
-from src.tts.early_stop import early_stop_shortfall, wav_duration
+from src.tts.early_stop import take_shortfall
 from src.validation.phonemes import (
     detect_hallucinations,
     get_phoneme_recognizer,
@@ -124,9 +124,4 @@ def _take_flaws(tts, text: str, take: Path, recognizer, min_run: int) -> Optiona
 
 def _early_stop(tts, text: str, take: Path) -> Optional[float]:
     """The take's early-stop shortfall under its engine's profile; XTTS has no guard."""
-    profile = getattr(tts, "profile", None)
-    if getattr(profile, "max_letters_per_sec", None) is None:
-        return None
-    # The engine's trailing pad is silence it appended, not speech.
-    speech_s = wav_duration(take) - profile.trailing_pad_s
-    return early_stop_shortfall(text, speech_s, profile.max_letters_per_sec, profile.min_letters)
+    return take_shortfall(text, take, getattr(tts, "profile", None))

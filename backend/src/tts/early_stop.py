@@ -33,6 +33,18 @@ def early_stop_shortfall(
     return 1.0 - audio_s / shortest_full_s
 
 
+def take_shortfall(text: str, take: Path, profile) -> Optional[float]:
+    """A rendered take's early-stop shortfall under `profile`; None when the profile has no guard.
+
+    The profile's trailing pad is silence the engine appended, not speech, so it
+    is not counted as reading time.
+    """
+    if getattr(profile, "max_letters_per_sec", None) is None:
+        return None
+    speech_s = wav_duration(take) - profile.trailing_pad_s
+    return early_stop_shortfall(text, speech_s, profile.max_letters_per_sec, profile.min_letters)
+
+
 def wav_duration(path: Path) -> float:
     """Audio seconds in a PCM wav, from its header."""
     with wave.open(str(path), "rb") as wav:

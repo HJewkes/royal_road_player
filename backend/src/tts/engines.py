@@ -4,8 +4,8 @@ from typing import Optional, Union
 
 from src.config import get_settings
 from src.text import chunking_for
-from src.tts.chatterbox import ChatterboxEngine
-from src.tts.profiles import P4
+from src.tts.chatterbox import ChatterboxEngine, ChatterboxUnavailable
+from src.tts.profiles import P4, ChatterboxProfile
 from src.tts.xtts import XTTSEngine
 
 ENGINES = ("xtts", "chatterbox")
@@ -44,6 +44,27 @@ def reset_tts_engine() -> None:
     if _chatterbox is not None:
         _chatterbox.close()
         _chatterbox = None
+
+
+def render_profile(name: str) -> Optional[ChatterboxProfile]:
+    """The render profile an engine runs with; XTTS has none, so no early-stop guard."""
+    return P4 if name == "chatterbox" else None
+
+
+def get_chapter_engine(discovery, fiction_id: str, book: int, chapter: int, factory=get_tts_engine):
+    """(engine name, engine) for the engine a chapter's stamp names.
+
+    Repairs must re-render with the engine the chapter was made with, never the
+    active one, or the chapter ends up mixing voices. Raises ChatterboxUnavailable
+    when that engine cannot run on this host.
+    """
+    name = discovery.read_engine_stamp(fiction_id, book, chapter)["engine"]
+    try:
+        return name, factory(name)
+    except ChatterboxUnavailable as exc:
+        raise ChatterboxUnavailable(
+            f"{fiction_id} b{book}/ch{chapter} was rendered with {name}, which cannot run here: {exc}"
+        ) from exc
 
 
 def chunk_seed(chunk_index: int) -> int:

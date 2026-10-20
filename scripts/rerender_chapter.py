@@ -11,7 +11,11 @@ is freshly synthesized and the export re-concatenates from scratch. The export
 overwrites the same mp3 path, so a subsequent publish_feed run targets the same
 episode.
 
+`--engine` (default: the configured engine) picks the engine and its chunker, and
+the chapter is stamped with it. Chunk i renders with seed 999 + i.
+
   ./venv311/bin/python scripts/rerender_chapter.py 124774 7 16
+  ./venv-cu128/bin/python scripts/rerender_chapter.py 124774 7 16 --engine chatterbox
 """
 import argparse
 import sys
@@ -22,14 +26,17 @@ ROOT = Path(__file__).resolve().parent.parent
 BACKEND = ROOT / "backend"
 sys.path.insert(0, str(BACKEND))
 
+from src.config import get_settings  # noqa: E402
 from src.discovery import (  # noqa: E402
     get_chapter_discovery, get_chunk_discovery,
 )
 from src.export.concatenator import get_exporter  # noqa: E402
 from src.text import (  # noqa: E402
-    StatBlockConverter, TableConverter, TextChunker, TextNormalizer,
+    StatBlockConverter, TableConverter, TextChunker, TextNormalizer, chunking_for,
 )
-from src.tts import get_tts_engine  # noqa: E402
+from src.tts import engine_stamp, get_tts_engine  # noqa: E402
+from src.tts.chatterbox import ChatterboxUnavailable  # noqa: E402
+from src.tts.engines import ENGINES, chunk_seed  # noqa: E402
 from src.tts.verified import synthesize_verified  # noqa: E402
 from src.validation.phonemes import get_phoneme_recognizer  # noqa: E402
 
@@ -53,8 +60,17 @@ def main():
     ap.add_argument("--format", default="mp3")
     ap.add_argument("--no-verify", action="store_true",
                     help="skip self-healing (single take per chunk)")
+    ap.add_argument("--engine", choices=ENGINES, default=None,
+                    help="TTS engine (default: AUDIOBOOK_TTS_ENGINE)")
     args = ap.parse_args()
     fid, book, ch = args.fiction_id, args.book, args.chapter
+    engine = args.engine or get_settings().tts_engine
+    # Build the engine before anything is cleared, so a host that cannot run it
+    # leaves the chapter's existing audio alone.
+    try:
+        tts = get_tts_engine(engine)
+    except ChatterboxUnavailable as exc:
+        sys.exit(f"Cannot render with {engine}: {exc}")
 
     chapters = get_chapter_discovery()
     chunksd = get_chunk_discovery()
@@ -75,21 +91,22 @@ def main():
     chapter_dir = chunks_dir.parent
     _clear_chunk_artifacts(chunks_dir, chapter_dir)
 
-    chunk_results = TextChunker().chunk(text)
-    chunksd.save_chunks(fid, book, ch, [(c.index, c.text) for c in chunk_results])
+    chunk_results = TextChunker(chunking_for(engine)).chunk(text)
+    chunksd.save_chunks(fid, book, ch, [(c.index, c.text) for c in chunk_results],
+                        stamp=engine_stamp(engine))
     n = len(chunk_results)
-    print(f"Chunked -> {n} chunks", flush=True)
+    print(f"Chunked -> {n} chunks ({engine})", flush=True)
 
     # 3. Synthesize every chunk to its NNN.wav (self-healing unless --no-verify).
-    tts = get_tts_engine()
     recognizer = None if args.no_verify else get_phoneme_recognizer()
     t0 = time.time()
     for chunk in chunksd.list_chunks(fid, book, ch):
         out = chunks_dir / f"{chunk.index:03d}.wav"
+        seed = chunk_seed(chunk.index)
         if recognizer is not None:
-            synthesize_verified(tts, chunk.text, out, recognizer=recognizer)
+            synthesize_verified(tts, chunk.text, out, recognizer=recognizer, seed=seed)
         else:
-            tts.synthesize(chunk.text, out)
+            tts.synthesize(chunk.text, out, seed=seed)
         if chunk.index % 10 == 0 or chunk.index == n:
             elapsed = time.time() - t0
             print(f"  synth {chunk.index}/{n}  ({elapsed:.0f}s)", flush=True)

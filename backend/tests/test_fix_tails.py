@@ -6,11 +6,16 @@ shorter, or word-breaking on demand.
 """
 import importlib.util
 import shutil
+import wave
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
+from src.tts.chatterbox import ChatterboxUnavailable
+from src.tts.engines import chunk_seed
+from src.tts.profiles import P4
+from src.tts.verified import SEED_STRIDE
 from src.validation.phonemes import clean_ipa, g2p
 
 _SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "fix_pass.py"
@@ -55,11 +60,11 @@ class FakeTTS:
         return out_path, 0.0
 
 
-def _args(takes=3):
+def _args(takes=3, engine="xtts"):
     class A:
         pass
     a = A()
-    a.takes, a.limit = takes, 10
+    a.takes, a.limit, a.engine = takes, 10, engine
     return a
 
 
@@ -195,3 +200,95 @@ def test_write_results_creates_missing_logs_dir(tmp_path):
     fix_pass._write_results(out, {"attempted": 0})
 
     assert out.exists()
+
+
+# 56 alphanumeric letters, written for this test: a full take needs at least
+# 56 / 21.5 = 2.6 s of speech.
+LONG_TEXT = "we need to get him here before the storm reaches the harbour"
+
+
+def _write_wav(path, seconds):
+    with wave.open(str(path), "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(24000)
+        wav.writeframes(b"\0\0" * int(24000 * seconds))
+    return path
+
+
+class FakeWavTTS:
+    """Writes a silent wav of a fixed length per take and records its kwargs."""
+
+    def __init__(self, seconds):
+        self.calls = []
+        self._seconds = seconds
+
+    def synthesize(self, text, out_path, **kw):
+        _write_wav(out_path, self._seconds)
+        self.calls.append(kw)
+        return out_path, 0.0
+
+
+def _early_stop_fix(tmp_path, take_phones):
+    clean = clean_ipa(g2p(LONG_TEXT))
+    shipped = _write_wav(tmp_path / "shipped.wav", 1.0 + P4.trailing_pad_s)
+    chunk = FakeChunk(1, LONG_TEXT, shipped)
+    recog = FakeRecognizer({"shipped.wav": clean}, take_phones(clean))
+    before = fix_pass.take_shortfall(LONG_TEXT, shipped, P4)
+    assert before is not None, "the shipped take must trip the guard"
+    return fix_pass._best_early_stop_take(chunk, before, _args(engine="chatterbox"),
+                                          FakeWavTTS(4.0), recog, P4)
+
+
+@espeak
+def test_early_stop_fix_keeps_full_take_without_regressions(tmp_path):
+    r = _early_stop_fix(tmp_path, lambda clean: clean)
+
+    assert r["kept"] is True
+    assert r["after_shortfall"] == 0
+
+
+@espeak
+def test_early_stop_fix_rejects_full_take_that_breaks_a_word(tmp_path):
+    """A complete take does not buy a mangled word, the same rule as the tail pass."""
+    r = _early_stop_fix(tmp_path, lambda clean: clean.replace(clean_ipa(g2p("storm")), "zzzzxq"))
+
+    assert r["kept"] is False
+    assert r["broke_words"]
+
+
+class StampDiscovery:
+    def __init__(self, engine):
+        self._engine = engine
+
+    def read_engine_stamp(self, fiction_id, book, chapter):
+        return {"engine": self._engine, "chunking": "any"}
+
+
+def test_fix_pass_uses_stamp_engine(monkeypatch):
+    built = []
+    monkeypatch.setattr(fix_pass, "get_tts_engine", lambda name=None: built.append(name) or object())
+
+    name, _ = fix_pass._load_engine(StampDiscovery("chatterbox"), "1", 1, 1)
+
+    assert name == "chatterbox"
+    assert built == ["chatterbox"]
+
+
+def test_fix_pass_refuses_chapter_whose_engine_is_not_runnable(monkeypatch):
+    def unavailable(name=None):
+        raise ChatterboxUnavailable("no Chatterbox venv")
+    monkeypatch.setattr(fix_pass, "get_tts_engine", unavailable)
+
+    with pytest.raises(SystemExit, match="rendered with chatterbox"):
+        fix_pass._load_engine(StampDiscovery("chatterbox"), "1", 1, 1)
+
+
+def test_chatterbox_takes_vary_seed():
+    retries = 5  # synthesize_verified's default
+    render_seeds = {chunk_seed(7) + n * SEED_STRIDE for n in range(retries + 1)}
+
+    seeds = [params["seed"] for _, params in fix_pass._take_params("chatterbox", 7, 3)]
+
+    assert len(set(seeds)) == 3
+    assert not set(seeds) & render_seeds, "a repair must not replay a render-time retake"

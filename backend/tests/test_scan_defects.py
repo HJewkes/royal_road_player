@@ -5,11 +5,15 @@ and the "audio" phones are built from espeak-ng's G2P of the source text.
 """
 import importlib.util
 import shutil
+import wave
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
+from src.discovery import LEGACY_ENGINE_STAMP
+from src.tts.engines import engine_stamp
+from src.tts.profiles import P4
 from src.validation.phonemes import g2p_sentence
 
 _SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "scan_defects.py"
@@ -32,11 +36,15 @@ class FakeChunk:
 
 
 class FakeDiscovery:
-    def __init__(self, chunks):
+    def __init__(self, chunks, stamp=LEGACY_ENGINE_STAMP):
         self._chunks = chunks
+        self._stamp = stamp
 
     def list_chunks(self, fiction_id, book, chapter):
         return self._chunks
+
+    def read_engine_stamp(self, fiction_id, book, chapter):
+        return dict(self._stamp)
 
 
 class FakeRecognizer:
@@ -153,3 +161,45 @@ def test_three_letter_word_needs_more_than_one_wrong_phone(tmp_path):
     )[0]}
     assert verdicts["dye"]["distance"] < 0.7
     assert verdicts["dye"]["source"] == "whisper"
+
+
+# 90 alphanumeric letters, written for this test: a full take needs at least
+# 90 / 21.5 = 4.19 s of speech.
+LONG_TEXT = "The green boat drifted far out to sea. " * 3
+
+
+def _write_wav(path, seconds):
+    with wave.open(str(path), "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(24000)
+        wav.writeframes(b"\0\0" * int(24000 * seconds))
+    return path
+
+
+def _scan_truncated_take(tmp_path, stamp):
+    """One chunk whose take holds 2 s of speech for 90 letters, plus the pad."""
+    wav = _write_wav(tmp_path / "chunk_001.wav", 2.0 + P4.trailing_pad_s)
+    recognizer = FakeRecognizer({str(wav): "".join(g2p_sentence(LONG_TEXT))})
+    findings, _ = scan_defects._scan_chapter(
+        "1", 1, 1, FakeSTT({}), FakeSTT({}),
+        FakeDiscovery([FakeChunk(1, LONG_TEXT, wav)], stamp), 0.35, recognizer,
+    )
+    return findings
+
+
+@espeak
+def test_scan_reports_early_stop_for_chatterbox_chapter(tmp_path):
+    findings = _scan_truncated_take(tmp_path, engine_stamp("chatterbox"))
+
+    early = [f for f in findings if f["kind"] == "early_stop"]
+    assert len(early) == 1
+    assert early[0]["causes"] == ["early_stop"]
+    assert early[0]["severity"] == pytest.approx(1 - 2.0 / (90 / 21.5), abs=1e-3)
+
+
+@espeak
+def test_scan_skips_early_stop_for_xtts_chapter(tmp_path):
+    findings = _scan_truncated_take(tmp_path, LEGACY_ENGINE_STAMP)
+
+    assert not [f for f in findings if f["kind"] == "early_stop"]
