@@ -63,6 +63,7 @@ class ChatterboxEngine:
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         request = {"text": text, "out": str(output_path.resolve()), "seed": seed, **self._params(overrides)}
+        self._ensure_worker()  # like XTTS, model load is not generation time
         start = time.perf_counter()
         reply = self._request(request)
         if not reply.get("ok"):
