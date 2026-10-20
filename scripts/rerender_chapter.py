@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Re-render one chapter end-to-end through the production text+audio pipeline.
+"""Re-render chapters end-to-end through the production text+audio pipeline.
 
 Re-runs normalize -> chunk -> synthesize -> export for a single chapter, reusing
 the exact production components (TableConverter + StatBlockConverter +
 TextNormalizer, TextChunker, the TTS engine, AudioExporter). Used to regenerate a
 chapter after a normalization/chunking change without standing up the API+worker.
+Several chapters in one run share the engine and, with --batch, one warm
+chatterbox-vllm worker, so only the first pays its startup.
 
 It clears the chapter's stale chunk audio and audio.wav first so every new chunk
 is freshly synthesized and the export re-concatenates from scratch. The export
@@ -22,6 +24,7 @@ renders on stock.
   ./venv311/bin/python scripts/rerender_chapter.py 124774 7 16
   ./venv-cu128/bin/python scripts/rerender_chapter.py 124774 7 16 --engine chatterbox
   ./venv-cu128/bin/python scripts/rerender_chapter.py 124774 7 16 --engine chatterbox --batch
+  ./venv-cu128/bin/python scripts/rerender_chapter.py 124774 7 16 17 18 --engine chatterbox --batch
 """
 import argparse
 import sys
@@ -96,10 +99,10 @@ def _synthesize_pooled(chunks, chunks_dir: Path, engine: str, workers: int, veri
         pool.shutdown()
 
 
-def _synthesize_batched(chunks, chunks_dir: Path, tts, verify: bool):
+def _synthesize_batched(chunks, chunks_dir: Path, tts, renderer: VllmBatchRenderer, verify: bool):
     recognizer = get_phoneme_recognizer() if verify else None
     report = render_chapter_batched(
-        [(c.index, c.text) for c in chunks], chunks_dir, VllmBatchRenderer(),
+        [(c.index, c.text) for c in chunks], chunks_dir, renderer,
         stock_factory=lambda: tts, recognizer=recognizer, seed_for=chunk_seed,
     )
     if report.batch_failed:
@@ -108,32 +111,7 @@ def _synthesize_batched(chunks, chunks_dir: Path, tts, verify: bool):
           f"{report.retake_s:.0f}s: {report.retakes}", flush=True)
 
 
-def main():
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("fiction_id")
-    ap.add_argument("book", type=int)
-    ap.add_argument("chapter", type=int)
-    ap.add_argument("--format", default="mp3")
-    ap.add_argument("--no-verify", action="store_true",
-                    help="skip self-healing (single take per chunk)")
-    ap.add_argument("--engine", choices=ENGINES, default=None,
-                    help="TTS engine (default: AUDIOBOOK_TTS_ENGINE)")
-    ap.add_argument("--workers", type=int, default=1,
-                    help="render through a RenderPool of this many workers (default: 1, inline)")
-    ap.add_argument("--batch", action="store_true",
-                    help="render through chatterbox-vllm, retaking flagged chunks on stock (chatterbox only)")
-    args = ap.parse_args()
-    fid, book, ch = args.fiction_id, args.book, args.chapter
-    engine = args.engine or get_settings().tts_engine
-    if args.batch and engine != "chatterbox":
-        sys.exit("--batch renders Chatterbox only; pass --engine chatterbox")
-    # Build the engine before anything is cleared, so a host that cannot run it
-    # leaves the chapter's existing audio alone.
-    try:
-        tts = get_tts_engine(engine)
-    except ChatterboxUnavailable as exc:
-        sys.exit(f"Cannot render with {engine}: {exc}")
-
+def _rerender(fid: str, book: int, ch: int, engine: str, tts, renderer, args):
     chapters = get_chapter_discovery()
     chunksd = get_chunk_discovery()
 
@@ -150,8 +128,7 @@ def main():
 
     # 2. Clear stale artifacts, then re-chunk.
     chunks_dir = chunksd.get_chunks_dir(fid, book, ch)
-    chapter_dir = chunks_dir.parent
-    _clear_chunk_artifacts(chunks_dir, chapter_dir)
+    _clear_chunk_artifacts(chunks_dir, chunks_dir.parent)
 
     chunk_results = TextChunker(chunking_for(engine)).chunk(text)
     chunksd.save_chunks(fid, book, ch, [(c.index, c.text) for c in chunk_results],
@@ -162,8 +139,8 @@ def main():
     # 3. Synthesize every chunk to its NNN.wav (self-healing unless --no-verify).
     chunks = chunksd.list_chunks(fid, book, ch)
     t0 = time.time()
-    if args.batch:
-        _synthesize_batched(chunks, chunks_dir, tts, not args.no_verify)
+    if renderer is not None:
+        _synthesize_batched(chunks, chunks_dir, tts, renderer, not args.no_verify)
     elif args.workers > 1:
         _synthesize_pooled(chunks, chunks_dir, engine, args.workers, not args.no_verify, t0)
     else:
@@ -175,6 +152,41 @@ def main():
         sys.exit("Export failed")
     print(f"\nExported: {path}")
     print(f"Total synth time: {time.time() - t0:.0f}s for {n} chunks")
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("fiction_id")
+    ap.add_argument("book", type=int)
+    ap.add_argument("chapters", type=int, nargs="+")
+    ap.add_argument("--format", default="mp3")
+    ap.add_argument("--no-verify", action="store_true",
+                    help="skip self-healing (single take per chunk)")
+    ap.add_argument("--engine", choices=ENGINES, default=None,
+                    help="TTS engine (default: AUDIOBOOK_TTS_ENGINE)")
+    ap.add_argument("--workers", type=int, default=1,
+                    help="render through a RenderPool of this many workers (default: 1, inline)")
+    ap.add_argument("--batch", action="store_true",
+                    help="render through chatterbox-vllm, retaking flagged chunks on stock (chatterbox only)")
+    args = ap.parse_args()
+    engine = args.engine or get_settings().tts_engine
+    if args.batch and engine != "chatterbox":
+        sys.exit("--batch renders Chatterbox only; pass --engine chatterbox")
+    # Build the engine before anything is cleared, so a host that cannot run it
+    # leaves the chapter's existing audio alone.
+    try:
+        tts = get_tts_engine(engine)
+    except ChatterboxUnavailable as exc:
+        sys.exit(f"Cannot render with {engine}: {exc}")
+
+    renderer = VllmBatchRenderer() if args.batch else None
+    try:
+        for ch in args.chapters:
+            print(f"== {args.fiction_id} b{args.book}/ch{ch}", flush=True)
+            _rerender(args.fiction_id, args.book, ch, engine, tts, renderer, args)
+    finally:
+        if renderer is not None:
+            renderer.close()
 
 
 if __name__ == "__main__":
