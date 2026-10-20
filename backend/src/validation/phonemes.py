@@ -68,12 +68,25 @@ def clean_ipa(ipa: str) -> str:
     return folded.translate(_ALLOPHONE_FOLD)
 
 
+def _phone_matcher(a: str, b: str) -> SequenceMatcher:
+    """A matcher for two phone strings, with difflib's autojunk heuristic off.
+
+    From 200 elements up, autojunk discards every element that makes up over 1%
+    of the second string as junk. A phone string draws on about 40 phones, so on a
+    chunk that long nearly every phone counts as junk and the alignment falls
+    apart: correctly read text comes back as one long insertion. The 250-character
+    XTTS chunks this was calibrated on mostly stayed under that length; the
+    450-character Chatterbox chunks run to over 300 phones.
+    """
+    return SequenceMatcher(None, a, b, autojunk=False)
+
+
 def phoneme_distance(expected: str, actual: str) -> float:
     """Normalized phone edit distance in [0,1]; 0 == identical pronunciation."""
     a, b = clean_ipa(expected), clean_ipa(actual)
     if not a and not b:
         return 0.0
-    return 1.0 - SequenceMatcher(None, a, b).ratio()
+    return 1.0 - _phone_matcher(a, b).ratio()
 
 
 def phone_match_distance(expected: str, actual_full: str) -> float:
@@ -93,7 +106,7 @@ def phone_match_distance(expected: str, actual_full: str) -> float:
     for length in {max(1, m - 2), m, m + 2, m + 4}:
         for start in range(0, max(1, len(full) - length + 1)):
             window = full[start:start + length]
-            best = min(best, 1.0 - SequenceMatcher(None, exp, window).ratio())
+            best = min(best, 1.0 - _phone_matcher(exp, window).ratio())
             if best == 0.0:
                 return 0.0
     return best
@@ -279,7 +292,7 @@ def _index_map(expected: str, actual: str) -> list[int]:
     span — a garbled word gets its garbled region, not a lucky match elsewhere.
     """
     mapping = [0] * len(expected)
-    for tag, i1, i2, j1, j2 in SequenceMatcher(None, expected, actual).get_opcodes():
+    for tag, i1, i2, j1, j2 in _phone_matcher(expected, actual).get_opcodes():
         for i in range(i1, i2):
             frac = (i - i1) / (i2 - i1) if i2 > i1 else 0.0
             mapping[i] = j1 + (int(frac * (j2 - j1)) if j2 > j1 else 0)
@@ -319,7 +332,7 @@ def detect_hallucinations(chunk_text: str, actual_full: str,
     if not actual:
         return []
     out = []
-    for tag, i1, i2, j1, j2 in SequenceMatcher(None, expected, actual).get_opcodes():
+    for tag, i1, i2, j1, j2 in _phone_matcher(expected, actual).get_opcodes():
         if tag == "insert":
             run, start = actual[j1:j2], j1
         elif tag == "replace" and (j2 - j1) - (i2 - i1) >= min_run:
@@ -357,7 +370,7 @@ def detect_tail_artifact(chunk_text: str, actual_full: str,
     actual = clean_ipa(actual_full)
     if not expected or not actual:
         return None
-    tag, i1, i2, j1, j2 = SequenceMatcher(None, expected, actual).get_opcodes()[-1]
+    tag, i1, i2, j1, j2 = _phone_matcher(expected, actual).get_opcodes()[-1]
     stray, displaced = actual[j1:j2], expected[i1:i2]
     if tag == "equal" or len(stray) < min_phones or len(stray) <= len(displaced):
         return None
@@ -377,7 +390,7 @@ def _locate(sub: str, full: str) -> tuple:
         return (0, 0)
     best_start, best_d = 0, 1.0
     for start in range(0, max(1, len(full) - m + 1)):
-        d = 1.0 - SequenceMatcher(None, sub, full[start:start + m]).ratio()
+        d = 1.0 - _phone_matcher(sub, full[start:start + m]).ratio()
         if d < best_d:
             best_start, best_d = start, d
             if d == 0.0:
@@ -429,7 +442,7 @@ def _word_verdict(word: str, exp_w: str, actual_span: str, unusual) -> dict:
     minimum over the citation form and the word's weak forms.
     """
     dist, best = min(
-        (1.0 - SequenceMatcher(None, form, actual_span).ratio(), form)
+        (1.0 - _phone_matcher(form, actual_span).ratio(), form)
         for form in admissible_phones(word, exp_w)
     )
     # The span guard stays keyed on espeak's predicted length: it detects a
