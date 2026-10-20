@@ -55,6 +55,9 @@ class Settings(BaseSettings):
     # The worker stays loaded between chapters (about 20 s of startup each) and
     # exits after this long without one, freeing the GPU.
     chatterbox_vllm_idle_timeout_s: float = 600.0
+    # Flagged vLLM takes go back to the warm worker, freshly seeded, this many
+    # times before the ones still flagged re-render on stock.
+    chatterbox_vllm_retake_rounds: int = 2
 
     # Self-healing synthesis: after each chunk, a vocab-free phoneme model checks for
     # a hallucinated outburst (phantom audio with no matching text) and re-rolls the

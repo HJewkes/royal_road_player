@@ -17,9 +17,10 @@ episode.
 the chapter is stamped with it. Chunk i renders with seed 999 + i.
 
 `--batch` (Chatterbox only) renders the whole chapter through chatterbox-vllm
-first, then re-renders the takes it truncated, babbled or failed on stock
-Chatterbox with seed 999 + i. If chatterbox-vllm cannot run, the chapter
-renders on stock.
+first, retakes the ones it truncated, babbled or failed on the same worker for
+up to AUDIOBOOK_CHATTERBOX_VLLM_RETAKE_ROUNDS freshly seeded rounds, then
+re-renders whatever is still flagged on stock Chatterbox with seed 999 + i. If
+chatterbox-vllm cannot run, the chapter renders on stock.
 
   ./venv311/bin/python scripts/rerender_chapter.py 124774 7 16
   ./venv-cu128/bin/python scripts/rerender_chapter.py 124774 7 16 --engine chatterbox
@@ -107,8 +108,13 @@ def _synthesize_batched(chunks, chunks_dir: Path, tts, renderer: VllmBatchRender
     )
     if report.batch_failed:
         print(f"  batch failed, rendered on stock: {report.batch_failed}", flush=True)
-    print(f"  batch {report.batch_s:.0f}s; {report.retake_count} stock retake(s) in "
+    if report.retake_failed:
+        print(f"  vLLM retake failed, rest rendered on stock: {report.retake_failed}", flush=True)
+    print(f"  batch {report.batch_s:.0f}s; flagged per round {report.round_counts} "
+          f"(vLLM retakes {report.vllm_retake_s:.0f}s); {report.retake_count} stock retake(s) in "
           f"{report.retake_s:.0f}s: {report.retakes}", flush=True)
+    for number, flags in enumerate(report.rounds):
+        print(f"    {'batch' if number == 0 else f'round {number}'} flagged {flags}", flush=True)
 
 
 def _rerender(fid: str, book: int, ch: int, engine: str, tts, renderer, args):
