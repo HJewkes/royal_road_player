@@ -161,6 +161,7 @@ class XTTSEngine:
         text: str,
         output_path: Path,
         speed: float = 1.0,
+        seed: Optional[int] = None,
         **inference_kwargs,
     ) -> tuple[Path, float]:
         """
@@ -170,6 +171,8 @@ class XTTSEngine:
             text: Text to synthesize (max 250 chars for XTTS v2)
             output_path: Path to save audio file
             speed: Speech speed multiplier
+            seed: Ignored. Accepted so every engine shares one signature; XTTS
+                re-rolls rely on unseeded sampling.
             **inference_kwargs: XTTS decoder params forwarded to tts_to_file
                 (e.g. temperature, repetition_penalty, top_k, top_p). Omitted →
                 the checkpoint defaults. Used by the regenerate-and-pick fix pass
@@ -350,25 +353,5 @@ class XTTSEngine:
     def is_loaded(self) -> bool:
         """Check if model is loaded."""
         return self._loaded
-
-
-# Singleton instance
-_engine: Optional[XTTSEngine] = None
-
-
-def get_tts_engine() -> XTTSEngine:
-    """Get TTS engine singleton."""
-    global _engine
-    if _engine is None:
-        _engine = XTTSEngine()
-    return _engine
-
-
-def reset_tts_engine() -> None:
-    """Reset TTS engine singleton."""
-    global _engine
-    if _engine is not None:
-        _engine.reset()
-        _engine = None
 
 
