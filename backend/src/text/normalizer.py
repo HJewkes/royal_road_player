@@ -113,12 +113,57 @@ class TextNormalizer:
 
         for pattern in patterns:
             text = re.sub(pattern, '', text, flags=re.MULTILINE)
+        text = '\n'.join(self._drop_watermark_sentences(line) for line in text.split('\n'))
 
         # Clean up extra whitespace
         text = re.sub(r'\n{3,}', '\n\n', text)
         text = re.sub(r' +', ' ', text)
 
         return text
+
+    # Royal Road rotates its anti-theft wording, so match on cues rather than exact phrasing.
+    _ROYAL_ROAD = re.compile(r'(?i)\broyal\s*road\b')
+    _AMAZON = re.compile(r'(?i)\bamazon\b')
+    _THEFT = re.compile(
+        r'(?i)\b(?:stolen|steal\w*|pilfer\w*|unlawful\w*|unauthori[sz]ed|'
+        r'misappropriat\w*|lifted|pirat\w*|report\w*)\b'
+    )
+    _SITE_CUE = re.compile(
+        r'(?i)\b(?:genuine|original|authentic|support\w*|true\s+home|visit\w*|'
+        r'head\s+(?:over\s+)?to)\b'
+    )
+    _WORK = re.compile(r'(?i)\b(?:story|stories|tale|narrative|novel|content|book|fiction|chapter)\b')
+    _OFFSITE = re.compile(
+        r'(?i)\b(?:(?:official|original|another|different|other)\s+(?:site|website|source|platform)|'
+        r'published\s+elsewhere)\b'
+    )
+    _READ_CUE = re.compile(r'(?i)\b(?:support\w*|genuine|read\w*)\b')
+    _REPORT_ONLY = re.compile(r'(?i)^(?:please\s+)?report\s+(?:the\s+violation|any\s+sightings|sightings)\.?$')
+    _FOLLOW_UP = re.compile(
+        r'(?i)^(?:(?:ensure|support)\b.*\bauthors?\b.*\b(?:there|original|deserve)\b.*|'
+        r'you\s+could\s+be\s+reading\s+stolen\s+content|reading\s+on\s+this\s+site\?)[.!?]?$'
+    )
+    _WATERMARK_MAX_WORDS = 30
+
+    def _is_watermark_sentence(self, sentence: str) -> bool:
+        if len(sentence.split()) > self._WATERMARK_MAX_WORDS:
+            return False
+        if self._REPORT_ONLY.match(sentence.strip()) or self._FOLLOW_UP.match(sentence.strip()):
+            return True
+        if self._ROYAL_ROAD.search(sentence):
+            return bool(self._THEFT.search(sentence) or self._SITE_CUE.search(sentence))
+        if self._OFFSITE.search(sentence):
+            return bool(self._READ_CUE.search(sentence) or self._THEFT.search(sentence) or self._WORK.search(sentence))
+        return bool(
+            self._AMAZON.search(sentence)
+            and self._THEFT.search(sentence)
+            and self._WORK.search(sentence)
+        )
+
+    def _drop_watermark_sentences(self, line: str) -> str:
+        sentences = re.split(r'(?<=[.!?…])\s+', line)
+        kept = [s for s in sentences if not self._is_watermark_sentence(s)]
+        return ' '.join(kept) if len(kept) != len(sentences) else line
 
     def normalize_punctuation(self, text: str) -> str:
         """Normalize punctuation for better TTS pronunciation."""
