@@ -342,7 +342,7 @@ def _run_tails(args, disc, tts, recog):
 def _run_early_stops(args, disc, tts, recog):
     """Regenerate truncated chunks with new seeds and keep only takes that are longer."""
     target = (args.fiction_id, args.book, args.chapter)
-    profile = render_profile(args.engine)
+    profile = render_profile(args.engine, args.profile)
     if profile is None:
         sys.exit(f"{args.engine} has no early-stop guard; nothing to repair")
     selected = _select_early_stops(disc, target, profile, args.limit)
@@ -441,6 +441,7 @@ def main():
     if not (args.tails or args.early_stops):
         return _run_words(args, disc, recog)
     args.engine, tts = _load_engine(disc, args.fiction_id, args.book, args.chapter)
+    args.profile = disc.read_engine_stamp(args.fiction_id, args.book, args.chapter).get("profile")
     run = _run_tails if args.tails else _run_early_stops
     return run(args, disc, tts, recog)
 

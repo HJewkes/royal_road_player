@@ -13,7 +13,7 @@ import pytest
 
 from src.discovery import LEGACY_ENGINE_STAMP
 from src.tts.engines import engine_stamp
-from src.tts.profiles import P4
+from src.tts.profiles import P4, T1
 from src.validation.phonemes import g2p_sentence
 
 _SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "scan_defects.py"
@@ -203,3 +203,29 @@ def test_scan_skips_early_stop_for_xtts_chapter(tmp_path):
     findings = _scan_truncated_take(tmp_path, LEGACY_ENGINE_STAMP)
 
     assert not [f for f in findings if f["kind"] == "early_stop"]
+
+
+@espeak
+def test_scan_applies_t1_threshold_to_t1_chapter(tmp_path):
+    findings = _scan_truncated_take(tmp_path, engine_stamp("chatterbox", batch=True))
+
+    early = [f for f in findings if f["kind"] == "early_stop"]
+    assert len(early) == 1
+    assert early[0]["severity"] == pytest.approx(1 - 2.0 / (90 / T1.max_letters_per_sec), abs=1e-3)
+
+
+@espeak
+def test_scan_uses_t1_not_p4_for_a_take_between_the_thresholds(tmp_path):
+    """90 letters in 4.38 s read at 20.55/s: full under P4 (20.7), truncated under T1 (20.4)."""
+    wav = _write_wav(tmp_path / "chunk_001.wav", 4.38 + T1.trailing_pad_s)
+    recognizer = FakeRecognizer({str(wav): "".join(g2p_sentence(LONG_TEXT))})
+
+    def early_stops(stamp):
+        findings, _ = scan_defects._scan_chapter(
+            "1", 1, 1, FakeSTT({}), FakeSTT({}),
+            FakeDiscovery([FakeChunk(1, LONG_TEXT, wav)], stamp), 0.35, recognizer,
+        )
+        return [f for f in findings if f["kind"] == "early_stop"]
+
+    assert not early_stops(engine_stamp("chatterbox"))
+    assert early_stops(engine_stamp("chatterbox", batch=True))

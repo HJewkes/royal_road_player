@@ -193,7 +193,8 @@ def _scan_chapter(fiction_id, book, ch, base_stt, confirm_stt, discovery, min_se
     checked for truncated takes.
     """
     findings = []
-    profile = render_profile(discovery.read_engine_stamp(fiction_id, book, ch)["engine"])
+    stamp = discovery.read_engine_stamp(fiction_id, book, ch)
+    profile = render_profile(stamp["engine"], stamp.get("profile"))
     chunks = [c for c in discovery.list_chunks(fiction_id, book, ch) if c.has_audio]
     for chunk in chunks:
         base = {"fiction_id": fiction_id, "book": book, "chapter": ch,

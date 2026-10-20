@@ -35,6 +35,23 @@ def test_save_chunks_writes_stamp(discovery):
     assert stamp == {"engine": "chatterbox", "chunking": "chatterbox-450", "profile": "p4"}
 
 
+def test_batch_stamp_marks_chatterbox_chapter_as_t1():
+    assert engine_stamp("chatterbox", batch=True) == {
+        "engine": "chatterbox", "chunking": "chatterbox-450", "profile": "t1",
+    }
+
+
+def test_restamping_p4_chapter_as_t1_keeps_audio(discovery):
+    discovery.save_chunks("1", 1, 1, CHUNKS, CHATTERBOX)
+    _render(discovery, 1)
+
+    removed = discovery.save_chunks("1", 1, 1, CHUNKS, engine_stamp("chatterbox", batch=True))
+
+    assert removed == 0
+    assert (_chunks_dir(discovery) / "001.wav").exists()
+    assert discovery.read_engine_stamp("1", 1, 1)["profile"] == "t1"
+
+
 def test_restamping_with_new_engine_clears_audio(discovery):
     discovery.save_chunks("1", 1, 1, CHUNKS, XTTS)
     _render(discovery, 1)
