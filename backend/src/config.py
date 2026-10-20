@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     # the worker re-applies it. Off only by explicit choice.
     chatterbox_vllm_watermark: bool = True
     chatterbox_vllm_timeout_s: float = 7200.0
+    # The worker stays loaded between chapters (about 20 s of startup each) and
+    # exits after this long without one, freeing the GPU.
+    chatterbox_vllm_idle_timeout_s: float = 600.0
 
     # Self-healing synthesis: after each chunk, a vocab-free phoneme model checks for
     # a hallucinated outburst (phantom audio with no matching text) and re-rolls the

@@ -131,7 +131,7 @@ class ChatterboxEngine:
             command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, encoding="utf-8", bufsize=1
         )
         self._replies = queue.Queue()
-        threading.Thread(target=_pump_lines, args=(self._process.stdout, self._replies), daemon=True).start()
+        threading.Thread(target=pump_lines, args=(self._process.stdout, self._replies), daemon=True).start()
 
     def _read_reply(self, timeout_s: float) -> dict:
         try:
@@ -147,7 +147,7 @@ class ChatterboxEngine:
             raise ChatterboxWorkerError(f"Chatterbox worker broke the protocol: {line[:200]!r}") from exc
 
 
-def _pump_lines(stream, replies: queue.Queue) -> None:
+def pump_lines(stream, replies: queue.Queue) -> None:
     for line in stream:
         replies.put(line)
     replies.put(None)

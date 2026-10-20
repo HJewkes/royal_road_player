@@ -3,15 +3,19 @@
 The fake interpreter runs a copy of the real batch worker with stub
 `chatterbox_vllm` and `perth` packages first on its path and a stub
 `s3gen_batch.py` beside it. The stub model logs what it was built and called with
-(cwd, CHATTERBOX_CFG_SCALE, kwargs) and hands its S3Gen one sample-long "token"
-per output sample; the stub BatchedS3Gen turns those into a sine. The length
-follows the text at a natural pace, unless the text asks to be cut short.
+(pid, cwd, CHATTERBOX_CFG_SCALE, kwargs) and hands its S3Gen one sample-long
+"token" per output sample; the stub BatchedS3Gen turns those into a sine. The
+length follows the text at a natural pace, unless the text asks to be cut short.
+A text saying "crash here" fails its batch; one saying "die here" kills the worker.
 """
 
 import json
+import os
 import shutil
+import signal
 import stat
 import sys
+import time
 import wave
 from pathlib import Path
 
@@ -36,6 +40,9 @@ runpy.run_path(worker, run_name="__main__")
 STUB_TTS = '''
 import json, os
 import numpy as np
+
+# vLLM logs to stdout as soon as it is imported.
+print("INFO Automatically detected platform cuda.")
 
 LOG = os.environ["FAKE_VLLM_LOG"]
 
@@ -64,7 +71,7 @@ class ChatterboxTTS:
 
     @classmethod
     def from_pretrained(cls, **kwargs):
-        _log({{"event": "load", "cwd": os.getcwd(), "cfg": os.environ.get("CHATTERBOX_CFG_SCALE"), **kwargs}})
+        _log({{"event": "load", "pid": os.getpid(), "cwd": os.getcwd(), "cfg": os.environ.get("CHATTERBOX_CFG_SCALE"), **kwargs}})
         return cls()
 
     def get_audio_conditionals(self, audio_prompt_path):
@@ -76,13 +83,15 @@ class ChatterboxTTS:
         _log({{"event": "generate", "prompts": prompts, **kwargs}})
         if any("crash here" in p for p in prompts):
             raise RuntimeError("CUDA error: out of memory")
+        if any("die here" in p for p in prompts):
+            os._exit(1)
         for p in prompts:
             tokens = np.zeros(int(self.sr * _seconds(p)))
             self.s3gen.inference(speech_tokens=tokens, ref_dict=s3gen_ref, n_timesteps=kwargs["diffusion_steps"])
         return []
 
     def shutdown(self):
-        pass
+        _log({{"event": "shutdown", "pid": os.getpid()}})
 '''
 
 STUB_PERTH = '''
@@ -126,7 +135,7 @@ def _write(path: Path, text: str) -> Path:
 
 @pytest.fixture
 def vllm(tmp_path, monkeypatch):
-    """A configured renderer factory: vllm(watermark=..., tempo=..., perth=...)."""
+    """A configured renderer factory, vllm(watermark=..., tempo=..., perth=...); closes them all after."""
     clone = tmp_path / "clone"
     clone.mkdir()
     log = tmp_path / "vllm.log"
@@ -149,11 +158,16 @@ def vllm(tmp_path, monkeypatch):
             "chatterbox_vllm_python": str(python), "chatterbox_vllm_dir": str(clone),
             "chatterbox_vllm_tempo": 1.0, "chatterbox_vllm_timeout_s": 60.0, **overrides,
         })
-        return VllmBatchRenderer(settings=settings, reference=str(reference))
+        renderers.append(VllmBatchRenderer(settings=settings, reference=str(reference)))
+        return renderers[-1]
 
+    renderers: list[VllmBatchRenderer] = []
     make.log = lambda: [json.loads(line) for line in log.read_text().splitlines()]
+    make.loads = lambda: [event for event in make.log() if event["event"] == "load"]
     make.clone = clone
-    return make
+    yield make
+    for renderer in renderers:
+        renderer.close()
 
 
 class FakeStock:
@@ -273,6 +287,85 @@ def test_vllm_failure_falls_back_to_stock(vllm, tmp_path):
     assert report.retakes["failed"] == [6, 7]
     assert [text for text, _ in stock.calls] == [chunks[2][1], chunks[3][1]]
     assert all((tmp_path / "chunks" / f"{index:03d}.wav").exists() for index, _ in chunks)
+
+
+CHAPTER_TWO = [
+    (0, "The tide turned before dawn and the harbour emptied of everything but rope."),
+    (1, "Mara closed the ledger."),
+]
+
+
+def _wait_for_exit(renderer: VllmBatchRenderer, timeout_s: float = 20.0) -> None:
+    deadline = time.monotonic() + timeout_s
+    while renderer._process.poll() is None and time.monotonic() < deadline:
+        time.sleep(0.05)
+
+
+def test_one_worker_serves_consecutive_chapters(vllm, tmp_path):
+    """Catches spawning (or closing) the worker per chapter: the model would load twice."""
+    renderer = vllm()
+
+    first = renderer.render_chapter(CHUNKS, tmp_path / "ch1")
+    second = renderer.render_chapter(CHAPTER_TWO, tmp_path / "ch2")
+
+    assert len(vllm.loads()) == 1
+    assert all(take.ok and take.path.exists() for take in first + second)
+    assert [event["prompts"] for event in vllm.log() if event["event"] == "generate"] == [
+        [text for _, text in CHUNKS], [text for _, text in CHAPTER_TWO]
+    ]
+
+
+def test_worker_that_died_between_chapters_is_respawned(vllm, tmp_path):
+    """Catches dropping the respawn-and-resend for a reused worker that has exited:
+    the chapter would fail and go to stock."""
+    renderer = vllm()
+    renderer.render_chapter(CHUNKS, tmp_path / "ch1")
+    os.kill(vllm.loads()[0]["pid"], signal.SIGKILL)
+    _wait_for_exit(renderer)
+
+    takes = renderer.render_chapter(CHAPTER_TWO, tmp_path / "ch2")
+
+    assert all(take.ok for take in takes)
+    assert len({event["pid"] for event in vllm.loads()}) == 2
+
+
+def test_idle_worker_exits_and_the_next_chapter_respawns_it(vllm, tmp_path):
+    """Catches a worker that waits for requests with no idle timeout: it would hold the GPU forever."""
+    renderer = vllm(chatterbox_vllm_idle_timeout_s=0.5)
+    renderer.render_chapter(CHUNKS, tmp_path / "ch1")
+
+    _wait_for_exit(renderer)
+
+    assert renderer._process.poll() == 0
+    assert [event["event"] for event in vllm.log()][-1] == "shutdown"
+    assert all(take.ok for take in renderer.render_chapter(CHAPTER_TWO, tmp_path / "ch2"))
+    assert len(vllm.loads()) == 2
+
+
+def test_cfg_change_respawns_the_worker(vllm, tmp_path):
+    """Catches reusing the warm worker across a CFG change: the port reads CFG once per process."""
+    renderer = vllm(chatterbox_vllm_cfg=0.5)
+    renderer.render_chapter(CHUNKS, tmp_path / "ch1")
+    renderer.settings = renderer.settings.model_copy(update={"chatterbox_vllm_cfg": 0.7})
+
+    renderer.render_chapter(CHAPTER_TWO, tmp_path / "ch2")
+
+    assert [event["cfg"] for event in vllm.loads()] == ["0.5", "0.7"]
+
+
+def test_worker_death_mid_chapter_keeps_finished_takes(vllm, tmp_path):
+    """Catches dropping the takes a worker finished before it died: they would all re-render on stock."""
+    chunks = CHUNKS + [(7, "The storm came in sideways and the die here was only the shutters.")]
+    renderer = vllm(chatterbox_vllm_max_batch=2)
+    stock = FakeStock()
+
+    report = render_chapter_batched(chunks, tmp_path / "chunks", renderer, lambda: stock)
+
+    assert "worker exited" in report.batch_failed
+    assert report.retakes["failed"] == [6, 7]
+    assert [text for text, _ in stock.calls] == [chunks[2][1], chunks[3][1]]
+    assert all(take.ok for take in renderer.render_chapter(CHAPTER_TWO, tmp_path / "ch2"))
+    assert len(vllm.loads()) == 2
 
 
 def test_unconfigured_vllm_renders_the_chapter_on_stock(tmp_path):
