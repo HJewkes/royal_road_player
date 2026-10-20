@@ -243,6 +243,7 @@ venv-chatterbox/
 
 # Audio files (runtime generated)
 *.wav
+!assets/voices/*.wav
 *.mp3
 *.ogg
 *.flac
