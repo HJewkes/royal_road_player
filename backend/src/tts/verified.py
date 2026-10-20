@@ -86,6 +86,12 @@ def synthesize_verified(
                 if attempt:
                     logger.info(f"Verified-clean after {attempt} re-roll(s): {output_path.name}")
                 return output_path, duration
+            # WARNING, not INFO: pool workers are spawned without logging config,
+            # and only WARNING and above reach their stderr.
+            logger.warning(
+                f"Flawed take {attempt} of {output_path.name}: early-stop shortfall "
+                f"{flaws[0]:.2f}, hallucination severity {flaws[1]:.2f}"
+            )
             if best is None or flaws < best[0]:
                 best = (flaws, tmp, duration)
 

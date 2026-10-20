@@ -120,8 +120,8 @@ def test_takes_are_deleted_after_the_winner_is_copied_out(monkeypatch, tmp_path)
     assert list(tmpdir.iterdir()) == []
 
 
-# 330 letters in 11 sentences, written for this test: at most 21.5 letters/s, so
-# a full take lasts at least 15.3 s of speech.
+# 330 letters in 11 sentences, written for this test: at most 20.7 letters/s, so
+# a full take lasts at least 15.9 s of speech.
 LONG_TEXT = "The green boat drifted far out to sea. " * 11
 
 

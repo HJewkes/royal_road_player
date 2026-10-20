@@ -20,6 +20,7 @@ the chapter is stamped with it. Chunk i renders with seed 999 + i.
 import argparse
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -37,6 +38,7 @@ from src.text import (  # noqa: E402
 from src.tts import engine_stamp, get_tts_engine  # noqa: E402
 from src.tts.chatterbox import ChatterboxUnavailable  # noqa: E402
 from src.tts.engines import ENGINES, chunk_seed  # noqa: E402
+from src.tts.pool import RenderPool  # noqa: E402
 from src.tts.verified import synthesize_verified  # noqa: E402
 from src.validation.phonemes import get_phoneme_recognizer  # noqa: E402
 
@@ -52,6 +54,41 @@ def _clear_chunk_artifacts(chunks_dir: Path, chapter_dir: Path):
             stale.unlink()
 
 
+def _progress(done: int, n: int, t0: float):
+    if done % 10 == 0 or done == n:
+        print(f"  synth {done}/{n}  ({time.time() - t0:.0f}s)", flush=True)
+
+
+def _synthesize_inline(chunks, chunks_dir: Path, tts, verify: bool, t0: float):
+    recognizer = get_phoneme_recognizer() if verify else None
+    for done, chunk in enumerate(chunks, 1):
+        out = chunks_dir / f"{chunk.index:03d}.wav"
+        seed = chunk_seed(chunk.index)
+        if recognizer is not None:
+            synthesize_verified(tts, chunk.text, out, recognizer=recognizer, seed=seed)
+        else:
+            tts.synthesize(chunk.text, out, seed=seed)
+        _progress(done, len(chunks), t0)
+
+
+def _synthesize_pooled(chunks, chunks_dir: Path, engine: str, workers: int, verify: bool, t0: float):
+    """Render through the production RenderPool, as /api/generate does."""
+    settings = get_settings()
+    pool = RenderPool(workers=workers, threads_per_worker=settings.tts_threads_per_worker,
+                      verify=verify, retries=settings.verify_max_retries, engine=engine)
+    try:
+        with ThreadPoolExecutor(max_workers=workers) as feeders:
+            futures = [
+                feeders.submit(pool.render, c.text, chunks_dir / f"{c.index:03d}.wav", chunk_seed(c.index))
+                for c in chunks
+            ]
+            for done, future in enumerate(as_completed(futures), 1):
+                future.result()
+                _progress(done, len(chunks), t0)
+    finally:
+        pool.shutdown()
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("fiction_id")
@@ -62,6 +99,8 @@ def main():
                     help="skip self-healing (single take per chunk)")
     ap.add_argument("--engine", choices=ENGINES, default=None,
                     help="TTS engine (default: AUDIOBOOK_TTS_ENGINE)")
+    ap.add_argument("--workers", type=int, default=1,
+                    help="render through a RenderPool of this many workers (default: 1, inline)")
     args = ap.parse_args()
     fid, book, ch = args.fiction_id, args.book, args.chapter
     engine = args.engine or get_settings().tts_engine
@@ -98,18 +137,12 @@ def main():
     print(f"Chunked -> {n} chunks ({engine})", flush=True)
 
     # 3. Synthesize every chunk to its NNN.wav (self-healing unless --no-verify).
-    recognizer = None if args.no_verify else get_phoneme_recognizer()
+    chunks = chunksd.list_chunks(fid, book, ch)
     t0 = time.time()
-    for chunk in chunksd.list_chunks(fid, book, ch):
-        out = chunks_dir / f"{chunk.index:03d}.wav"
-        seed = chunk_seed(chunk.index)
-        if recognizer is not None:
-            synthesize_verified(tts, chunk.text, out, recognizer=recognizer, seed=seed)
-        else:
-            tts.synthesize(chunk.text, out, seed=seed)
-        if chunk.index % 10 == 0 or chunk.index == n:
-            elapsed = time.time() - t0
-            print(f"  synth {chunk.index}/{n}  ({elapsed:.0f}s)", flush=True)
+    if args.workers > 1:
+        _synthesize_pooled(chunks, chunks_dir, engine, args.workers, not args.no_verify, t0)
+    else:
+        _synthesize_inline(chunks, chunks_dir, tts, not args.no_verify, t0)
 
     # 4. Concatenate + export mp3 (overwrites the same episode path).
     path = get_exporter().export_chapter(fid, book, ch, args.format)
