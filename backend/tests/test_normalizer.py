@@ -340,12 +340,28 @@ class TestRemoveDrmWarnings:
         "If you spot this story on Amazon, know that it has been stolen.",
         "Support creative writers by reading their stories on Royal Road, not stolen versions.",
         "Head to Royal Road for the genuine story.",
+        # Seen live on Player Manager Book 1 pages, 2026-10-19.
+        "Enjoying the story? Show your support by reading it on the official site.",
+        "The genuine version of this novel can be found on another site. Support the author by reading it there.",
+        "If you spot this narrative on Amazon, know that it has been stolen. Report the violation.",
+        "Ensure your favorite authors get the support they deserve. Read this novel on the original website.",
+        "The author's narrative has been misappropriated; report any instances of this story on Amazon.",
+        "Reading on this site? This novel is published elsewhere. Support the author by seeking out the original.",
+        "Unauthorized use of content: if you find this story on Amazon, report the violation.",
+        # Verbatim from github.com/audemed44/shelfloom/pull/33.
+        "Stolen from its original source, this story is not meant to be on Amazon; report any sightings.",
+        "This story originates from a different website. Ensure the author gets the support they deserve by reading it there.",
+        "You could be reading stolen content. Head to the original site for the genuine story.",
+        "Unauthorized usage: this narrative is on Amazon without the author's consent. Report any sightings.",
     ]
     STORY_SENTENCES = [
         "He ordered new boots from Amazon and they arrived on Tuesday.",
         "The expedition followed the Amazon for three weeks.",
         "She reported the result to the manager before kick-off.",
         "He posted his first story on Royal Road when he was sixteen.",
+        "I checked the official site for ticket prices.",
+        "The original source of the rumour was a fan forum.",
+        "Enjoying the match? I wasn't.",
     ]
 
     def setup_method(self):

@@ -218,10 +218,27 @@ class RoyalRoadScraper:
         if not content_div:
             raise ValueError("Could not find chapter content")
 
+        self._remove_hidden_watermarks(soup, content_div)
+
         # Extract text with paragraph preservation
         text = self._html_to_text(content_div)
 
         return text
+
+    # Royal Road's anti-theft notice sits in an element whose random class the page's own CSS hides.
+    _HIDDEN_RULE = re.compile(r'\.([\w-]+)\s*\{[^}]*(?:display\s*:\s*none|speak\s*:\s*never)[^}]*\}', re.I)
+
+    def _remove_hidden_watermarks(self, soup: BeautifulSoup, content_div) -> int:
+        """Drop elements hidden by an in-page <style> rule; returns how many were removed."""
+        hidden = set()
+        for style in soup.find_all("style"):
+            hidden.update(self._HIDDEN_RULE.findall(style.get_text()))
+        if not hidden:
+            return 0
+        targets = content_div.find_all(class_=lambda c: c and c in hidden)
+        for element in targets:
+            element.decompose()
+        return len(targets)
 
     def _html_to_text(self, element) -> str:
         """Convert HTML element to plain text with paragraph preservation."""
