@@ -50,3 +50,48 @@ P4 = ChatterboxProfile(
     max_letters_per_sec=20.7,
     min_letters=40,
 )
+
+
+@dataclass(frozen=True)
+class VllmProfile:
+    """chatterbox-vllm sampling kwargs plus post-processing; CFG and diffusion steps are settings."""
+
+    name: str
+    exaggeration: float
+    temperature: float
+    min_p: float
+    top_p: float
+    repetition_penalty: float
+    target_lufs: float
+    trailing_pad_s: float
+    max_letters_per_sec: float
+    min_letters: int
+
+    def sampling_kwargs(self) -> dict[str, float]:
+        """Every sampling kwarg, explicit: the port defaults to top_p 0.8 and repetition_penalty 2.0."""
+        return {
+            "exaggeration": self.exaggeration,
+            "temperature": self.temperature,
+            "min_p": self.min_p,
+            "top_p": self.top_p,
+            "repetition_penalty": self.repetition_penalty,
+        }
+
+
+# T1: the owner's chatterbox-vllm settings (2026-10-20), with CFG 0.5 set in
+# Settings.chatterbox_vllm_cfg. vLLM speech is ~9-10% slower than stock, so its
+# guard is calibrated on its own output: 18.7 letters/s = 1.10 x the fastest of
+# 43 cfg 0.5 / rep 1.2 takes >= min_letters, measured after the 1.05 tempo step
+# and without the pad (median 14.11, p90 16.04, max 16.96).
+T1 = VllmProfile(
+    name="t1",
+    exaggeration=0.5,
+    temperature=0.8,
+    min_p=0.05,
+    top_p=1.0,
+    repetition_penalty=1.2,
+    target_lufs=-20.0,
+    trailing_pad_s=0.25,
+    max_letters_per_sec=18.7,
+    min_letters=40,
+)

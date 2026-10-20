@@ -14,8 +14,14 @@ episode.
 `--engine` (default: the configured engine) picks the engine and its chunker, and
 the chapter is stamped with it. Chunk i renders with seed 999 + i.
 
+`--batch` (Chatterbox only) renders the whole chapter through chatterbox-vllm
+first, then re-renders the takes it truncated, babbled or failed on stock
+Chatterbox with seed 999 + i. If chatterbox-vllm cannot run, the chapter
+renders on stock.
+
   ./venv311/bin/python scripts/rerender_chapter.py 124774 7 16
   ./venv-cu128/bin/python scripts/rerender_chapter.py 124774 7 16 --engine chatterbox
+  ./venv-cu128/bin/python scripts/rerender_chapter.py 124774 7 16 --engine chatterbox --batch
 """
 import argparse
 import sys
@@ -36,6 +42,7 @@ from src.text import (  # noqa: E402
     StatBlockConverter, TableConverter, TextChunker, TextNormalizer, chunking_for,
 )
 from src.tts import engine_stamp, get_tts_engine  # noqa: E402
+from src.tts.batch import VllmBatchRenderer, render_chapter_batched  # noqa: E402
 from src.tts.chatterbox import ChatterboxUnavailable  # noqa: E402
 from src.tts.engines import ENGINES, chunk_seed  # noqa: E402
 from src.tts.pool import RenderPool  # noqa: E402
@@ -89,6 +96,18 @@ def _synthesize_pooled(chunks, chunks_dir: Path, engine: str, workers: int, veri
         pool.shutdown()
 
 
+def _synthesize_batched(chunks, chunks_dir: Path, tts, verify: bool):
+    recognizer = get_phoneme_recognizer() if verify else None
+    report = render_chapter_batched(
+        [(c.index, c.text) for c in chunks], chunks_dir, VllmBatchRenderer(),
+        stock_factory=lambda: tts, recognizer=recognizer, seed_for=chunk_seed,
+    )
+    if report.batch_failed:
+        print(f"  batch failed, rendered on stock: {report.batch_failed}", flush=True)
+    print(f"  batch {report.batch_s:.0f}s; {report.retake_count} stock retake(s) in "
+          f"{report.retake_s:.0f}s: {report.retakes}", flush=True)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("fiction_id")
@@ -101,9 +120,13 @@ def main():
                     help="TTS engine (default: AUDIOBOOK_TTS_ENGINE)")
     ap.add_argument("--workers", type=int, default=1,
                     help="render through a RenderPool of this many workers (default: 1, inline)")
+    ap.add_argument("--batch", action="store_true",
+                    help="render through chatterbox-vllm, retaking flagged chunks on stock (chatterbox only)")
     args = ap.parse_args()
     fid, book, ch = args.fiction_id, args.book, args.chapter
     engine = args.engine or get_settings().tts_engine
+    if args.batch and engine != "chatterbox":
+        sys.exit("--batch renders Chatterbox only; pass --engine chatterbox")
     # Build the engine before anything is cleared, so a host that cannot run it
     # leaves the chapter's existing audio alone.
     try:
@@ -139,7 +162,9 @@ def main():
     # 3. Synthesize every chunk to its NNN.wav (self-healing unless --no-verify).
     chunks = chunksd.list_chunks(fid, book, ch)
     t0 = time.time()
-    if args.workers > 1:
+    if args.batch:
+        _synthesize_batched(chunks, chunks_dir, tts, not args.no_verify)
+    elif args.workers > 1:
         _synthesize_pooled(chunks, chunks_dir, engine, args.workers, not args.no_verify, t0)
     else:
         _synthesize_inline(chunks, chunks_dir, tts, not args.no_verify, t0)

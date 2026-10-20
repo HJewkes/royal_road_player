@@ -106,6 +106,24 @@ check-chatterbox:
 	systemd-run --user --slice=gpu-jobs.slice --wait --pipe --quiet --same-dir \
 		"$(abspath $(CHATTERBOX_VENV))/bin/python" -I scripts/check_chatterbox.py
 
+# chatterbox-vllm venv (Python 3.12) and clone: only the batch worker runs here; see
+# backend/requirements-chatterbox-vllm.txt. Point AUDIOBOOK_CHATTERBOX_VLLM_PYTHON at
+# its python and AUDIOBOOK_CHATTERBOX_VLLM_DIR at the clone (the worker's cwd).
+CHATTERBOX_VLLM_VENV ?= venv-chatterbox-vllm
+CHATTERBOX_VLLM_DIR ?= chatterbox-vllm
+CHATTERBOX_VLLM_REPO := https://github.com/randombk/chatterbox-vllm.git
+CHATTERBOX_VLLM_COMMIT := 8630314
+.PHONY: setup-chatterbox-vllm
+
+setup-chatterbox-vllm:
+	@command -v uv > /dev/null || (echo "❌ uv not found. Install: curl -LsSf https://astral.sh/uv/install.sh | sh" && exit 1)
+	@if [ -d "$(CHATTERBOX_VLLM_DIR)" ]; then echo "⚠️  $(CHATTERBOX_VLLM_DIR) already exists, skipping clone"; else git clone "$(CHATTERBOX_VLLM_REPO)" "$(CHATTERBOX_VLLM_DIR)"; fi
+	git -C "$(CHATTERBOX_VLLM_DIR)" checkout --detach "$(CHATTERBOX_VLLM_COMMIT)"
+	@if [ -d "$(CHATTERBOX_VLLM_VENV)" ]; then echo "⚠️  $(CHATTERBOX_VLLM_VENV) already exists, skipping creation"; else uv venv --python 3.12 "$(CHATTERBOX_VLLM_VENV)"; fi
+	uv pip install --python "$(abspath $(CHATTERBOX_VLLM_VENV))/bin/python" --torch-backend cu128 \
+		-r backend/requirements-chatterbox-vllm.txt -e "$(abspath $(CHATTERBOX_VLLM_DIR))"
+	@echo "✅ $(CHATTERBOX_VLLM_VENV) ready; the worker runs with cwd $(abspath $(CHATTERBOX_VLLM_DIR))"
+
 # Unattended autopull on Linux: link the units from deploy/systemd into the user
 # manager. Refuses without the env file, since autopull publishes by default.
 AUTOPULL_ENV := $(HOME)/.config/audiobook/autopull.env
