@@ -208,8 +208,11 @@ class TextNormalizer:
     def normalize_acronyms(self, text: str) -> str:
         """Expand mapped abbreviations, then spell out all-caps initialisms."""
         for acronym, expansion in sorted(self.ACRONYM_MAP.items(), key=lambda x: -len(x[0])):
-            pattern = r'\b' + re.escape(acronym) + r'\b'
-            text = re.sub(pattern, expansion, text)
+            # The abbreviation's own dot doubles as a full stop at the end of a line.
+            pattern = re.compile(r'\b' + re.escape(acronym) + r'(?!\w)(?=([ \t]*$)?)', re.MULTILINE)
+            text = pattern.sub(
+                lambda m, expansion=expansion: expansion + ('.' if m.group(1) is not None else ''),
+                text)
         return spell_initialisms(text)
 
     def normalize_time_formats(self, text: str) -> str:
@@ -224,7 +227,7 @@ class TextNormalizer:
                 return match.group(0)
 
         text = re.sub(
-            r'(\d+)\s+(a\.m\.|p\.m\.|am|pm|A\.M\.|P\.M\.|AM|PM)',
+            r'(\d+)\s+(a\.m\.|p\.m\.|am|pm|A\.M\.|P\.M\.|AM|PM)(?!\w)',
             time_replacer,
             text,
             flags=re.IGNORECASE
@@ -422,24 +425,17 @@ class TextNormalizer:
         """Read a decimal fraction digit by digit: '176' -> 'one seven six'."""
         return ' '.join(self._number_to_words(int(d)) for d in digits)
 
+    _IRREGULAR_ORDINALS = {'one': 'first', 'two': 'second', 'three': 'third', 'five': 'fifth',
+                           'eight': 'eighth', 'nine': 'ninth', 'twelve': 'twelfth'}
+
     def _number_to_ordinal(self, n: int) -> str:
-        """Convert number to ordinal."""
-        ordinals = {
-            1: 'first', 2: 'second', 3: 'third', 4: 'fourth', 5: 'fifth',
-            6: 'sixth', 7: 'seventh', 8: 'eighth', 9: 'ninth', 10: 'tenth',
-            11: 'eleventh', 12: 'twelfth', 13: 'thirteenth', 14: 'fourteenth',
-            15: 'fifteenth', 16: 'sixteenth', 17: 'seventeenth', 18: 'eighteenth',
-            19: 'nineteenth', 20: 'twentieth', 21: 'twenty-first', 22: 'twenty-second',
-            23: 'twenty-third', 24: 'twenty-fourth', 25: 'twenty-fifth',
-            26: 'twenty-sixth', 27: 'twenty-seventh', 28: 'twenty-eighth',
-            29: 'twenty-ninth', 30: 'thirtieth', 31: 'thirty-first'
-        }
-        if n in ordinals:
-            return ordinals[n]
-        words = self._number_to_words(n)
-        if words.endswith('y'):
-            return words[:-1] + 'ieth'
-        return words + 'th'
+        """Convert number to ordinal by inflecting its last word: 42 -> forty-second."""
+        head, last = re.match(r'(.*?)([a-z]+)$', self._number_to_words(n)).groups()
+        if last in self._IRREGULAR_ORDINALS:
+            return head + self._IRREGULAR_ORDINALS[last]
+        if last.endswith('y'):
+            return head + last[:-1] + 'ieth'
+        return head + last + 'th'
 
     def _get_month_name(self, month_abbr: str) -> str:
         """Convert month abbreviation to full name."""
