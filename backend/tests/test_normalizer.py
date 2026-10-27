@@ -299,6 +299,49 @@ class TestFullDates:
         assert self.n.normalize("May 45, 2028") == "May 45, twenty twenty-eight"
 
 
+class TestAbbreviationsOrdinalsAndTimes:
+    """Rules the speech-vet port found dead or wrong (A-49)."""
+
+    def setup_method(self):
+        self.n = TextNormalizer()
+
+    def test_titles_before_a_space_are_expanded(self):
+        assert self.n.normalize("Mr. Smith met Dr. Jones and Mrs. Hill.") == (
+            "Mister Smith met Doctor Jones and Misses Hill."
+        )
+
+    def test_abbreviation_ending_a_line_keeps_its_full_stop(self):
+        assert self.n.normalize("apples, pears, etc.\n\nThe U.S. team won.") == (
+            "apples, pears, etcetera.\n\nThe United States team won."
+        )
+
+    def test_dotted_abbreviation_inside_a_longer_one_is_left_alone(self):
+        assert self.n.normalize_acronyms("Mr.X") == "Mr.X"
+
+    def test_year_before_2010_reads_as_two_thousand(self):
+        assert self.n.normalize("in 2005 he left") == "in two thousand five he left"
+        assert self.n.normalize("on 5 May 2005") == "on fifth of May, two thousand five"
+
+    def test_compound_ordinals_inflect_the_last_word(self):
+        cases = {
+            "the 42nd minute": "the forty-second minute",
+            "the 53rd minute": "the fifty-third minute",
+            "the 88th minute": "the eighty-eighth minute",
+            "the 90th minute": "the ninetieth minute",
+            "the 31st of May": "the thirty-first of May",
+        }
+        for raw, spoken in cases.items():
+            assert self.n.normalize(raw) == spoken
+
+    def test_word_starting_with_am_or_pm_is_not_a_clock_time(self):
+        assert self.n.normalize("he scored 5 amazing goals") == "he scored 5 amazing goals"
+        assert self.n.normalize("it drew 9 amps") == "it drew 9 amps"
+
+    def test_clock_times_still_read_as_times(self):
+        assert self.n.normalize("at 5 am") == "at five A M"
+        assert self.n.normalize("at 7 p.m. sharp") == "at seven P M sharp"
+
+
 class TestHyphenCompounds:
     """A number joined to a word by a hyphen is spelled, so XTTS reads the word cleanly."""
 
