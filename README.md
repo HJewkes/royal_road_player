@@ -234,6 +234,19 @@ It is registered in `.mcp.json`, so Claude Code launches it automatically throug
 (`venv-cu128`, else `venv311`). The backend must be running (`make dev`). Config via env:
 `AUDIOBOOK_API` (default `http://localhost:8000`), `AUDIOBOOK_FICTION_ID` (default `124774`).
 
+## Command TTS
+
+`scripts/tts_cli.py` speaks the `commandTts` stdio contract of `@titan-design/speech-tts`, so
+other tools can reach this voice, locally or over ssh. It reads one JSON request on stdin and
+answers with RIFF bytes on stdout (`--output stdout-wav`, or a request with no `outDir`) or
+with one JSON object (`--output json`, or a request with `outDir`). Run it with the venv that
+holds the engine. See the script's docstring for voices and exit codes.
+
+`backend/tests/fixtures/speech_conformance/` is a verbatim copy of speech-vet's `conformance/`
+directory; `test_speech_conformance.py` checks `fix_pass` and `TextNormalizer` against it, so
+`MARGIN` and the normalizer cannot drift from the TypeScript port. Update it by copying a newer
+release's files.
+
 ## Dependencies
 
 The Mac (legacy) setup uses two Python virtual environments; the server uses `venv-cu128` (see Server above):
