@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "margin": 0.06,
+  "note": "Constructed cases, no recorded audio. keepTake cases: a take replaces the shipped one when kept is true. betterTake cases: a take replaces the best one when wins is true. Both are decided at the default margin, so a port that changes its margin fails the 0.055 edge cases.",
+  "keepTake": [
+    { "name": "tie keeps the shipped take", "shipped": { "brokeWords": 0, "strayLength": 0, "distance": 0.5 }, "take": { "brokeWords": 0, "strayLength": 0, "distance": 0.5 }, "margin": 0.06, "kept": false },
+    { "name": "a fall of 0.055 is inside the margin", "shipped": { "brokeWords": 0, "strayLength": 0, "distance": 0.5 }, "take": { "brokeWords": 0, "strayLength": 0, "distance": 0.445 }, "margin": 0.06, "kept": false },
+    { "name": "a fall of 0.065 clears the margin", "shipped": { "brokeWords": 0, "strayLength": 0, "distance": 0.5 }, "take": { "brokeWords": 0, "strayLength": 0, "distance": 0.435 }, "margin": 0.06, "kept": true },
+    { "name": "a fall of 0.055 with an equal stray is inside the margin", "shipped": { "brokeWords": 0, "strayLength": 3, "distance": 0.4 }, "take": { "brokeWords": 0, "strayLength": 3, "distance": 0.345 }, "margin": 0.06, "kept": false },
+    { "name": "a broken word never wins, even with a shorter stray", "shipped": { "brokeWords": 0, "strayLength": 4, "distance": 0.5 }, "take": { "brokeWords": 1, "strayLength": 0, "distance": 0.5 }, "margin": 0.06, "kept": false },
+    { "name": "a broken word never wins, even with a large fall", "shipped": { "brokeWords": 0, "strayLength": 0, "distance": 0.9 }, "take": { "brokeWords": 1, "strayLength": 0, "distance": 0.1 }, "margin": 0.06, "kept": false },
+    { "name": "a shorter stray wins at a worse distance", "shipped": { "brokeWords": 0, "strayLength": 4, "distance": 0.2 }, "take": { "brokeWords": 0, "strayLength": 2, "distance": 0.6 }, "margin": 0.06, "kept": true },
+    { "name": "a longer stray loses at a better distance", "shipped": { "brokeWords": 0, "strayLength": 2, "distance": 0.6 }, "take": { "brokeWords": 0, "strayLength": 4, "distance": 0.1 }, "margin": 0.06, "kept": false },
+    { "name": "a rising distance loses", "shipped": { "brokeWords": 0, "strayLength": 0, "distance": 0.3 }, "take": { "brokeWords": 0, "strayLength": 0, "distance": 0.4 }, "margin": 0.06, "kept": false },
+    { "name": "a large fall at an equal stray wins", "shipped": { "brokeWords": 0, "strayLength": 3, "distance": 0.8 }, "take": { "brokeWords": 0, "strayLength": 3, "distance": 0.2 }, "margin": 0.06, "kept": true },
+    { "name": "two clean takes tie at zero", "shipped": { "brokeWords": 0, "strayLength": 0, "distance": 0 }, "take": { "brokeWords": 0, "strayLength": 0, "distance": 0 }, "margin": 0.06, "kept": false },
+    { "name": "a clean tail replaces a stray one", "shipped": { "brokeWords": 0, "strayLength": 2, "distance": 0 }, "take": { "brokeWords": 0, "strayLength": 0, "distance": 0 }, "margin": 0.06, "kept": true }
+  ],
+  "betterTake": [
+    {
+      "name": "lower hallucination severity wins whatever the tail",
+      "best": { "hallucinations": [0.8], "tail": null, "words": { "need": { "distance": 0.1, "faulty": false } } },
+      "take": { "hallucinations": [0.4], "tail": 5, "words": { "need": { "distance": 0.1, "faulty": false } } },
+      "margin": 0.06,
+      "wins": true
+    },
+    {
+      "name": "at equal hallucination a take that breaks a word never wins",
+      "best": { "hallucinations": [], "tail": null, "words": { "need": { "distance": 0.3, "faulty": true } } },
+      "take": { "hallucinations": [], "tail": null, "words": { "need": { "distance": 0.5, "faulty": true } } },
+      "margin": 0.06,
+      "wins": false
+    },
+    {
+      "name": "equal takes keep the best",
+      "best": { "hallucinations": [0.6], "tail": 2, "words": { "need": { "distance": 0.1, "faulty": false } } },
+      "take": { "hallucinations": [0.6], "tail": 2, "words": { "need": { "distance": 0.1, "faulty": false } } },
+      "margin": 0.06,
+      "wins": false
+    },
+    {
+      "name": "a word fault that falls by 0.055 is inside the margin",
+      "best": { "hallucinations": [], "tail": null, "words": { "need": { "distance": 0.5, "faulty": true } } },
+      "take": { "hallucinations": [], "tail": null, "words": { "need": { "distance": 0.445, "faulty": true } } },
+      "margin": 0.06,
+      "wins": false
+    }
+  ]
+}
