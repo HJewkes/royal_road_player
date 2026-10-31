@@ -23,6 +23,7 @@ import os
 import sys
 import tempfile
 from pathlib import Path
+from typing import NamedTuple
 
 BACKEND = Path(__file__).resolve().parent.parent / "backend"
 sys.path.insert(0, str(BACKEND))
@@ -177,6 +178,26 @@ def _select_tails(disc, recog, target, limit):
 WORSE_MARGIN = MARGIN
 
 
+class TakeScore(NamedTuple):
+    broke_words: int
+    stray_length: int
+    distance: float
+
+
+def keep_take(shipped, take, margin=MARGIN):
+    """Whether `take` replaces `shipped`.
+
+    A take that damages a word never does. Otherwise a shorter stray wins outright,
+    and at an equal stray the distance must fall by more than `margin`, so a tie
+    keeps what is already on disk.
+    """
+    if take.broke_words:
+        return False
+    if take.stray_length != shipped.stray_length:
+        return take.stray_length < shipped.stray_length
+    return take.distance < shipped.distance - margin
+
+
 def _word_distances(text, wav, recog):
     """Per-word phone distance for this audio, keyed by word.
 
@@ -242,7 +263,7 @@ def _best_tail_take(chunk, before, args, tts, recog):
         "chunk": chunk.index, "before_phones": before["phones"],
         "before_len": before["length"], "after_phones": art["phones"] if art else "",
         "after_len": nstray, "take": label, "broke_words": broke,
-        "kept": nbroke == 0 and nstray < before["length"],
+        "kept": keep_take(TakeScore(0, before["length"], 0.0), TakeScore(nbroke, nstray, 0.0)),
         "context": chunk.text[-60:].strip(), "wav": str(wav),
     }
 
@@ -393,7 +414,7 @@ def _run_words(args, disc, recog):
             takes.append((score, label, wav, worst))
         takes.sort(key=lambda t: t[0])
         after, blabel, bwav, aworst = takes[0]
-        won = after < before - MARGIN
+        won = keep_take(TakeScore(0, 0, before), TakeScore(0, 0, after))
         improved += won
         focus = (bworst or {}).get("word") or words[0]
         print(f"  b{book}/ch{ch}/{idx:03d} {focus!r}: before={before:.2f} "

@@ -1,0 +1,28 @@
+{
+  "schema": "speech-vet.conformance.normalize.v1",
+  "about": "Inputs and expected outputs for normalize(). `steps` names the speech-vet steps run, in order. `python` names the audiobook TextNormalizer method that must give the same output for `input`.",
+  "cases": [
+    { "name": "decimal million suffix", "python": "normalize_numbers", "steps": ["ages", "ordinals", "currency", "decimals", "cardinals"], "input": "£1.4m", "expected": "one point four million pounds" },
+    { "name": "thousand suffix", "python": "normalize_numbers", "steps": ["ages", "ordinals", "currency", "decimals", "cardinals"], "input": "£900k", "expected": "nine hundred thousand pounds" },
+    { "name": "spelled out million word", "python": "normalize_numbers", "steps": ["ages", "ordinals", "currency", "decimals", "cardinals"], "input": "£2 million", "expected": "two million pounds" },
+    { "name": "plain thousands with comma", "python": "normalize_numbers", "steps": ["ages", "ordinals", "currency", "decimals", "cardinals"], "input": "£50,000", "expected": "fifty thousand pounds" },
+    { "name": "multidigit fraction multiplied out", "python": "normalize_numbers", "steps": ["ages", "ordinals", "currency", "decimals", "cardinals"], "input": "£0.176m", "expected": "one hundred seventy-six thousand pounds" },
+    { "name": "two digit fraction suffix multiplied out", "python": "normalize_numbers", "steps": ["ages", "ordinals", "currency", "decimals", "cardinals"], "input": "£0.28m", "expected": "two hundred eighty thousand pounds" },
+    { "name": "multimillion with commas", "python": "normalize_numbers", "steps": ["ages", "ordinals", "currency", "decimals", "cardinals"], "input": "£4,163,432", "expected": "four million one hundred sixty-three thousand four hundred thirty-two pounds" },
+    { "name": "dollars", "python": "normalize_numbers", "steps": ["ages", "ordinals", "currency", "decimals", "cardinals"], "input": "$5.24m", "expected": "five million two hundred forty thousand dollars" },
+    { "name": "euros", "python": "normalize_numbers", "steps": ["ages", "ordinals", "currency", "decimals", "cardinals"], "input": "€3k", "expected": "three thousand euros" },
+    { "name": "millions", "python": "normalize_numbers", "steps": ["ages", "ordinals", "currency", "decimals", "cardinals"], "input": "4000000", "expected": "four million" },
+    { "name": "billions", "python": "normalize_numbers", "steps": ["ages", "ordinals", "currency", "decimals", "cardinals"], "input": "2000000000", "expected": "two billion" },
+    { "name": "slash week becomes per week", "python": "normalize_punctuation", "steps": ["rates"], "input": "£9,800/week", "expected": "£9,800 per week" },
+    { "name": "decimal over one hundred", "python": "normalize_numbers", "steps": ["ages", "ordinals", "currency", "decimals", "cardinals"], "input": "147.8", "expected": "one hundred forty-seven point eight" },
+    { "name": "decimal in sentence", "python": "normalize_numbers", "steps": ["ages", "ordinals", "currency", "decimals", "cardinals"], "input": "We were 147.8 but we played worse", "expected": "We were one hundred forty-seven point eight but we played worse" },
+    { "name": "small decimal", "python": "normalize_numbers", "steps": ["ages", "ordinals", "currency", "decimals", "cardinals"], "input": "3.5", "expected": "three point five" },
+    { "name": "decimal with single digit magnitude", "python": "normalize_numbers", "steps": ["ages", "ordinals", "currency", "decimals", "cardinals"], "input": "3.1m", "expected": "three point one million" },
+    { "name": "decimal with multi digit magnitude", "python": "normalize_numbers", "steps": ["ages", "ordinals", "currency", "decimals", "cardinals"], "input": "0.28m", "expected": "two hundred eighty thousand" },
+    { "name": "percentage decimal keeps percent", "python": "normalize_numbers", "steps": ["ages", "ordinals", "currency", "decimals", "cardinals"], "input": "1.39%", "expected": "one point three nine%" },
+    { "name": "ordinals and ages", "python": "normalize_numbers", "steps": ["ages", "ordinals", "currency", "decimals", "cardinals"], "input": "the 3rd of 4, a 15-year-old", "expected": "the third of 4, a fifteen-year-old" },
+    { "name": "numbers under one hundred stay digits", "python": "normalize_numbers", "steps": ["ages", "ordinals", "currency", "decimals", "cardinals"], "input": "42 of 007 and 100", "expected": "42 of 007 and one hundred" },
+    { "name": "clock time", "python": "normalize_time_formats", "steps": ["times"], "input": "at 7 pm", "expected": "at seven P M" },
+    { "name": "dotted clock time", "python": "normalize_time_formats", "steps": ["times"], "input": "at 10 a.m. sharp", "expected": "at ten A M sharp" }
+  ]
+}
