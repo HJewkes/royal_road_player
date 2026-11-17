@@ -18,6 +18,23 @@ from src.utils import retry_http
 logger = logging.getLogger(__name__)
 
 
+# Since 2026-11-16 Patreon only exposes the id inside escaped JSON (the last pattern).
+_CAMPAIGN_ID_PATTERNS = (
+    re.compile(r'"campaign_id"\s*:\s*(\d+)'),
+    re.compile(r'"id"\s*:\s*"(\d+)"[^}]*"type"\s*:\s*"campaign"'),
+    re.compile(r'patreon\.com/api/campaigns/(\d+)'),
+)
+
+
+def extract_campaign_id(page: str) -> str | None:
+    """Return the creator's campaign id from a Patreon creator page, if present."""
+    for pattern in _CAMPAIGN_ID_PATTERNS:
+        match = pattern.search(page)
+        if match:
+            return match.group(1)
+    return None
+
+
 class PatreonScraper:
     """Scraper for Patreon creator feeds using session cookie auth."""
 
@@ -52,15 +69,10 @@ class PatreonScraper:
         response = self.session.get(url, timeout=30)
         response.raise_for_status()
 
-        # Campaign ID is embedded in the page HTML/JSON
-        match = re.search(r'"campaign_id"\s*:\s*(\d+)', response.text)
-        if not match:
-            # Try alternative pattern
-            match = re.search(r'"id"\s*:\s*"(\d+)"[^}]*"type"\s*:\s*"campaign"', response.text)
-        if not match:
+        campaign_id = extract_campaign_id(response.text)
+        if campaign_id is None:
             raise ValueError(f"Could not find campaign_id for creator '{creator_slug}'")
 
-        campaign_id = match.group(1)
         logger.info(f"Resolved campaign ID for '{creator_slug}': {campaign_id}")
         return campaign_id
 
